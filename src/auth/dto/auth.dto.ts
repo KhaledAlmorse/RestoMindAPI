@@ -7,12 +7,11 @@ import {
   IsOptional,
   IsPhoneNumber,
   IsString,
-  IsStrongPassword,
   MaxLength,
-  Min,
   MinLength,
 } from 'class-validator';
-import { GenderEnum, RolesEnum } from 'src/Common/Types';
+import { GenderEnum, OtpTypeEnum, RolesEnum } from 'src/Common/Types';
+
 export class singupBodyDto {
   @IsString()
   @IsNotEmpty()
@@ -32,7 +31,6 @@ export class singupBodyDto {
 
   @IsString()
   @IsNotEmpty()
-  //   @IsStrongPassword()
   @MinLength(6)
   password!: string;
 
@@ -61,7 +59,6 @@ export class loginBodyDto {
 
   @IsString()
   @IsNotEmpty()
-  //   @IsStrongPassword()
   @MinLength(6)
   password!: string;
 }
@@ -74,4 +71,86 @@ export class ConfirmEmailDto {
   @IsString()
   @IsNotEmpty()
   otp: string;
+}
+
+// ─── New DTOs ───────────────────────────────────────────────────────────────
+
+export class SendOtpDto {
+  @IsEmail()
+  @IsNotEmpty()
+  email!: string;
+
+  @IsEnum(OtpTypeEnum)
+  @IsNotEmpty()
+  type!: OtpTypeEnum;
+}
+
+export class ForgetPasswordDto {
+  @IsEmail()
+  @IsNotEmpty()
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @IsEmail()
+  @IsNotEmpty()
+  email!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  otp!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  password!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  confirmPassword!: string;
+}
+
+export class UpdateMeDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(20)
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(20)
+  lastName?: string;
+
+  @IsOptional()
+  @IsPhoneNumber()
+  phone?: string;
+
+  @IsOptional()
+  @IsEnum(GenderEnum)
+  gender?: string;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  DOB?: Date;
+}
+
+export class UpdatePasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  oldPassword!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  newPassword!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  confirmPassword!: string;
 }

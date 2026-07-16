@@ -20,7 +20,11 @@ export class User {
 
   @Prop({ type: String, required: true, minLength: 6 })
   password!: string;
-  @Prop({ type: String, enum: RolesEnum, default: RolesEnum.USER })
+  @Prop({
+    type: String,
+    enum: Object.values(RolesEnum),
+    default: RolesEnum.CUSTOMER,
+  })
   role!: string;
 
   @Prop({ type: String, enum: GenderEnum })
@@ -43,12 +47,14 @@ const UserSchema = SchemaFactory.createForClass(User);
 
 UserSchema.pre('save', function () {
   const changes = this.$getChanges()['$set'];
-  if (changes.password) {
-    const hashedPassword = Hash(changes.password);
-    this.password = hashedPassword;
-  }
-  if (changes.phone) {
-    this.phone = Encrypt(this.phone, process.env.Encryption_SECRET as string);
+  if (changes) {
+    if (changes.password) {
+      const hashedPassword = Hash(changes.password);
+      this.password = hashedPassword;
+    }
+    if (changes.phone) {
+      this.phone = Encrypt(this.phone, process.env.Encryption_SECRET as string);
+    }
   }
 });
 

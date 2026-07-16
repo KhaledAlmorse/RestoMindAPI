@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { BaseService } from '../base.service';
 import { Otp, type OtpType } from '../Models/otp.model';
 import { InjectModel } from '@nestjs/mongoose';

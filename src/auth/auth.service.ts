@@ -2,21 +2,31 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  InternalServerErrorException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   OtpRepository,
   RevokeTokenRepository,
   UserRepository,
 } from 'src/DB/Repositories';
-import { ConfirmEmailDto, loginBodyDto, singupBodyDto } from './dto/auth.dto';
+import {
+  ConfirmEmailDto,
+  ForgetPasswordDto,
+  loginBodyDto,
+  ResetPasswordDto,
+  SendOtpDto,
+  singupBodyDto,
+  UpdateMeDto,
+  UpdatePasswordDto,
+} from './dto/auth.dto';
 import { Events } from 'src/Common/Utils';
 import { CompareHash, Hash } from 'src/Common/Security';
 import { TokenService } from 'src/Common/Services';
 import { v4 as uuidv4 } from 'uuid';
 import type { StringValue } from 'ms';
 import { IAuthUser, OtpTypeEnum } from 'src/Common/Types';
+import { Types } from 'mongoose';
 
 @Injectable()
 export class AuthService {
@@ -27,11 +37,50 @@ export class AuthService {
     private readonly revokeTokenRepository: RevokeTokenRepository,
   ) {}
 
+  // ─── Private Helper ──────────────────────────────────────────────────────────
+
+  /**
+   * Reusable OTP logic:
+   * 1. Delete any previous OTPs for this user+type
+   * 2. Generate a new 6-digit OTP
+   * 3. Hash & save it
+   * 4. Send plain OTP via email
+   */
+  private async generateAndSendOtp(
+    userId: Types.ObjectId,
+    email: string,
+    otpType: OtpTypeEnum,
+  ) {
+    // Delete previous OTPs of the same type for this user
+    await this.otpRepository.deleteMany({ filters: { userId, otpType } });
+
+    // Generate plain OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save hashed OTP (hashing is done inside createOtp)
+    await this.otpRepository.createOtp({
+      otp,
+      userId,
+      otpType,
+    });
+
+    // Send plain OTP by email
+    Events.emit('sendEmail', {
+      to: email,
+      subject:
+        otpType === OtpTypeEnum.CONFIRMATION
+          ? 'Email Verification'
+          : 'Password Reset OTP',
+      html: `Your OTP is <strong>${otp}</strong>. It expires in 10 minutes.`,
+    });
+  }
+
+  // ─── Signup ──────────────────────────────────────────────────────────────────
+
   async singup(body: singupBodyDto) {
     const { firstName, lastName, email, password, phone, gender, DOB } = body;
-    // Implementation for signing up a new user
-    const user = await this.userRepository.findOne({ filters: { email } });
 
+    const user = await this.userRepository.findOne({ filters: { email } });
     if (user) {
       throw new ConflictException('User already exists');
     }
@@ -46,22 +95,11 @@ export class AuthService {
       DOB,
     });
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    await this.otpRepository.createOtp({
-      otp: Hash(otp),
-      userId: newUser._id,
-      otpType: OtpTypeEnum.CONFIRMATION,
-    });
-
-    // send email
-    Events.emit('sendEmail', {
-      to: email,
-      subject: 'Email Verification',
-      html: `Your OTP is ${otp}`,
-    });
-
+    await this.generateAndSendOtp(newUser._id, email, OtpTypeEnum.CONFIRMATION);
     return newUser;
   }
+
+  // ─── Login ───────────────────────────────────────────────────────────────────
 
   async login(body: loginBodyDto) {
     const { email, password } = body;
@@ -92,22 +130,25 @@ export class AuthService {
       expiresIn: process.env.REFRESH_EXPIRES_IN as StringValue,
       jwtid: uuidv4(),
     });
+
     return { accessToken, refreshToken };
   }
 
+  // ─── Get Profile ─────────────────────────────────────────────────────────────
+
   getProfileData(user: IAuthUser) {
-    const userData = this.userRepository.findOne({
+    return this.userRepository.findOne({
       filters: { _id: user.user._id },
     });
-
-    return userData;
   }
+
+  // ─── Confirm Email ───────────────────────────────────────────────────────────
 
   async confirmEmail(body: ConfirmEmailDto) {
     const { otp, email } = body;
     const user = await this.userRepository.findOne({ filters: { email } });
     if (!user) {
-      throw new NotFoundException(`User not found with this email `);
+      throw new NotFoundException(`User not found with this email`);
     }
 
     const existedOtp = await this.otpRepository.findOne({
@@ -125,23 +166,115 @@ export class AuthService {
       throw new BadRequestException('OTP has been expired');
     }
 
-    //* update the user Data
     await this.userRepository.update({
       filters: { _id: user._id },
       body: { isEmailVerified: true },
     });
 
-    // delete otp
     await this.otpRepository.delete({ filters: { _id: existedOtp._id } });
-    return;
   }
 
+  // ─── Logout ──────────────────────────────────────────────────────────────────
+
   async logout(user: IAuthUser) {
-    //*
     return this.revokeTokenRepository.create({
       tokenId: user.token['jti'],
       userId: user.user._id,
       expiryTime: user.token['exp'],
     });
+  }
+
+  // ─── Send OTP ────────────────────────────────────────────────────────────────
+
+  async sendOtp(body: SendOtpDto) {
+    const { email, type } = body;
+
+    const user = await this.userRepository.findOne({ filters: { email } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (type === OtpTypeEnum.CONFIRMATION) {
+      if (user.isEmailVerified) {
+        throw new ConflictException('Email already verified');
+      }
+    }
+
+    await this.generateAndSendOtp(user._id, email, type);
+
+    return { message: 'OTP sent successfully' };
+  }
+
+  // ─── Forget Password ─────────────────────────────────────────────────────────
+
+  async forgetPassword(body: ForgetPasswordDto) {
+    const { email } = body;
+
+    const user = await this.userRepository.findOne({ filters: { email } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.generateAndSendOtp(user._id, email, OtpTypeEnum.RESET_PASSWORD);
+
+    return { message: 'OTP sent successfully' };
+  }
+
+  // ─── Reset Password ──────────────────────────────────────────────────────────
+
+  async resetPassword(body: ResetPasswordDto) {
+    const { email, otp, password, confirmPassword } = body;
+
+    if (password !== confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const user = await this.userRepository.findOne({ filters: { email } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const existedOtp = await this.otpRepository.findOne({
+      filters: { userId: user._id, otpType: OtpTypeEnum.RESET_PASSWORD },
+    });
+    if (!existedOtp) {
+      throw new NotFoundException('OTP not found');
+    }
+
+    if (existedOtp.expireTime < new Date(Date.now())) {
+      throw new BadRequestException('OTP has been expired');
+    }
+
+    if (!CompareHash(otp, existedOtp.otp)) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    // Update password (Mongoose pre('save') hook will hash it)
+    const userDoc = await this.userRepository.findOne({
+      filters: { _id: user._id },
+    });
+    userDoc!.password = password;
+    await this.userRepository.save(userDoc!);
+
+    // Delete the used OTP
+    await this.otpRepository.delete({ filters: { _id: existedOtp._id } });
+
+    // Delete all revoked tokens for this user (recommended)
+    await this.revokeTokenRepository.deleteMany({
+      filters: { userId: user._id },
+    });
+
+    return { message: 'Password reset successfully' };
+  }
+
+  // ─── Update Me ───────────────────────────────────────────────────────────────
+
+  async updateMe(user: IAuthUser, body: UpdateMeDto) {
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body,
+    });
+
+    return updatedUser;
   }
 }

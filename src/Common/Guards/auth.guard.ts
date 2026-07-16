@@ -2,7 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
-  InternalServerErrorException,
+  HttpException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -48,7 +48,11 @@ export class AuthGuard implements CanActivate {
     } catch (error) {
       console.log(error);
 
-      throw new InternalServerErrorException('Invalid token, please Login ');
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new UnauthorizedException('Invalid token, please Login ');
     }
   }
 }
