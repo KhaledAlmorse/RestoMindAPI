@@ -6,6 +6,13 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common/pipes/validation.pipe';
 
 async function bootstrap() {
+  if (!process.env.DB_URL) {
+    throw new Error(
+      'CRITICAL CONFIGURATION ERROR: The "DB_URL" environment variable is not defined. ' +
+      'Please go to your Vercel Project Settings > Environment Variables and add DB_URL with your database connection string.'
+    );
+  }
+
   const app = await NestFactory.create(AppModule);
 
   // Enable CORS
