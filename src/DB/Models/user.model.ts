@@ -41,6 +41,19 @@ export class User {
 
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
+
+  @Prop({
+    type: {
+      public_id: { type: String, required: true },
+      secure_url: { type: String, required: true },
+    },
+    _id: false,
+    required: false,
+  })
+  image?: {
+    public_id: string;
+    secure_url: string;
+  };
 }
 
 const UserSchema = SchemaFactory.createForClass(User);

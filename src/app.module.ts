@@ -5,6 +5,11 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from './auth/auth.module';
 import { GlobalAuthModule } from './global.module';
 import { UserModule } from './user/user.module';
+import { CategoriesModule } from './categories/categories.module';
+import { ProductsModule } from './products/products.module';
+import { FavoritesModule } from './favorites/favorites.module';
+import { CartModule } from './cart/cart.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -12,6 +17,11 @@ import { UserModule } from './user/user.module';
     AuthModule,
     GlobalAuthModule,
     UserModule,
+    CategoriesModule,
+    ProductsModule,
+    FavoritesModule,
+    CartModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

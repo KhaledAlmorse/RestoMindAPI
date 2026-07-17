@@ -24,7 +24,7 @@ import {
 } from './dto/auth.dto';
 import { Events } from 'src/Common/Utils';
 import { CompareHash, Hash } from 'src/Common/Security';
-import { TokenService } from 'src/Common/Services';
+import { TokenService, UploadCloudFileService } from 'src/Common/Services';
 import { v4 as uuidv4 } from 'uuid';
 import type { StringValue } from 'ms';
 import { IAuthUser, OtpTypeEnum } from 'src/Common/Types';
@@ -37,6 +37,7 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly otpRepository: OtpRepository,
     private readonly revokeTokenRepository: RevokeTokenRepository,
+    private readonly uploadCloudFileService: UploadCloudFileService,
   ) {}
 
   // ─── Private Helper ──────────────────────────────────────────────────────────
@@ -270,12 +271,39 @@ export class AuthService {
     return { message: 'Password reset successfully, Now login again' };
   }
 
-  // ─── Update Me ───────────────────────────────────────────────────────────────
+  async updateMe(
+    user: IAuthUser,
+    body: UpdateMeDto,
+    file?: Express.Multer.File,
+  ) {
+    const existingUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
 
-  async updateMe(user: IAuthUser, body: UpdateMeDto) {
+    if (!existingUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const updateData: any = { ...body };
+
+    if (file) {
+      if (existingUser.image && existingUser.image.public_id) {
+        await this.uploadCloudFileService.DeleteFileByPublicId(
+          existingUser.image.public_id,
+        );
+      }
+      const uploadResult = await this.uploadCloudFileService.uploadFile(
+        file.path,
+        {
+          folder: `${process.env.CLOUD_FOLDER_NAME}/users/${user.user._id.toString()}`,
+        },
+      );
+      updateData.image = uploadResult;
+    }
+
     const updatedUser = await this.userRepository.update({
       filters: { _id: user.user._id },
-      body,
+      body: updateData,
     });
 
     return updatedUser;

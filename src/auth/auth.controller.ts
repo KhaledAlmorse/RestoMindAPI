@@ -7,6 +7,7 @@ import {
   Res,
   HttpStatus,
   UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { type Response } from 'express';
@@ -24,6 +25,8 @@ import {
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type IAuthUser } from 'src/Common/Types';
 import { performanceInterceptor } from 'src/Common/Interceptors/performance.interceptors';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { uploadFileOptions } from 'src/Common/Utils/multer.utils';
 
 @Controller('auth')
 export class AuthController {
@@ -121,12 +124,14 @@ export class AuthController {
 
   @Patch('update-me')
   @Auth('admin', 'customer')
+  @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateMeHandler(
     @AuthUser() user: IAuthUser,
+    @UploadedFile() file: Express.Multer.File,
     @Body() body: UpdateMeDto,
     @Res() res: Response,
   ) {
-    const result = await this.authService.updateMe(user, body);
+    const result = await this.authService.updateMe(user, body, file);
     res.status(HttpStatus.OK).json(result);
   }
 }
