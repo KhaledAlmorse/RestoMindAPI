@@ -18,7 +18,8 @@ import {
   ForgetPasswordDto,
   ResetPasswordDto,
   UpdateMeDto,
-  UpdatePasswordDto,
+  ConfirmResetOtpDto,
+  RefreshTokenDto,
 } from './dto/auth.dto';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type IAuthUser } from 'src/Common/Types';
@@ -30,8 +31,8 @@ export class AuthController {
 
   // ─── Existing Endpoints ──────────────────────────────────────────────────────
 
-  @Post('singup')
-  async singupHandler(@Body() body: singupBodyDto, @Res() res: Response) {
+  @Post('signUp')
+  async signUpHandler(@Body() body: singupBodyDto, @Res() res: Response) {
     const result = await this.authService.singup(body);
     res.status(HttpStatus.CREATED).json(result);
   }
@@ -83,12 +84,38 @@ export class AuthController {
     res.status(HttpStatus.OK).json(result);
   }
 
+  @Post('generate-access-token')
+  @Auth({
+    roles: ['admin', 'customer', 'manager'],
+    tokenType: 'refresh',
+  })
+  async generateAccessTokenHandler(
+    @Res() res: Response,
+    @AuthUser() user: IAuthUser,
+  ) {
+    const result = await this.authService.generateAccessToken(user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Patch('confirm-reset-otp')
+  @Auth('admin', 'customer')
+  async confirmResetOtpHandler(
+    @Body() body: ConfirmResetOtpDto,
+    @Res() res: Response,
+    @AuthUser() user: IAuthUser,
+  ) {
+    const result = await this.authService.confirmResetOtp(body, user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
   @Patch('reset-password')
+  @Auth('admin', 'customer')
   async resetPasswordHandler(
     @Body() body: ResetPasswordDto,
     @Res() res: Response,
+    @AuthUser() user: IAuthUser,
   ) {
-    const result = await this.authService.resetPassword(body);
+    const result = await this.authService.resetPassword(body, user);
     res.status(HttpStatus.OK).json(result);
   }
 

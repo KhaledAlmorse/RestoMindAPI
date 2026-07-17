@@ -92,14 +92,6 @@ export class ForgetPasswordDto {
 }
 
 export class ResetPasswordDto {
-  @IsEmail()
-  @IsNotEmpty()
-  email!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  otp!: string;
-
   @IsString()
   @IsNotEmpty()
   @MinLength(6)
@@ -153,4 +145,16 @@ export class UpdatePasswordDto {
   @IsNotEmpty()
   @MinLength(6)
   confirmPassword!: string;
+}
+
+export class ConfirmResetOtpDto {
+  @IsString()
+  @IsNotEmpty()
+  otp!: string;
+}
+
+export class RefreshTokenDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
 }

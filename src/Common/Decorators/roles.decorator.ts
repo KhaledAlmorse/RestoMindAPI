@@ -3,14 +3,11 @@ import {
   ExecutionContext,
   SetMetadata,
 } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
-
-//* using Reflector class to create decorator
-// export const Roles = Reflector.createDecorator<string[]>();
+import { ROLES_KEY } from '../Constants/constants';
 
 //* using SetMetadata Function to create decorator
 export const Roles = (roles: string[]) => {
-  return SetMetadata('roles', roles);
+  return SetMetadata(ROLES_KEY, roles);
 };
 
 export const AuthUser = createParamDecorator(

@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Roles } from '../Decorators';
+import { ROLES_KEY } from '../Constants/constants';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -14,7 +14,10 @@ export class RolesGuard implements CanActivate {
     //* using the Reflactor Decorator
     //   const allowedRoles = this.reflector.get(Roles, context.getHandler());
     //* using metadata
-    const allowedRoles = this.reflector.get('roles', context.getHandler());
+    const allowedRoles = this.reflector.get<string[]>(
+      ROLES_KEY,
+      context.getHandler(),
+    );
     if (!allowedRoles || allowedRoles.length === 0) return true;
     const request = context.switchToHttp().getRequest();
     const userRole = request['user'].user.role;

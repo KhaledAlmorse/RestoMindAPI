@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -12,6 +13,7 @@ import {
 } from 'src/DB/Repositories';
 import {
   ConfirmEmailDto,
+  ConfirmResetOtpDto,
   ForgetPasswordDto,
   loginBodyDto,
   ResetPasswordDto,
@@ -146,13 +148,15 @@ export class AuthService {
 
   async confirmEmail(body: ConfirmEmailDto) {
     const { otp, email } = body;
-    const user = await this.userRepository.findOne({ filters: { email } });
-    if (!user) {
+    const userData = await this.userRepository.findOne({
+      filters: { email },
+    });
+    if (!userData) {
       throw new NotFoundException(`User not found with this email`);
     }
 
     const existedOtp = await this.otpRepository.findOne({
-      filters: { userId: user._id, otpType: OtpTypeEnum.CONFIRMATION },
+      filters: { userId: userData._id, otpType: OtpTypeEnum.CONFIRMATION },
     });
     if (!existedOtp) {
       throw new NotFoundException(`Otp not found with this email`);
@@ -167,7 +171,7 @@ export class AuthService {
     }
 
     await this.userRepository.update({
-      filters: { _id: user._id },
+      filters: { _id: userData._id },
       body: { isEmailVerified: true },
     });
 
@@ -220,22 +224,11 @@ export class AuthService {
     return { message: 'OTP sent successfully' };
   }
 
-  // ─── Reset Password ──────────────────────────────────────────────────────────
-
-  async resetPassword(body: ResetPasswordDto) {
-    const { email, otp, password, confirmPassword } = body;
-
-    if (password !== confirmPassword) {
-      throw new BadRequestException('Passwords do not match');
-    }
-
-    const user = await this.userRepository.findOne({ filters: { email } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
+  async confirmResetOtp(body: ConfirmResetOtpDto, user: IAuthUser) {
+    const { otp } = body;
 
     const existedOtp = await this.otpRepository.findOne({
-      filters: { userId: user._id, otpType: OtpTypeEnum.RESET_PASSWORD },
+      filters: { userId: user.user._id, otpType: OtpTypeEnum.RESET_PASSWORD },
     });
     if (!existedOtp) {
       throw new NotFoundException('OTP not found');
@@ -249,22 +242,32 @@ export class AuthService {
       throw new BadRequestException('Invalid OTP');
     }
 
-    // Update password (Mongoose pre('save') hook will hash it)
-    const userDoc = await this.userRepository.findOne({
-      filters: { _id: user._id },
-    });
-    userDoc!.password = password;
-    await this.userRepository.save(userDoc!);
-
-    // Delete the used OTP
     await this.otpRepository.delete({ filters: { _id: existedOtp._id } });
 
-    // Delete all revoked tokens for this user (recommended)
-    await this.revokeTokenRepository.deleteMany({
-      filters: { userId: user._id },
+    return { message: 'Reset OTP confirmed successfully' };
+  }
+
+  // ─── Reset Password ──────────────────────────────────────────────────────────
+
+  async resetPassword(body: ResetPasswordDto, user: IAuthUser) {
+    const { password, confirmPassword } = body;
+
+    if (password !== confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const HashPassword = Hash(password);
+
+    await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { password: HashPassword },
     });
 
-    return { message: 'Password reset successfully' };
+    await this.revokeTokenRepository.deleteMany({
+      filters: { userId: user.user._id },
+    });
+
+    return { message: 'Password reset successfully, Now login again' };
   }
 
   // ─── Update Me ───────────────────────────────────────────────────────────────
@@ -276,5 +279,25 @@ export class AuthService {
     });
 
     return updatedUser;
+  }
+
+  async generateAccessToken(authUser: IAuthUser) {
+    const { user, token } = authUser;
+    const isTokenRevoked = await this.revokeTokenRepository.findOne({
+      filters: { tokenId: token['jti'] },
+    });
+
+    if (isTokenRevoked) {
+      throw new UnauthorizedException('Token has been revoked');
+    }
+
+    const tokenPayload = { id: user._id, email: user.email };
+    const accessToken = this.tokenService.generate(tokenPayload, {
+      secret: process.env.ACCESS_TOKEN_SECRET,
+      expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN as StringValue,
+      jwtid: uuidv4(),
+    });
+
+    return { accessToken };
   }
 }
