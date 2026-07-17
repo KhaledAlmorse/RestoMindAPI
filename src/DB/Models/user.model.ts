@@ -39,6 +39,9 @@ export class User {
   @Prop({ type: Date })
   DOB!: Date;
 
+  @Prop({ type: Date })
+  passwordChangedAt?: Date;
+
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
 

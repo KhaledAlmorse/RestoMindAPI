@@ -8,6 +8,7 @@ import {
   HttpStatus,
   UseInterceptors,
   UploadedFile,
+  Headers,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { type Response } from 'express';
@@ -16,7 +17,7 @@ import {
   loginBodyDto,
   ConfirmEmailDto,
   SendOtpDto,
-  ForgetPasswordDto,
+  ForgotPasswordDto,
   ResetPasswordDto,
   UpdateMeDto,
   ConfirmResetOtpDto,
@@ -78,12 +79,12 @@ export class AuthController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Post('forget-password')
-  async forgetPasswordHandler(
-    @Body() body: ForgetPasswordDto,
+  @Post('forgot-password')
+  async forgotPasswordHandler(
+    @Body() body: ForgotPasswordDto,
     @Res() res: Response,
   ) {
-    const result = await this.authService.forgetPassword(body);
+    const result = await this.authService.forgotPassword(body);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -101,24 +102,21 @@ export class AuthController {
   }
 
   @Patch('confirm-reset-otp')
-  @Auth('admin', 'customer')
   async confirmResetOtpHandler(
     @Body() body: ConfirmResetOtpDto,
     @Res() res: Response,
-    @AuthUser() user: IAuthUser,
   ) {
-    const result = await this.authService.confirmResetOtp(body, user);
+    const result = await this.authService.confirmResetOtp(body);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Patch('reset-password')
-  @Auth('admin', 'customer')
   async resetPasswordHandler(
     @Body() body: ResetPasswordDto,
     @Res() res: Response,
-    @AuthUser() user: IAuthUser,
+    @Headers('authorization') authHeader: string,
   ) {
-    const result = await this.authService.resetPassword(body, user);
+    const result = await this.authService.resetPassword(body, authHeader);
     res.status(HttpStatus.OK).json(result);
   }
 

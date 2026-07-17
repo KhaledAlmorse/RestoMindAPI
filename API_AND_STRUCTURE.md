@@ -142,10 +142,10 @@ In Postman, you can set this in the **Auth** tab:
     "type": "confirmation" 
   }
   ```
-  *(Note: "type" can be either `"confirmation"` or `"forgetPassword"`)*
+  *(Note: "type" can be either `"confirmation"` or `"reset-password"`)*
 
-#### 7. Forget Password
-- **Method / URL**: `POST /auth/forget-password`
+#### 7. Forgot Password
+- **Method / URL**: `POST /auth/forgot-password`
 - **Description**: Generates and sends a password reset OTP.
 - **Body (`raw JSON`)**:
   ```json
@@ -167,19 +167,26 @@ In Postman, you can set this in the **Auth** tab:
 
 #### 9. Confirm Reset OTP
 - **Method / URL**: `PATCH /auth/confirm-reset-otp`
-- **Auth required**: Access Token (`admin`, `customer`)
-- **Headers**: `Authorization: Bearer <accessToken>`
+- **Auth required**: None (Public endpoint)
 - **Body (`raw JSON`)**:
   ```json
   {
+    "email": "johndoe@example.com",
     "otp": "123456"
+  }
+  ```
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "message": "OTP verified successfully",
+    "resetToken": "ey..."
   }
   ```
 
 #### 10. Reset Password
 - **Method / URL**: `PATCH /auth/reset-password`
-- **Auth required**: Access Token (`admin`, `customer`)
-- **Headers**: `Authorization: Bearer <accessToken>`
+- **Auth required**: Reset Token
+- **Headers**: `Authorization: Bearer <resetToken>`
 - **Body (`raw JSON`)**:
   ```json
   {

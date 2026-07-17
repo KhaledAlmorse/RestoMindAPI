@@ -85,7 +85,7 @@ export class SendOtpDto {
   type!: OtpTypeEnum;
 }
 
-export class ForgetPasswordDto {
+export class ForgotPasswordDto {
   @IsEmail()
   @IsNotEmpty()
   email!: string;
@@ -148,6 +148,10 @@ export class UpdatePasswordDto {
 }
 
 export class ConfirmResetOtpDto {
+  @IsEmail()
+  @IsNotEmpty()
+  email!: string;
+
   @IsString()
   @IsNotEmpty()
   otp!: string;

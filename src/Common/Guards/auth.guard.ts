@@ -58,6 +58,17 @@ export class AuthGuard implements CanActivate {
         throw new NotFoundException('User not found, please Login ');
       }
 
+      if (user.passwordChangedAt) {
+        const passwordChangedTime = Math.floor(
+          new Date(user.passwordChangedAt).getTime() / 1000,
+        );
+        if (decoded.iat && decoded.iat < passwordChangedTime) {
+          throw new UnauthorizedException(
+            'Token has been revoked due to password change',
+          );
+        }
+      }
+
       request.user = { user, token: decoded };
       return true;
     } catch (error) {

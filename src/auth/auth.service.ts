@@ -14,7 +14,7 @@ import {
 import {
   ConfirmEmailDto,
   ConfirmResetOtpDto,
-  ForgetPasswordDto,
+  ForgotPasswordDto,
   loginBodyDto,
   ResetPasswordDto,
   SendOtpDto,
@@ -25,7 +25,7 @@ import {
 import { Events } from 'src/Common/Utils';
 import { CompareHash, Hash } from 'src/Common/Security';
 import { TokenService, UploadCloudFileService } from 'src/Common/Services';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import type { StringValue } from 'ms';
 import { IAuthUser, OtpTypeEnum } from 'src/Common/Types';
 import { Types } from 'mongoose';
@@ -125,13 +125,13 @@ export class AuthService {
     const accessToken = this.tokenService.generate(tokenPayload, {
       secret: process.env.ACCESS_TOKEN_SECRET,
       expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN as StringValue,
-      jwtid: uuidv4(),
+      jwtid: randomUUID(),
     });
 
     const refreshToken = this.tokenService.generate(tokenPayload, {
       secret: process.env.REFRESH_TOKEN_SECRET,
       expiresIn: process.env.REFRESH_EXPIRES_IN as StringValue,
-      jwtid: uuidv4(),
+      jwtid: randomUUID(),
     });
 
     return { accessToken, refreshToken };
@@ -212,7 +212,7 @@ export class AuthService {
 
   // ─── Forget Password ─────────────────────────────────────────────────────────
 
-  async forgetPassword(body: ForgetPasswordDto) {
+  async forgotPassword(body: ForgotPasswordDto) {
     const { email } = body;
 
     const user = await this.userRepository.findOne({ filters: { email } });
@@ -225,18 +225,23 @@ export class AuthService {
     return { message: 'OTP sent successfully' };
   }
 
-  async confirmResetOtp(body: ConfirmResetOtpDto, user: IAuthUser) {
-    const { otp } = body;
+  async confirmResetOtp(body: ConfirmResetOtpDto) {
+    const { email, otp } = body;
+
+    const user = await this.userRepository.findOne({ filters: { email } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
 
     const existedOtp = await this.otpRepository.findOne({
-      filters: { userId: user.user._id, otpType: OtpTypeEnum.RESET_PASSWORD },
+      filters: { userId: user._id, otpType: OtpTypeEnum.RESET_PASSWORD },
     });
     if (!existedOtp) {
       throw new NotFoundException('OTP not found');
     }
 
     if (existedOtp.expireTime < new Date(Date.now())) {
-      throw new BadRequestException('OTP has been expired');
+      throw new BadRequestException('OTP has expired');
     }
 
     if (!CompareHash(otp, existedOtp.otp)) {
@@ -245,27 +250,84 @@ export class AuthService {
 
     await this.otpRepository.delete({ filters: { _id: existedOtp._id } });
 
-    return { message: 'Reset OTP confirmed successfully' };
+    // Generate a short-lived Reset Token (JWT) dedicated only for password reset (5-10 minutes)
+    const resetToken = this.tokenService.generate(
+      { id: user._id, email: user.email, type: 'RESET_PASSWORD' },
+      {
+        secret:
+          process.env.RESET_PASSWORD_TOKEN_SECRET || 'default-reset-secret-key',
+        expiresIn: (process.env.RESET_PASSWORD_EXPIRES_IN ||
+          '10m') as StringValue,
+        jwtid: randomUUID(),
+      },
+    );
+
+    return {
+      message: 'OTP verified successfully',
+      resetToken,
+    };
   }
 
   // ─── Reset Password ──────────────────────────────────────────────────────────
 
-  async resetPassword(body: ResetPasswordDto, user: IAuthUser) {
+  async resetPassword(body: ResetPasswordDto, authHeader?: string) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException('No reset token provided');
+    }
+    const token = authHeader.split(' ')[1];
+
+    let decoded: any;
+    try {
+      decoded = this.tokenService.verify(token, {
+        secret:
+          process.env.RESET_PASSWORD_TOKEN_SECRET || 'default-reset-secret-key',
+      });
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    if (decoded.type !== 'RESET_PASSWORD') {
+      throw new UnauthorizedException('Invalid reset token type');
+    }
+
+    const isTokenRevoked = await this.revokeTokenRepository.findOne({
+      filters: { tokenId: decoded.jti },
+    });
+    if (isTokenRevoked) {
+      throw new UnauthorizedException('Reset token has already been used');
+    }
+
     const { password, confirmPassword } = body;
 
     if (password !== confirmPassword) {
       throw new BadRequestException('Passwords do not match');
     }
 
+    const userId = decoded.id;
     const HashPassword = Hash(password);
 
-    await this.userRepository.update({
-      filters: { _id: user.user._id },
-      body: { password: HashPassword },
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: userId },
+      body: {
+        password: HashPassword,
+        passwordChangedAt: new Date(),
+      } as any,
     });
 
-    await this.revokeTokenRepository.deleteMany({
-      filters: { userId: user.user._id },
+    if (!updatedUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Delete any remaining Reset OTPs for this user
+    await this.otpRepository.deleteMany({
+      filters: { userId, otpType: OtpTypeEnum.RESET_PASSWORD },
+    });
+
+    // Invalidate the Reset Token after use
+    await this.revokeTokenRepository.create({
+      tokenId: decoded.jti,
+      userId,
+      expiryTime: new Date(decoded.exp * 1000),
     });
 
     return { message: 'Password reset successfully, Now login again' };
@@ -323,7 +385,7 @@ export class AuthService {
     const accessToken = this.tokenService.generate(tokenPayload, {
       secret: process.env.ACCESS_TOKEN_SECRET,
       expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN as StringValue,
-      jwtid: uuidv4(),
+      jwtid: randomUUID(),
     });
 
     return { accessToken };
