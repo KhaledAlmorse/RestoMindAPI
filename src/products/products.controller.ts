@@ -68,7 +68,7 @@ export class ProductsController {
   ) {
     const result = await this.productsService.changeAvailability(
       id,
-      body.isAvailable as boolean,
+      body.isAvailable,
     );
     res.status(HttpStatus.OK).json(result);
   }
@@ -82,7 +82,7 @@ export class ProductsController {
   ) {
     const result = await this.productsService.updateDiscount(
       id,
-      body.discountedPrice as number,
+      body.discountedPrice,
     );
     res.status(HttpStatus.OK).json(result);
   }
