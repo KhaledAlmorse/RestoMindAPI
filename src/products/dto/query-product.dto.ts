@@ -28,4 +28,8 @@ export class QueryProductDto {
   @IsEnum(['asc', 'desc'])
   @IsOptional()
   order?: 'asc' | 'desc';
+
+  @IsMongoId()
+  @IsOptional()
+  restaurantId?: string;
 }

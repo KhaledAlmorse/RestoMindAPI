@@ -36,13 +36,6 @@ export abstract class BaseService<TDocument extends Document> {
   }
 
   async findOne(options: findOneOptions<TDocument>): Promise<TDocument | null> {
-    if (options.filters._id) {
-      return await this.model
-        .findById(options.filters._id)
-        .select(options.select ?? '')
-        .populate(options.populationArray ?? [])
-        .exec();
-    }
     return await this.model
       .findOne(options.filters)
       .select(options.select ?? '')

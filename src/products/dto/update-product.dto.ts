@@ -74,4 +74,8 @@ export class UpdateProductDto {
   @IsBoolean()
   @IsOptional()
   isAvailable?: boolean;
+
+  @IsMongoId()
+  @IsOptional()
+  restaurantId?: string;
 }

@@ -7,7 +7,7 @@ import {
 import { UserRepository } from 'src/DB/Repositories';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { isValidObjectId } from 'mongoose';
+import { isValidObjectId, Types } from 'mongoose';
 
 @Injectable()
 export class UserService {
@@ -34,7 +34,11 @@ export class UserService {
     }
 
     // Password is auto-hashed by Mongoose pre('save') hook
-    const newUser = await this.userRepository.create({ ...body });
+    const createData: any = { ...body };
+    if (body.restaurantId) {
+      createData.restaurantId = new Types.ObjectId(body.restaurantId);
+    }
+    const newUser = await this.userRepository.create(createData);
 
     return { data: newUser };
   }
@@ -123,9 +127,14 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
+    const updateData: any = { ...body };
+    if (body.restaurantId) {
+      updateData.restaurantId = new Types.ObjectId(body.restaurantId);
+    }
+
     const updated = await this.userRepository.update({
       filters: { _id: id },
-      body: body as any,
+      body: updateData,
     });
 
     return {

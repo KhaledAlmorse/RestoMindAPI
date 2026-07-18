@@ -3,12 +3,14 @@ import {
   IsDate,
   IsEmail,
   IsEnum,
+  IsMongoId,
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
   IsString,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 import { GenderEnum, RolesEnum } from 'src/Common/Types';
 
@@ -50,4 +52,8 @@ export class CreateUserDto {
   @IsDate()
   @Type(() => Date)
   DOB?: Date;
+
+  @IsOptional()
+  @IsMongoId()
+  restaurantId?: string;
 }

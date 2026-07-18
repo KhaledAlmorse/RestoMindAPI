@@ -4,6 +4,8 @@ import {
   Post,
   Body,
   Patch,
+  Delete,
+  Param,
   Res,
   HttpStatus,
   UseInterceptors,
@@ -22,6 +24,8 @@ import {
   UpdateMeDto,
   ConfirmResetOtpDto,
   RefreshTokenDto,
+  CreateAddressDto,
+  UpdateAddressDto,
 } from './dto/auth.dto';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type IAuthUser } from 'src/Common/Types';
@@ -130,6 +134,60 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const result = await this.authService.updateMe(user, body, file);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  // ─── Address Endpoints ──────────────────────────────────────────────────────
+
+  @Post('addresses')
+  @Auth('admin', 'customer')
+  async addAddress(
+    @AuthUser() user: IAuthUser,
+    @Body() body: CreateAddressDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.addAddress(user, body);
+    res.status(HttpStatus.CREATED).json(result);
+  }
+
+  @Get('addresses')
+  @Auth('admin', 'customer')
+  async getAddresses(@AuthUser() user: IAuthUser, @Res() res: Response) {
+    const result = await this.authService.getAddresses(user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Patch('addresses/:addressId')
+  @Auth('admin', 'customer')
+  async updateAddress(
+    @AuthUser() user: IAuthUser,
+    @Param('addressId') addressId: string,
+    @Body() body: UpdateAddressDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.updateAddress(user, addressId, body);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Delete('addresses/:addressId')
+  @Auth('admin', 'customer')
+  async deleteAddress(
+    @AuthUser() user: IAuthUser,
+    @Param('addressId') addressId: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.deleteAddress(user, addressId);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Patch('addresses/:addressId/default')
+  @Auth('admin', 'customer')
+  async setDefaultAddress(
+    @AuthUser() user: IAuthUser,
+    @Param('addressId') addressId: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.setDefaultAddress(user, addressId);
     res.status(HttpStatus.OK).json(result);
   }
 }

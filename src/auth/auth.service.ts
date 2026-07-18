@@ -21,6 +21,8 @@ import {
   singupBodyDto,
   UpdateMeDto,
   UpdatePasswordDto,
+  CreateAddressDto,
+  UpdateAddressDto,
 } from './dto/auth.dto';
 import { Events } from 'src/Common/Utils';
 import { CompareHash, Hash } from 'src/Common/Security';
@@ -389,5 +391,161 @@ export class AuthService {
     });
 
     return { accessToken };
+  }
+
+  // ─── Address Management ──────────────────────────────────────────────────────
+
+  async addAddress(user: IAuthUser, body: CreateAddressDto) {
+    const dbUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
+    if (!dbUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!dbUser.addresses) {
+      dbUser.addresses = [];
+    }
+
+    const isDefault = body.isDefault || dbUser.addresses.length === 0;
+
+    if (isDefault) {
+      dbUser.addresses.forEach((addr) => {
+        addr.isDefault = false;
+      });
+    }
+
+    const fullName = `${dbUser.firstName} ${dbUser.lastName}`.trim();
+
+    const newAddress = {
+      _id: new Types.ObjectId(),
+      fullName,
+      ...body,
+      isDefault,
+    };
+
+    dbUser.addresses.push(newAddress);
+
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { addresses: dbUser.addresses } as any,
+    });
+
+    return { data: updatedUser?.addresses || [] };
+  }
+
+  async getAddresses(user: IAuthUser) {
+    const dbUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
+    if (!dbUser) {
+      throw new NotFoundException('User not found');
+    }
+    return { data: dbUser.addresses || [] };
+  }
+
+  async updateAddress(
+    user: IAuthUser,
+    addressId: string,
+    body: UpdateAddressDto,
+  ) {
+    const dbUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
+    if (!dbUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const address = dbUser.addresses.find(
+      (addr) => addr._id.toString() === addressId,
+    );
+    if (!address) {
+      throw new NotFoundException('Address not found');
+    }
+
+    const fullName = `${dbUser.firstName} ${dbUser.lastName}`.trim();
+    address.fullName = fullName;
+
+    if (body.label !== undefined) address.label = body.label;
+    if (body.phoneNumber !== undefined) address.phoneNumber = body.phoneNumber;
+    if (body.street !== undefined) address.street = body.street;
+    if (body.city !== undefined) address.city = body.city;
+    if (body.country !== undefined) address.country = body.country;
+
+    if (body.isDefault !== undefined) {
+      address.isDefault = body.isDefault;
+      if (body.isDefault) {
+        dbUser.addresses.forEach((addr) => {
+          if (addr._id.toString() !== addressId) {
+            addr.isDefault = false;
+          }
+        });
+      }
+    }
+
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { addresses: dbUser.addresses } as any,
+    });
+
+    return { data: updatedUser?.addresses || [] };
+  }
+
+  async deleteAddress(user: IAuthUser, addressId: string) {
+    const dbUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
+    if (!dbUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    const index = dbUser.addresses.findIndex(
+      (addr) => addr._id.toString() === addressId,
+    );
+    if (index === -1) {
+      throw new NotFoundException('Address not found');
+    }
+
+    dbUser.addresses.splice(index, 1);
+
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { addresses: dbUser.addresses } as any,
+    });
+
+    return {
+      message: 'Address deleted successfully',
+      data: updatedUser?.addresses || [],
+    };
+  }
+
+  async setDefaultAddress(user: IAuthUser, addressId: string) {
+    const dbUser = await this.userRepository.findOne({
+      filters: { _id: user.user._id },
+    });
+    if (!dbUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    let found = false;
+    dbUser.addresses.forEach((addr) => {
+      if (addr._id.toString() === addressId) {
+        addr.isDefault = true;
+        found = true;
+      } else {
+        addr.isDefault = false;
+      }
+    });
+
+    if (!found) {
+      throw new NotFoundException('Address not found');
+    }
+
+    const updatedUser = await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { addresses: dbUser.addresses } as any,
+    });
+
+    return { data: updatedUser?.addresses || [] };
   }
 }

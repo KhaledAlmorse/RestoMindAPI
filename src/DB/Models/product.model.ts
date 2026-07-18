@@ -1,11 +1,31 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import slugify from 'slugify';
 import { Category } from './category.model';
 
 @Schema({ timestamps: true })
 export class Product {
-  @Prop({ type: String, required: true })
+  @Prop({
+    type: String,
+    required: true,
+    index: {
+      name: 'unique_title_idx',
+      unique: true,
+    },
+  })
   title!: string;
+
+  @Prop({
+    type: String,
+    required: true,
+    default: function () {
+      return slugify(this.title, {
+        lower: true,
+        strict: true,
+      });
+    },
+  })
+  slug!: string;
 
   @Prop({ type: String, required: true })
   description!: string;
@@ -46,6 +66,9 @@ export class Product {
 
   @Prop({ type: Types.ObjectId, ref: 'Category', required: true })
   category!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true })
+  restaurantId!: Types.ObjectId;
 
   @Prop({ type: Number, required: true })
   freshnessWindow!: number;

@@ -3,18 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ProductRepository, CategoryRepository } from 'src/DB/Repositories';
+import {
+  ProductRepository,
+  CategoryRepository,
+  RestaurantRepository,
+} from 'src/DB/Repositories';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
+import slugify from 'slugify';
 
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly productRepository: ProductRepository,
     private readonly categoryRepository: CategoryRepository,
+    private readonly restaurantRepository: RestaurantRepository,
     private readonly uploadCloudFileService: UploadCloudFileService,
   ) {}
 
@@ -46,6 +52,14 @@ export class ProductsService {
       throw new NotFoundException('Category not found');
     }
 
+    this.validateObjectId(body.restaurantId);
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { _id: body.restaurantId, isDeleted: false },
+    });
+    if (!restaurant) {
+      throw new NotFoundException('Restaurant not found');
+    }
+
     const productId = new Types.ObjectId();
     const uploadResult = await this.uploadCloudFileService.uploadFile(
       file.path,
@@ -55,12 +69,13 @@ export class ProductsService {
     );
 
     const newProduct = await this.productRepository.create({
-      _id: productId,
       ...body,
+      _id: productId,
       discountedPrice,
       category: new Types.ObjectId(body.category),
+      restaurantId: new Types.ObjectId(body.restaurantId),
       image: uploadResult,
-    });
+    } as any);
     return { data: newProduct };
   }
 
@@ -78,6 +93,12 @@ export class ProductsService {
     }
 
     const updateBody: any = { ...body };
+    if (body.title) {
+      updateBody.slug = slugify(body.title, {
+        lower: true,
+        strict: true,
+      });
+    }
     if (body.category) {
       this.validateObjectId(body.category);
       const category = await this.categoryRepository.findOne({
@@ -87,6 +108,16 @@ export class ProductsService {
         throw new NotFoundException('Category not found');
       }
       updateBody.category = new Types.ObjectId(body.category);
+    }
+    if (body.restaurantId) {
+      this.validateObjectId(body.restaurantId);
+      const restaurant = await this.restaurantRepository.findOne({
+        filters: { _id: body.restaurantId, isDeleted: false },
+      });
+      if (!restaurant) {
+        throw new NotFoundException('Restaurant not found');
+      }
+      updateBody.restaurantId = new Types.ObjectId(body.restaurantId);
     }
     const finalPrice =
       updateBody.price !== undefined ? updateBody.price : product.price;
@@ -202,6 +233,7 @@ export class ProductsService {
       tag,
       sort = 'createdAt',
       order = 'desc',
+      restaurantId,
     } = query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -219,6 +251,11 @@ export class ProductsService {
       filters['category'] = category;
     }
 
+    if (restaurantId) {
+      this.validateObjectId(restaurantId);
+      filters['restaurantId'] = new Types.ObjectId(restaurantId);
+    }
+
     if (search) {
       filters['title'] = { $regex: search, $options: 'i' };
     }
@@ -233,7 +270,7 @@ export class ProductsService {
       limit: limitNum,
       sort,
       order,
-      populationArray: ['category'],
+      populationArray: ['category', 'restaurantId'],
     });
 
     return result;

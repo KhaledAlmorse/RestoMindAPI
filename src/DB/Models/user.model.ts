@@ -1,7 +1,35 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, HydratedDocument } from 'mongoose';
+import { Document, HydratedDocument, Types } from 'mongoose';
 import { Encrypt, Hash } from 'src/Common/Security';
 import { GenderEnum, RolesEnum } from 'src/Common/Types/types';
+
+@Schema({ _id: true })
+export class UserAddress {
+  _id!: Types.ObjectId;
+
+  @Prop({ type: String, required: false })
+  label?: string;
+
+  @Prop({ type: String, required: true })
+  fullName!: string;
+
+  @Prop({ type: String, required: true })
+  phoneNumber!: string;
+
+  @Prop({ type: String, required: true })
+  street!: string;
+
+  @Prop({ type: String, required: true })
+  city!: string;
+
+  @Prop({ type: String, required: false })
+  country?: string;
+
+  @Prop({ type: Boolean, default: false })
+  isDefault!: boolean;
+}
+
+const UserAddressSchema = SchemaFactory.createForClass(UserAddress);
 
 @Schema({ timestamps: true })
 export class User {
@@ -57,6 +85,12 @@ export class User {
     public_id: string;
     secure_url: string;
   };
+
+  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: false })
+  restaurantId?: Types.ObjectId;
+
+  @Prop({ type: [UserAddressSchema], default: [] })
+  addresses!: UserAddress[];
 }
 
 const UserSchema = SchemaFactory.createForClass(User);

@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsDate,
   IsEnum,
+  IsMongoId,
   IsOptional,
   IsPhoneNumber,
   IsString,
@@ -39,4 +40,8 @@ export class UpdateUserDto {
   @IsOptional()
   @IsEnum(RolesEnum)
   role?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  restaurantId?: string;
 }

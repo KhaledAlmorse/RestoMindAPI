@@ -6,3 +6,4 @@ export * from './product.repository';
 export * from './favorite.repository';
 export * from './cart.repository';
 export * from './order.repository';
+export * from './restaurant.repository';

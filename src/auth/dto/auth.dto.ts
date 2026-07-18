@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDate,
   IsEmail,
   IsEnum,
@@ -161,4 +162,56 @@ export class RefreshTokenDto {
   @IsString()
   @IsNotEmpty()
   token!: string;
+}
+
+export class CreateAddressDto {
+  @IsString()
+  @IsOptional()
+  label?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phoneNumber!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  street!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city!: string;
+
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
+}
+
+export class UpdateAddressDto {
+  @IsString()
+  @IsOptional()
+  label?: string;
+
+  @IsString()
+  @IsOptional()
+  phoneNumber?: string;
+
+  @IsString()
+  @IsOptional()
+  street?: string;
+
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  country?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
 }

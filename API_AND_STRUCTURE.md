@@ -49,6 +49,12 @@ RestoMindApi/
 │   │   ├── auth.service.ts        # Auth business logic
 │   │   └── auth.module.ts
 │   │
+│   ├── restaurant/                # Restaurant module
+│   │   ├── dto/                   # Restaurant validation DTOs
+│   │   ├── restaurant.controller.ts  # Restaurant HTTP controllers
+│   │   ├── restaurant.service.ts  # Restaurant business logic
+│   │   └── restaurant.module.ts
+│   │
 │   └── user/                      # User module (CRUD management)
 │       ├── dto/                   # User validation DTOs
 │       ├── user.controller.ts     # User HTTP controllers
@@ -196,24 +202,67 @@ In Postman, you can set this in the **Auth** tab:
   ```
 
 #### 11. Update Me
-- **Method / URL**: `PATCH /auth/update-me`
-- **Auth required**: Access Token (`admin`, `customer`)
-- **Headers**: `Authorization: Bearer <accessToken>`
-- **Body (`form-data`)**:
+- Method / URL: `PATCH /auth/update-me`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
+- Body (`form-data`):
   - `firstName`: `Johnny` (text, optional)
   - `lastName`: `Doey` (text, optional)
   - `phone`: `+1987654321` (text, optional)
   - `image`: `[File]` (file, optional profile picture upload)
+
+#### 12. Add Delivery Address
+- Method / URL: `POST /auth/addresses`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
+- Body (`raw JSON`):
+  ```json
+  {
+    "label": "Home",
+    "phoneNumber": "+1234567890",
+    "street": "12 Nile St",
+    "city": "Cairo",
+    "country": "Egypt",
+    "isDefault": true
+  }
+  ```
+
+#### 13. Get My Saved Addresses
+- Method / URL: `GET /auth/addresses`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
+
+#### 14. Update Saved Address
+- Method / URL: `PATCH /auth/addresses/:addressId`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
+- Body (`raw JSON`):
+  ```json
+  {
+    "label": "Work",
+    "street": "44 Pyramids Rd"
+  }
+  ```
+
+#### 15. Delete Saved Address
+- Method / URL: `DELETE /auth/addresses/:addressId`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
+
+#### 16. Set Address as Default
+- Method / URL: `PATCH /auth/addresses/:addressId/default`
+- Auth required: Access Token (`admin`, `customer`)
+- Headers: `Authorization: Bearer <accessToken>`
 
 ---
 
 ### 3.2 User Management Module (`/users`)
 
 #### 1. Create User (Admin/Manager)
-- **Method / URL**: `POST /users`
-- **Auth required**: Access Token (`admin`, `manager`)
-- **Headers**: `Authorization: Bearer <accessToken>`
-- **Body (`raw JSON`)**:
+- Method / URL: `POST /users`
+- Auth required: Access Token (`admin`, `manager`)
+- Headers: `Authorization: Bearer <accessToken>`
+- Body (`raw JSON`):
   ```json
   {
     "firstName": "Jane",
@@ -225,6 +274,7 @@ In Postman, you can set this in the **Auth** tab:
     "gender": "female"
   }
   ```
+  *(Note: `restaurantId` is optional and can be omitted even when `role` is `"manager"`)*
 
 #### 2. Find All Users
 - **Method / URL**: `GET /users`
@@ -302,7 +352,7 @@ In Postman, you can set this in the **Auth** tab:
 - **Method / URL**: `POST /products`
 - **Auth required**: Access Token (`admin`)
 - **Headers**: `Authorization: Bearer <accessToken>`
-- **Body (`form-data`)**:
+- Body (`form-data`):
   - `title`: `Fresh Organic Spinach` (text)
   - `description`: `Rich in iron, fresh green spinach leaves.` (text)
   - `longDescription`: `Harvested early in the morning and delivered straight to your door. Great for salads and cooking.` (text)
@@ -310,12 +360,12 @@ In Postman, you can set this in the **Auth** tab:
   - `discountedPrice`: `8.50` (text/number)
   - `image`: `[File]` (select an image file)
   - `category`: `<category_object_id>` (text)
+  - `restaurantId`: `6a5b9402bd9903547f7c8405` (text, required)
   - `freshnessWindow`: `5` (text/number)
   - `tags[]`: `organic` (text, optional)
   - `tags[]`: `greens` (text, optional)
   - `tags[]`: `spinach` (text, optional)
   - `isBestseller`: `true` (text/boolean, optional)
-  - `isAvailable`: `true` (text/boolean, optional)
 
 #### 2. Update Product
 - **Method / URL**: `PATCH /products/:id`
@@ -356,10 +406,11 @@ In Postman, you can set this in the **Auth** tab:
 #### 6. Get All Products (Filtered & Paginated)
 - **Method / URL**: `GET /products`
 - **Auth required**: Public
-- **Query Params**:
+- Query Params:
   - `page` (e.g. `1`)
   - `limit` (e.g. `10`)
   - `category` (e.g. `<category_object_id>`)
+  - `restaurantId` (e.g. `<restaurant_object_id>`)
   - `search` (e.g. `Spinach`)
   - `tag` (e.g. `organic`)
   - `sort` (e.g. `price` or `rating`)
@@ -451,13 +502,52 @@ In Postman, you can set this in the **Auth** tab:
 - **Method / URL**: `POST /orders`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
-- **Body**: None (Empty `{}`)
-- **Description**: Places an order using the items in the current cart. Calculates totals, saves payment method as `CASH`, order status as `Pending`, and clears the cart on success.
+- **Body (`raw JSON`)**:
+
+##### Example 1: Home Delivery (New Address + Save to Profile option)
+```json
+{
+  "deliveryMethod": "Home Delivery",
+  "deliveryAddress": {
+    "street": "12 Nile St",
+    "city": "Cairo",
+    "country": "Egypt"
+  },
+  "specialNotes": "Ring the bell twice",
+  "paymentMethod": "Cash on Delivery",
+  "saveAddress": true
+}
+```
+
+##### Example 2: Home Delivery (Using Saved `addressId` from Profile)
+```json
+{
+  "deliveryMethod": "Home Delivery",
+  "deliveryAddress": {
+    "addressId": "6a5b993c4a8ade9ab7e5c005"
+  },
+  "specialNotes": "Leave at front door",
+  "paymentMethod": "Cash on Delivery"
+}
+```
+
+##### Example 3: Store Pickup
+```json
+{
+  "deliveryMethod": "Store Pickup",
+  "specialNotes": "Prepare it hot",
+  "paymentMethod": "Cash on Delivery"
+}
+```
+  *(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of street, city, country to use profile saved address)*
+- **Description**: Places an order using the items in the current cart. Calculates totals, saves payment method as `Cash on Delivery`, order status as `Pending`, and clears the cart on success. **If the cart contains products from more than one restaurant, it automatically splits checkout into multiple Order documents (one per restaurantId) and returns an array of orders.**
 
 #### 2. Get My Orders
 - **Method / URL**: `GET /orders/me`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Query Params**:
+  - `restaurantId` (e.g. `<restaurant_object_id>`, optional)
 
 #### 3. Get My Order Details
 - **Method / URL**: `GET /orders/me/:id`
@@ -468,8 +558,16 @@ In Postman, you can set this in the **Auth** tab:
 - **Method / URL**: `GET /orders`
 - **Auth required**: Access Token (`admin`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Query Params**:
+  - `restaurantId` (e.g. `<restaurant_object_id>`, optional)
 
-#### 5. Update Order Status (Admin Only)
+#### 5. Get Restaurant Orders (Admin/Manager)
+- **Method / URL**: `GET /orders/restaurant/:restaurantId`
+- **Auth required**: Access Token (`admin`, `manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Retrieves orders for a specific restaurant. Managers can only query their own assigned `restaurantId`.
+
+#### 6. Update Order Status (Admin Only)
 - **Method / URL**: `PATCH /orders/:id/status`
 - **Auth required**: Access Token (`admin`)
 - **Headers**: `Authorization: Bearer <accessToken>`
@@ -483,20 +581,85 @@ In Postman, you can set this in the **Auth** tab:
 
 ---
 
+### 3.8 Restaurant Module (`/restaurants`)
+
+#### 1. Create Restaurant
+- **Method / URL**: `POST /restaurants`
+- **Auth required**: Access Token (`admin`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "name": "Bella Italia",
+    "ownerUserId": "6a5a2f79ae2f9fc49c9681d3",
+    "description": "Authentic Italian restaurant",
+    "phone": "+1122334455",
+    "address": {
+      "street": "15 Roma St",
+      "city": "Cairo",
+      "country": "Egypt"
+    }
+  }
+  ```
+
+#### 2. Get All Restaurants
+- **Method / URL**: `GET /restaurants`
+- **Auth required**: Access Token (`admin`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Query Params**:
+  - `page` (e.g. `1`)
+  - `limit` (e.g. `10`)
+  - `search` (e.g. `Bella`)
+
+#### 3. Get My Restaurant
+- **Method / URL**: `GET /restaurants/me`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Automatically resolves and returns the restaurant associated with the logged-in manager's `restaurantId`.
+
+#### 4. Get Restaurant by ID
+- **Method / URL**: `GET /restaurants/:id`
+- **Auth required**: Access Token (`admin`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+
+#### 5. Update Restaurant
+- **Method / URL**: `PATCH /restaurants/:id`
+- **Auth required**: Access Token (`admin`, `manager` - own only)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "description": "Premium authentic Italian dining experience",
+    "isActive": true
+  }
+  ```
+
+#### 6. Delete Restaurant (Soft Delete)
+- **Method / URL**: `DELETE /restaurants/:id`
+- **Auth required**: Access Token (`admin`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+
+---
+
 ## 4. End-to-End Shopping & Order Workflow
 
 To place a successful order, follow this sequence of requests in Postman:
 
-1. **Create Category & Product** (Admin):
-   * Create categories and products using `POST /categories` and `POST /products`.
-2. **Add Products to Cart** (Customer):
+1. **Create Restaurant** (Admin):
+   * Call `POST /restaurants` to create a new Restaurant and assign a manager `ownerUserId`.
+2. **Create Category & Product** (Admin):
+   * Create categories and products using `POST /categories` and `POST /products`. When creating products, require the `restaurantId`.
+3. **Manage Saved Addresses** (Customer):
+   * Add addresses via `POST /auth/addresses` to build up your address profile.
+4. **Add Products to Cart** (Customer):
    * Call `POST /cart` with `{ "productId": "<productId>", "quantity": 2 }` to add items to your cart.
-3. **Verify Cart Totals** (Customer):
+5. **Verify Cart Totals** (Customer):
    * Call `GET /cart` to see the computed final prices, discount details, and items.
-4. **Place the Order** (Customer):
-   * Call `POST /orders` with an **empty body** (`{}`). This turns your active cart items into a pending order and clears your cart.
-5. **Retrieve Orders** (Customer/Admin):
+6. **Place the Order** (Customer):
+   * Call `POST /orders` with delivery address preferences (inline or `addressId`). If the cart has products from different restaurants, the order will split automatically.
+7. **Retrieve Orders** (Customer/Admin/Manager):
    * Customer: View orders with `GET /orders/me`.
    * Admin: View all orders with `GET /orders`.
-6. **Update Order Status** (Admin):
+   * Manager: View restaurant specific orders with `GET /orders/restaurant/:restaurantId`.
+8. **Update Order Status** (Admin):
    * Admin: Update the status using `PATCH /orders/:id/status` to progress it. Finalized orders (`Delivered` or `Cancelled`) cannot be changed further.
