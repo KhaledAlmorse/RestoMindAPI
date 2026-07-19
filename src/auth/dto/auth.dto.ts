@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
+  isString,
   IsString,
   MaxLength,
   MinLength,
@@ -40,7 +41,7 @@ export class singupBodyDto {
   role!: RolesEnum;
 
   @IsOptional()
-  @IsPhoneNumber()
+  @IsString()
   phone: string;
 
   @IsOptional()
@@ -118,7 +119,7 @@ export class UpdateMeDto {
   lastName?: string;
 
   @IsOptional()
-  @IsPhoneNumber()
+  @IsString()
   phone?: string;
 
   @IsOptional()
