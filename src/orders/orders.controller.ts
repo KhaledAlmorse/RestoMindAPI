@@ -15,7 +15,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
-import { type IAuthUser } from 'src/Common/Types';
+import { RolesEnum, type IAuthUser } from 'src/Common/Types';
 
 @Controller('orders')
 export class OrdersController {
@@ -80,7 +80,7 @@ export class OrdersController {
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    if (user.user.role === 'manager') {
+    if (user.user.role === RolesEnum.MANAGER) {
       if (
         !user.user.restaurantId ||
         user.user.restaurantId.toString() !== restaurantId

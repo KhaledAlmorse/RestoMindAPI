@@ -8,22 +8,14 @@ export class Product {
   @Prop({
     type: String,
     required: true,
-    index: {
-      name: 'unique_title_idx',
-      unique: true,
-    },
   })
   title!: string;
 
   @Prop({
     type: String,
     required: true,
-    default: function () {
-      return slugify(this.title, {
-        lower: true,
-        strict: true,
-      });
-    },
+    unique: true,
+    index: true,
   })
   slug!: string;
 
@@ -81,6 +73,7 @@ export class Product {
 }
 
 const ProductSchema = SchemaFactory.createForClass(Product);
+ProductSchema.index({ restaurantId: 1, title: 1 }, { unique: true });
 
 export const ProductModel = MongooseModule.forFeature([
   { name: Product.name, schema: ProductSchema },

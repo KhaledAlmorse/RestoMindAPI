@@ -73,4 +73,7 @@ export abstract class BaseService<TDocument extends Document> {
   async deleteMany(options: deleteManyOptions<TDocument>) {
     return this.model.deleteMany(options.filters);
   }
+  async updateMany(filters: any, body: any) {
+    return await this.model.updateMany(filters, body).exec();
+  }
 }

@@ -7,9 +7,10 @@ import {
   ProductRepository,
 } from 'src/DB/Repositories';
 import { OrderModel, CartModel, ProductModel } from 'src/DB/Models';
+import { RestaurantModule } from 'src/restaurant/restaurant.module';
 
 @Module({
-  imports: [OrderModel, CartModel, ProductModel],
+  imports: [OrderModel, CartModel, ProductModel, RestaurantModule],
   controllers: [OrdersController],
   providers: [
     OrdersService,

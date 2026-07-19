@@ -13,8 +13,9 @@ import {
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Auth } from 'src/Common/Decorators';
+import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type Response } from 'express';
+import { type IAuthUser } from 'src/Common/Types';
 
 @Controller('users')
 export class UserController {
@@ -24,8 +25,12 @@ export class UserController {
 
   @Post()
   @Auth('admin', 'manager')
-  async createUser(@Body() body: CreateUserDto, @Res() res: Response) {
-    const result = await this.userService.createUser(body);
+  async createUser(
+    @AuthUser() user: IAuthUser,
+    @Body() body: CreateUserDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.createUser(body, user.user);
     res.status(HttpStatus.CREATED).json(result);
   }
 
@@ -67,11 +72,12 @@ export class UserController {
   @Patch(':id')
   @Auth('admin', 'manager')
   async updateUser(
+    @AuthUser() user: IAuthUser,
     @Param('id') id: string,
     @Body() body: UpdateUserDto,
     @Res() res: Response,
   ) {
-    const result = await this.userService.updateUser(id, body);
+    const result = await this.userService.updateUser(id, body, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -79,8 +85,12 @@ export class UserController {
 
   @Delete(':id')
   @Auth('admin')
-  async softDeleteUser(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.userService.softDeleteUser(id);
+  async softDeleteUser(
+    @AuthUser() user: IAuthUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.softDeleteUser(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 }

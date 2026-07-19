@@ -3,19 +3,51 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
-import { CategoryRepository } from 'src/DB/Repositories';
+import { CategoryRepository, ProductRepository } from 'src/DB/Repositories';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
+import { CategoryType } from 'src/DB/Models';
 
 @Injectable()
-export class CategoriesService {
+export class CategoriesService implements OnModuleInit {
   constructor(
     private readonly categoryRepository: CategoryRepository,
+    private readonly productRepository: ProductRepository,
     private readonly uploadCloudFileService: UploadCloudFileService,
   ) {}
+
+  async onModuleInit() {
+    await this.ensureDefaultCategoryExists();
+  }
+
+  async ensureDefaultCategoryExists(): Promise<CategoryType> {
+    let defaultCategory = await this.categoryRepository.findOne({
+      filters: { name: 'Default Category' },
+    });
+    if (defaultCategory) {
+      if (defaultCategory.isDeleted) {
+        defaultCategory = await this.categoryRepository.update({
+          filters: { _id: defaultCategory._id },
+          body: { isDeleted: false } as any,
+        });
+      }
+    } else {
+      defaultCategory = await this.categoryRepository.create({
+        name: 'Default Category',
+        description: 'Default category for products',
+        image: {
+          public_id: 'default-category-placeholder',
+          secure_url: 'https://res.cloudinary.com/placeholder.jpg',
+        },
+        isDeleted: false,
+      } as any);
+    }
+    return defaultCategory!;
+  }
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
@@ -107,11 +139,24 @@ export class CategoriesService {
       throw new NotFoundException('Category not found');
     }
 
+    if (category.name === 'Default Category') {
+      throw new BadRequestException('Default Category cannot be deleted');
+    }
+
     if (category.image && category.image.public_id) {
       await this.uploadCloudFileService.DeleteFileByPublicId(
         category.image.public_id,
       );
     }
+
+    // Ensure default category exists
+    const defaultCategory = await this.ensureDefaultCategoryExists();
+
+    // Reassign products of this category to the default category atomically
+    await this.productRepository.updateMany(
+      { category: new Types.ObjectId(id) },
+      { category: defaultCategory._id },
+    );
 
     await this.categoryRepository.update({
       filters: { _id: id },

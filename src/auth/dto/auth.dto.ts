@@ -37,7 +37,7 @@ export class singupBodyDto {
 
   @IsOptional()
   @IsEnum(RolesEnum)
-  role!: string;
+  role!: RolesEnum;
 
   @IsOptional()
   @IsPhoneNumber()
@@ -45,7 +45,7 @@ export class singupBodyDto {
 
   @IsOptional()
   @IsEnum(GenderEnum)
-  gender: string;
+  gender: GenderEnum;
 
   @IsOptional()
   @IsDate()
@@ -123,7 +123,7 @@ export class UpdateMeDto {
 
   @IsOptional()
   @IsEnum(GenderEnum)
-  gender?: string;
+  gender?: GenderEnum;
 
   @IsOptional()
   @IsDate()

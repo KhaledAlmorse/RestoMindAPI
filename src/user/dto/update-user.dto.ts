@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsDate,
+  IsEmail,
   IsEnum,
   IsMongoId,
   IsOptional,
@@ -30,7 +31,7 @@ export class UpdateUserDto {
 
   @IsOptional()
   @IsEnum(GenderEnum)
-  gender?: string;
+  gender?: GenderEnum;
 
   @IsOptional()
   @IsDate()
@@ -39,9 +40,13 @@ export class UpdateUserDto {
 
   @IsOptional()
   @IsEnum(RolesEnum)
-  role?: string;
+  role?: RolesEnum;
 
   @IsOptional()
   @IsMongoId()
   restaurantId?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
 }

@@ -8,6 +8,7 @@ import {
   CartRepository,
   ProductRepository,
   UserRepository,
+  RestaurantRepository,
 } from 'src/DB/Repositories';
 import { isValidObjectId, Types } from 'mongoose';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -20,6 +21,7 @@ export class OrdersService {
     private readonly cartRepository: CartRepository,
     private readonly productRepository: ProductRepository,
     private readonly userRepository: UserRepository,
+    private readonly restaurantRepository: RestaurantRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -233,6 +235,12 @@ export class OrdersService {
 
   async getRestaurantOrders(restaurantId: string) {
     this.validateObjectId(restaurantId);
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { _id: restaurantId, isDeleted: false },
+    });
+    if (!restaurant) {
+      throw new NotFoundException('Restaurant not found');
+    }
     const orders = await this.orderRepository.findMany({
       filters: { restaurantId: new Types.ObjectId(restaurantId) },
       populationArray: [{ path: 'userId', select: '-password' }],

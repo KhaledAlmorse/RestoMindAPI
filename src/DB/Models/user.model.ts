@@ -1,6 +1,6 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { Encrypt, Hash } from 'src/Common/Security';
+import { Decrypt, Hash } from 'src/Common/Security';
 import { GenderEnum, RolesEnum } from 'src/Common/Types/types';
 
 @Schema({ _id: true })
@@ -31,7 +31,11 @@ export class UserAddress {
 
 const UserAddressSchema = SchemaFactory.createForClass(UserAddress);
 
-@Schema({ timestamps: true })
+@Schema({
+  timestamps: true,
+  toJSON: { getters: true },
+  toObject: { getters: true },
+})
 export class User {
   @Prop({ type: String, required: true, minLength: 3, maxLength: 20 })
   firstName!: string;
@@ -53,12 +57,24 @@ export class User {
     enum: Object.values(RolesEnum),
     default: RolesEnum.CUSTOMER,
   })
-  role!: string;
+  role!: RolesEnum;
 
   @Prop({ type: String, enum: GenderEnum })
-  gender!: string;
+  gender!: GenderEnum;
 
-  @Prop({ type: String, unique: true, required: true })
+  @Prop({
+    type: String,
+    unique: true,
+    required: true,
+    get: (value: string) => {
+      if (!value) return value;
+      try {
+        return Decrypt(value, process.env.Encryption_SECRET as string);
+      } catch {
+        return value;
+      }
+    },
+  })
   phone!: string;
 
   @Prop({ type: Boolean, default: false })
@@ -101,9 +117,6 @@ UserSchema.pre('save', function () {
     if (changes.password) {
       const hashedPassword = Hash(changes.password);
       this.password = hashedPassword;
-    }
-    if (changes.phone) {
-      this.phone = Encrypt(this.phone, process.env.Encryption_SECRET as string);
     }
   }
 });

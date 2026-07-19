@@ -42,11 +42,11 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsEnum(RolesEnum)
-  role?: string;
+  role?: RolesEnum;
 
   @IsOptional()
   @IsEnum(GenderEnum)
-  gender?: string;
+  gender?: GenderEnum;
 
   @IsOptional()
   @IsDate()

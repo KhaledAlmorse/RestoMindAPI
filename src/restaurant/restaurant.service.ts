@@ -4,16 +4,23 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { RestaurantRepository, UserRepository } from 'src/DB/Repositories';
+import {
+  RestaurantRepository,
+  UserRepository,
+  ProductRepository,
+} from 'src/DB/Repositories';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { isValidObjectId, Types } from 'mongoose';
+import { RolesEnum } from 'src/Common/Types';
+import slugify from 'slugify';
 
 @Injectable()
 export class RestaurantService {
   constructor(
     private readonly restaurantRepository: RestaurantRepository,
     private readonly userRepository: UserRepository,
+    private readonly productRepository: ProductRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -31,6 +38,23 @@ export class RestaurantService {
     });
     if (!owner) {
       throw new NotFoundException('Owner user not found');
+    }
+
+    // Verify user role is manager
+    if (owner.role !== RolesEnum.MANAGER) {
+      throw new BadRequestException('Owner must have role "manager"');
+    }
+
+    // Verify manager does not already own another active restaurant
+    if (owner.restaurantId) {
+      const activeRestaurant = await this.restaurantRepository.findOne({
+        filters: { _id: owner.restaurantId, isDeleted: false },
+      });
+      if (activeRestaurant) {
+        throw new BadRequestException(
+          'Manager is already assigned to a restaurant',
+        );
+      }
     }
 
     const existing = await this.restaurantRepository.findOne({
@@ -102,14 +126,19 @@ export class RestaurantService {
       throw new NotFoundException('Restaurant not found');
     }
 
+    const nameChanged = body.name && body.name !== restaurant.name;
     if (body.name) {
       const existing = await this.restaurantRepository.findOne({
-        filters: { name: body.name, isDeleted: false },
+        filters: { name: body.name, isDeleted: false, _id: { $ne: id } },
       });
       if (existing) {
         throw new ConflictException('Restaurant with this name already exists');
       }
     }
+
+    const oldOwnerId = restaurant.ownerUserId;
+    const ownerChanged =
+      body.ownerUserId && body.ownerUserId !== oldOwnerId.toString();
 
     if (body.ownerUserId) {
       this.validateObjectId(body.ownerUserId);
@@ -118,6 +147,19 @@ export class RestaurantService {
       });
       if (!owner) {
         throw new NotFoundException('Owner user not found');
+      }
+      if (owner.role !== RolesEnum.MANAGER) {
+        throw new BadRequestException('Owner must have role "manager"');
+      }
+      if (owner.restaurantId) {
+        const activeRestaurant = await this.restaurantRepository.findOne({
+          filters: { _id: owner.restaurantId, isDeleted: false },
+        });
+        if (activeRestaurant && activeRestaurant._id.toString() !== id) {
+          throw new BadRequestException(
+            'Manager is already assigned to another restaurant',
+          );
+        }
       }
     }
 
@@ -130,6 +172,43 @@ export class RestaurantService {
       filters: { _id: id },
       body: updateData,
     });
+
+    if (ownerChanged) {
+      // Clear old owner
+      await this.userRepository.update({
+        filters: { _id: oldOwnerId },
+        body: { restaurantId: null } as any,
+      });
+      // Set new owner
+      await this.userRepository.update({
+        filters: { _id: body.ownerUserId },
+        body: { restaurantId: new Types.ObjectId(id) } as any,
+      });
+    }
+
+    // Update product slugs if name changed
+    if (nameChanged && body.name) {
+      const products = await this.productRepository.findMany({
+        filters: { restaurantId: new Types.ObjectId(id), isDeleted: false },
+      });
+      if (products && products.length > 0) {
+        const newRestaurantNameSlug = slugify(body.name, {
+          lower: true,
+          strict: true,
+        });
+        for (const prod of products) {
+          const productTitleSlug = slugify(prod.title, {
+            lower: true,
+            strict: true,
+          });
+          const newSlug = `${newRestaurantNameSlug}-${productTitleSlug}`;
+          await this.productRepository.update({
+            filters: { _id: prod._id },
+            body: { slug: newSlug } as any,
+          });
+        }
+      }
+    }
 
     return { data: updated };
   }
@@ -150,6 +229,14 @@ export class RestaurantService {
         deletedAt: new Date(),
       } as any,
     });
+
+    // Clear owner user's restaurantId
+    if (restaurant.ownerUserId) {
+      await this.userRepository.update({
+        filters: { _id: restaurant.ownerUserId },
+        body: { restaurantId: null } as any,
+      });
+    }
 
     return { message: 'Restaurant deleted successfully' };
   }

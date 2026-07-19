@@ -20,17 +20,27 @@ export class FavoritesService {
     }
   }
 
+  private async getProductByIdOrSlug(idOrSlug: string) {
+    if (isValidObjectId(idOrSlug)) {
+      return await this.productRepository.findOne({
+        filters: { _id: idOrSlug, isDeleted: false },
+      });
+    } else {
+      return await this.productRepository.findOne({
+        filters: { slug: idOrSlug, isDeleted: false },
+      });
+    }
+  }
+
   async addFavorite(userId: string, productId: string) {
-    this.validateObjectId(productId);
-    const product = await this.productRepository.findOne({
-      filters: { _id: productId, isDeleted: false },
-    });
+    const product = await this.getProductByIdOrSlug(productId);
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
+    const resolvedProductId = product._id.toString();
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId },
+      filters: { userId, productId: resolvedProductId },
     });
     if (existing) {
       throw new ConflictException('Product is already in favorites');
@@ -38,15 +48,20 @@ export class FavoritesService {
 
     const newFav = await this.favoriteRepository.create({
       userId: userId as any,
-      productId: productId as any,
+      productId: resolvedProductId as any,
     });
     return { data: newFav };
   }
 
   async removeFavorite(userId: string, productId: string) {
-    this.validateObjectId(productId);
+    const product = await this.getProductByIdOrSlug(productId);
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const resolvedProductId = product._id.toString();
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId },
+      filters: { userId, productId: resolvedProductId },
     });
     if (!existing) {
       throw new NotFoundException('Product is not in favorites');
@@ -71,9 +86,14 @@ export class FavoritesService {
   }
 
   async checkFavoriteStatus(userId: string, productId: string) {
-    this.validateObjectId(productId);
+    const product = await this.getProductByIdOrSlug(productId);
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const resolvedProductId = product._id.toString();
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId },
+      filters: { userId, productId: resolvedProductId },
     });
     return { isFavorite: !!existing };
   }

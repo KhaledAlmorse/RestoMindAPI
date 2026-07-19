@@ -17,7 +17,7 @@ import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
-import { type IAuthUser } from 'src/Common/Types';
+import { RolesEnum, type IAuthUser } from 'src/Common/Types';
 
 @Controller('restaurants')
 export class RestaurantController {
@@ -78,7 +78,7 @@ export class RestaurantController {
     @Body() body: UpdateRestaurantDto,
     @Res() res: Response,
   ) {
-    if (user.user.role === 'manager') {
+    if (user.user.role === RolesEnum.MANAGER) {
       if (!user.user.restaurantId || user.user.restaurantId.toString() !== id) {
         throw new UnauthorizedException(
           'You can only update your own restaurant',

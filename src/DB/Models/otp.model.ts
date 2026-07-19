@@ -12,7 +12,7 @@ export class Otp {
   @Prop({ type: Date, required: true })
   expireTime: Date;
   @Prop({ type: String, enum: OtpTypeEnum, required: true })
-  otpType: string;
+  otpType: OtpTypeEnum;
 }
 
 const OtpSchema = SchemaFactory.createForClass(Otp);

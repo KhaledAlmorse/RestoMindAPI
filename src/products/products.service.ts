@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -60,6 +61,23 @@ export class ProductsService {
       throw new NotFoundException('Restaurant not found');
     }
 
+    // Generate unique slug: restaurant-name + "-" + product-title
+    const restaurantNameSlug = slugify(restaurant.name, {
+      lower: true,
+      strict: true,
+    });
+    const productTitleSlug = slugify(body.title, { lower: true, strict: true });
+    const slug = `${restaurantNameSlug}-${productTitleSlug}`;
+
+    const existingSlug = await this.productRepository.findOne({
+      filters: { slug, isDeleted: false },
+    });
+    if (existingSlug) {
+      throw new ConflictException(
+        'Product with this title already exists in this restaurant',
+      );
+    }
+
     const productId = new Types.ObjectId();
     const uploadResult = await this.uploadCloudFileService.uploadFile(
       file.path,
@@ -72,6 +90,7 @@ export class ProductsService {
       ...body,
       _id: productId,
       discountedPrice,
+      slug,
       category: new Types.ObjectId(body.category),
       restaurantId: new Types.ObjectId(body.restaurantId),
       image: uploadResult,
@@ -93,12 +112,8 @@ export class ProductsService {
     }
 
     const updateBody: any = { ...body };
-    if (body.title) {
-      updateBody.slug = slugify(body.title, {
-        lower: true,
-        strict: true,
-      });
-    }
+    let slug = product.slug;
+
     if (body.category) {
       this.validateObjectId(body.category);
       const category = await this.categoryRepository.findOne({
@@ -109,6 +124,7 @@ export class ProductsService {
       }
       updateBody.category = new Types.ObjectId(body.category);
     }
+
     if (body.restaurantId) {
       this.validateObjectId(body.restaurantId);
       const restaurant = await this.restaurantRepository.findOne({
@@ -119,6 +135,34 @@ export class ProductsService {
       }
       updateBody.restaurantId = new Types.ObjectId(body.restaurantId);
     }
+
+    if (body.title || body.restaurantId) {
+      const restId = body.restaurantId || product.restaurantId.toString();
+      const restaurant = await this.restaurantRepository.findOne({
+        filters: { _id: restId, isDeleted: false },
+      });
+      if (!restaurant) {
+        throw new NotFoundException('Restaurant not found');
+      }
+      const title = body.title || product.title;
+      const restaurantNameSlug = slugify(restaurant.name, {
+        lower: true,
+        strict: true,
+      });
+      const productTitleSlug = slugify(title, { lower: true, strict: true });
+      slug = `${restaurantNameSlug}-${productTitleSlug}`;
+
+      const existingSlug = await this.productRepository.findOne({
+        filters: { slug, isDeleted: false, _id: { $ne: id } },
+      });
+      if (existingSlug) {
+        throw new ConflictException(
+          'Product with this title already exists in this restaurant',
+        );
+      }
+    }
+    updateBody.slug = slug;
+
     const finalPrice =
       updateBody.price !== undefined ? updateBody.price : product.price;
     const finalDiscountedPrice =
@@ -248,7 +292,7 @@ export class ProductsService {
 
     if (category) {
       this.validateObjectId(category);
-      filters['category'] = category;
+      filters['category'] = new Types.ObjectId(category);
     }
 
     if (restaurantId) {
@@ -302,12 +346,19 @@ export class ProductsService {
     return result;
   }
 
-  async getProductDetails(id: string) {
-    this.validateObjectId(id);
-    const product = await this.productRepository.findOne({
-      filters: { _id: id, isDeleted: false, isAvailable: true },
-      populationArray: [{ path: 'category' }],
-    });
+  async getProductDetails(idOrSlug: string) {
+    let product;
+    if (isValidObjectId(idOrSlug)) {
+      product = await this.productRepository.findOne({
+        filters: { _id: idOrSlug, isDeleted: false, isAvailable: true },
+        populationArray: [{ path: 'category' }],
+      });
+    } else {
+      product = await this.productRepository.findOne({
+        filters: { slug: idOrSlug, isDeleted: false, isAvailable: true },
+        populationArray: [{ path: 'category' }],
+      });
+    }
     if (!product) {
       throw new NotFoundException('Product not found or unavailable');
     }

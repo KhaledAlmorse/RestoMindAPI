@@ -40,6 +40,7 @@ export class UserRepository extends BaseService<UserType> {
       items,
       page: Math.floor(skip / limit) + 1,
       limit,
+      total,
       totalPages: Math.ceil(total / limit),
     };
   }
