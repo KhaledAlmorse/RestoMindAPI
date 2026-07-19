@@ -4,6 +4,7 @@ import {
   IsDate,
   IsEmail,
   IsEnum,
+  isNotEmpty,
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
@@ -40,7 +41,7 @@ export class singupBodyDto {
   @IsEnum(RolesEnum)
   role!: RolesEnum;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
   phone: string;
 

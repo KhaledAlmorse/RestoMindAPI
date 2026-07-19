@@ -75,7 +75,8 @@ export class User {
       }
     },
   })
-  phone!: string;
+  @Prop({ type: String, required: true })
+  phone: string;
 
   @Prop({ type: Boolean, default: false })
   isEmailVerified!: boolean;

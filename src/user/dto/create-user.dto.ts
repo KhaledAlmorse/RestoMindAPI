@@ -40,18 +40,18 @@ export class CreateUserDto {
   @IsNotEmpty()
   phone!: string;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsEnum(RolesEnum)
-  role?: RolesEnum;
+  role!: RolesEnum;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsEnum(GenderEnum)
-  gender?: GenderEnum;
+  gender!: GenderEnum;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsDate()
   @Type(() => Date)
-  DOB?: Date;
+  DOB!: Date;
 
   @IsOptional()
   @IsMongoId()

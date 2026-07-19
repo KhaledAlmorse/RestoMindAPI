@@ -90,6 +90,13 @@ export class AuthService {
       throw new ConflictException('User already exists');
     }
 
+    const existingUserByPhone = await this.userRepository.findOne({
+      filters: { phone },
+    });
+    if (existingUserByPhone) {
+      throw new ConflictException('User with this phone number already exists');
+    }
+
     const newUser = await this.userRepository.create({
       firstName,
       lastName,

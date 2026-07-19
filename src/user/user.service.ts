@@ -40,6 +40,13 @@ export class UserService {
       throw new ConflictException('A user with this email already exists');
     }
 
+    const existingPhone = await this.userRepository.findOne({
+      filters: { phone: body.phone, isDeleted: false },
+    });
+    if (existingPhone) {
+      throw new ConflictException('A user with this phone already exists');
+    }
+
     // Role-based validations
     if (currentUser.role === RolesEnum.MANAGER) {
       if (body.role === RolesEnum.ADMIN || body.role === RolesEnum.MANAGER) {
