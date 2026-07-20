@@ -35,23 +35,46 @@ export class OffersController {
     res.status(HttpStatus.CREATED).json(result);
   }
 
-  @Get()
-  @Auth('manager', 'staff')
-  async getOffers(@Query() query: QueryOfferDto, @Res() res: Response) {
-    const result = await this.offersService.getOffers(query);
+  @Get('active')
+  async getActiveOffers(
+    @Query() query: { page?: string; limit?: string },
+    @Res() res: Response,
+  ) {
+    const result = await this.offersService.getActiveOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Get('active')
-  async getActiveOffers(@Res() res: Response) {
-    const result = await this.offersService.getActiveOffers();
+  @Get('active/:id')
+  async getActiveOfferById(@Param('id') id: string, @Res() res: Response) {
+    const result = await this.offersService.getActiveOfferById(id);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Get()
+  @Auth('manager')
+  async getOffers(
+    @Query() query: QueryOfferDto,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.offersService.getOffers(
+      query,
+      authUser.user._id.toString(),
+    );
     res.status(HttpStatus.OK).json(result);
   }
 
   @Get(':id')
-  @Auth('manager', 'staff')
-  async getOfferById(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.offersService.getOfferById(id);
+  @Auth('manager')
+  async getOfferById(
+    @Param('id') id: string,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.offersService.getOfferById(
+      id,
+      authUser.user._id.toString(),
+    );
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -60,16 +83,28 @@ export class OffersController {
   async updateOffer(
     @Param('id') id: string,
     @Body() body: UpdateOfferDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.offersService.updateOffer(id, body);
+    const result = await this.offersService.updateOffer(
+      id,
+      body,
+      authUser.user._id.toString(),
+    );
     res.status(HttpStatus.OK).json(result);
   }
 
   @Patch(':id/cancel')
   @Auth('manager')
-  async cancelOffer(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.offersService.cancelOffer(id);
+  async cancelOffer(
+    @Param('id') id: string,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.offersService.cancelOffer(
+      id,
+      authUser.user._id.toString(),
+    );
     res.status(HttpStatus.OK).json(result);
   }
 }

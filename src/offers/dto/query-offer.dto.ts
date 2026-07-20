@@ -1,15 +1,24 @@
-import { IsOptional, IsString, IsMongoId } from 'class-validator';
+import { IsOptional, IsEnum, IsMongoId, IsString } from 'class-validator';
+import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
 
 export class QueryOfferDto {
   @IsOptional()
-  @IsString()
-  status?: string;
+  @IsEnum(OfferStatusEnum)
+  status?: OfferStatusEnum;
 
   @IsOptional()
   @IsMongoId()
   productId?: string;
 
   @IsOptional()
+  @IsEnum(OfferSourceEnum)
+  source?: OfferSourceEnum;
+
+  @IsOptional()
   @IsString()
-  source?: string;
+  page?: string;
+
+  @IsOptional()
+  @IsString()
+  limit?: string;
 }

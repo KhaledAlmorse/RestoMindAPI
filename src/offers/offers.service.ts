@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import {
   OfferRepository,
   ProductRepository,
   RestaurantRepository,
+  UserRepository,
 } from 'src/DB/Repositories';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
@@ -22,12 +24,57 @@ export class OffersService {
     private readonly offerRepository: OfferRepository,
     private readonly productRepository: ProductRepository,
     private readonly restaurantRepository: RestaurantRepository,
+    private readonly userRepository: UserRepository,
   ) {}
+
+  private parseStartDate(dateStr: string): Date {
+    const trimmed = dateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return new Date(`${trimmed}T00:00:00.000Z`);
+    }
+    return new Date(trimmed);
+  }
+
+  private parseEndDate(dateStr: string): Date {
+    const trimmed = dateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return new Date(`${trimmed}T23:59:59.999Z`);
+    }
+    return new Date(trimmed);
+  }
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
       throw new BadRequestException(`Invalid ObjectId: ${id}`);
     }
+  }
+
+  private async getManagerRestaurantId(
+    userId: string,
+  ): Promise<Types.ObjectId> {
+    this.validateObjectId(userId);
+    const user = await this.userRepository.findOne({
+      filters: { _id: new Types.ObjectId(userId), isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.restaurantId) {
+      return new Types.ObjectId(user.restaurantId.toString());
+    }
+
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { ownerUserId: new Types.ObjectId(userId), isDeleted: false },
+    });
+
+    if (!restaurant) {
+      throw new ForbiddenException(
+        'You are not assigned to a restaurant or do not own one',
+      );
+    }
+
+    return restaurant._id;
   }
 
   private async checkOverlap(productId: string, excludeOfferId?: string) {
@@ -49,7 +96,7 @@ export class OffersService {
 
   async syncProductDiscountedPrice(productId: string) {
     const product = await this.productRepository.findOne({
-      filters: { _id: productId, isDeleted: false },
+      filters: { _id: new Types.ObjectId(productId), isDeleted: false },
     });
     if (!product) return;
 
@@ -67,12 +114,12 @@ export class OffersService {
           product.price * (1 - activeOffer.discountPercentage / 100) * 100,
         ) / 100;
       await this.productRepository.update({
-        filters: { _id: productId },
+        filters: { _id: new Types.ObjectId(productId) },
         body: { discountedPrice } as any,
       });
     } else {
       await this.productRepository.update({
-        filters: { _id: productId },
+        filters: { _id: new Types.ObjectId(productId) },
         body: { discountedPrice: product.price } as any,
       });
     }
@@ -81,25 +128,25 @@ export class OffersService {
   async createOffer(dto: CreateOfferDto, userId: string) {
     this.validateObjectId(dto.productId);
 
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
+
     const product = await this.productRepository.findOne({
-      filters: { _id: dto.productId, isDeleted: false },
+      filters: { _id: new Types.ObjectId(dto.productId), isDeleted: false },
     });
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
-    const restaurantId = product.restaurantId.toString();
-    const restaurant = await this.restaurantRepository.findOne({
-      filters: { _id: restaurantId, isDeleted: false },
-    });
-    if (!restaurant) {
-      throw new NotFoundException('Restaurant not found');
+    if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only create offers for products in your own restaurant',
+      );
     }
 
     await this.checkOverlap(dto.productId);
 
-    const startDate = new Date(dto.startDate);
-    const endDate = new Date(dto.endDate);
+    const startDate = this.parseStartDate(dto.startDate);
+    const endDate = this.parseEndDate(dto.endDate);
     const now = new Date();
 
     if (startDate >= endDate) {
@@ -109,12 +156,17 @@ export class OffersService {
       throw new BadRequestException('endDate must be in the future');
     }
 
-    const status =
-      startDate <= now ? OfferStatusEnum.ACTIVE : OfferStatusEnum.SCHEDULED;
+    const todayYMD = now.toISOString().split('T')[0];
+    const startYMD = startDate.toISOString().split('T')[0];
+    const isStartingTodayOrPast = startDate <= now || startYMD <= todayYMD;
+
+    const status = isStartingTodayOrPast
+      ? OfferStatusEnum.ACTIVE
+      : OfferStatusEnum.SCHEDULED;
 
     const offer = await this.offerRepository.create({
       productId: new Types.ObjectId(dto.productId),
-      restaurantId: new Types.ObjectId(restaurantId),
+      restaurantId: managerRestaurantId,
       discountPercentage: dto.discountPercentage,
       startDate,
       endDate,
@@ -131,14 +183,16 @@ export class OffersService {
     return { data: offer };
   }
 
-  async getOffers(query: QueryOfferDto) {
+  async getOffers(query: QueryOfferDto, userId: string) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
+
     const { status, productId, source } = query;
-    const filters: Record<string, any> = { isDeleted: false };
+    const filters: Record<string, any> = {
+      restaurantId: managerRestaurantId,
+      isDeleted: false,
+    };
 
     if (status) {
-      if (!Object.values(OfferStatusEnum).includes(status as OfferStatusEnum)) {
-        throw new BadRequestException(`Invalid status: ${status}`);
-      }
       filters.status = status;
     }
     if (productId) {
@@ -146,9 +200,6 @@ export class OffersService {
       filters.productId = new Types.ObjectId(productId);
     }
     if (source) {
-      if (!Object.values(OfferSourceEnum).includes(source as OfferSourceEnum)) {
-        throw new BadRequestException(`Invalid source: ${source}`);
-      }
       filters.source = source;
     }
 
@@ -156,34 +207,51 @@ export class OffersService {
       filters,
       populationArray: [
         { path: 'productId' },
-        { path: 'createdBy', select: 'name email' },
+        { path: 'createdBy', select: 'firstName lastName email' },
       ],
     });
     return { data: offers };
   }
 
-  async getOfferById(id: string) {
+  async getOfferById(id: string, userId: string) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(id);
+
     const offer = await this.offerRepository.findOne({
-      filters: { _id: id, isDeleted: false },
+      filters: { _id: new Types.ObjectId(id), isDeleted: false },
       populationArray: [
         { path: 'productId' },
-        { path: 'createdBy', select: 'name email' },
+        { path: 'createdBy', select: 'firstName lastName email' },
       ],
     });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
+
+    if (offer.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only access offers belonging to your restaurant',
+      );
+    }
+
     return { data: offer };
   }
 
-  async updateOffer(id: string, dto: UpdateOfferDto) {
+  async updateOffer(id: string, dto: UpdateOfferDto, userId: string) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(id);
+
     const offer = await this.offerRepository.findOne({
-      filters: { _id: id, isDeleted: false },
+      filters: { _id: new Types.ObjectId(id), isDeleted: false },
     });
     if (!offer) {
       throw new NotFoundException('Offer not found');
+    }
+
+    if (offer.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only update offers belonging to your restaurant',
+      );
     }
 
     if (
@@ -199,36 +267,76 @@ export class OffersService {
     if (dto.productId) {
       this.validateObjectId(dto.productId);
       const product = await this.productRepository.findOne({
-        filters: { _id: dto.productId, isDeleted: false },
+        filters: { _id: new Types.ObjectId(dto.productId), isDeleted: false },
       });
       if (!product) {
         throw new NotFoundException('Product not found');
+      }
+      if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+        throw new ForbiddenException(
+          'Product does not belong to your restaurant',
+        );
       }
       await this.checkOverlap(dto.productId, id);
       updateBody.productId = new Types.ObjectId(dto.productId);
       updateBody.restaurantId = product.restaurantId;
     }
-    if (dto.startDate) {
-      updateBody.startDate = new Date(dto.startDate);
-    }
-    if (dto.endDate) {
-      updateBody.endDate = new Date(dto.endDate);
+
+    if (dto.startDate || dto.endDate) {
+      const effectiveStartDate = dto.startDate
+        ? this.parseStartDate(dto.startDate)
+        : new Date(offer.startDate);
+      const effectiveEndDate = dto.endDate
+        ? this.parseEndDate(dto.endDate)
+        : new Date(offer.endDate);
+      const now = new Date();
+
+      if (effectiveStartDate >= effectiveEndDate) {
+        throw new BadRequestException('startDate must be before endDate');
+      }
+      if (effectiveEndDate <= now) {
+        throw new BadRequestException('endDate must be in the future');
+      }
+
+      if (dto.startDate) updateBody.startDate = effectiveStartDate;
+      if (dto.endDate) updateBody.endDate = effectiveEndDate;
+
+      const todayYMD = now.toISOString().split('T')[0];
+      const startYMD = effectiveStartDate.toISOString().split('T')[0];
+      if (effectiveStartDate <= now || startYMD <= todayYMD) {
+        updateBody.status = OfferStatusEnum.ACTIVE;
+      } else {
+        updateBody.status = OfferStatusEnum.SCHEDULED;
+      }
     }
 
     const updated = await this.offerRepository.update({
-      filters: { _id: id },
+      filters: { _id: new Types.ObjectId(id) },
       body: updateBody,
     });
+
+    if (updated && updated.status === OfferStatusEnum.ACTIVE) {
+      await this.syncProductDiscountedPrice(updated.productId.toString());
+    }
+
     return { data: updated };
   }
 
-  async cancelOffer(id: string) {
+  async cancelOffer(id: string, userId: string) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(id);
+
     const offer = await this.offerRepository.findOne({
-      filters: { _id: id, isDeleted: false },
+      filters: { _id: new Types.ObjectId(id), isDeleted: false },
     });
     if (!offer) {
       throw new NotFoundException('Offer not found');
+    }
+
+    if (offer.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only cancel offers belonging to your restaurant',
+      );
     }
 
     if (offer.status === OfferStatusEnum.CANCELLED) {
@@ -239,7 +347,7 @@ export class OffersService {
     }
 
     await this.offerRepository.update({
-      filters: { _id: id },
+      filters: { _id: new Types.ObjectId(id) },
       body: { status: OfferStatusEnum.CANCELLED } as any,
     });
 
@@ -247,23 +355,75 @@ export class OffersService {
     await this.syncProductDiscountedPrice(productId);
 
     const updated = await this.offerRepository.findOne({
-      filters: { _id: id },
+      filters: { _id: new Types.ObjectId(id) },
     });
     return { data: updated };
   }
 
-  async getActiveOffers() {
+  async getActiveOffers(query: { page?: string; limit?: string }) {
+    const { page = '1', limit = '10' } = query;
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.max(1, parseInt(limit, 10));
+    const skip = (pageNum - 1) * limitNum;
+
     const now = new Date();
-    const offers = await this.offerRepository.findMany({
+    const filters = {
+      status: OfferStatusEnum.ACTIVE,
+      isDeleted: false,
+      endDate: { $gte: now },
+    };
+
+    const result = await this.offerRepository.findManyPaginated({
+      filters,
+      skip,
+      limit: limitNum,
+      sort: 'createdAt',
+      order: 'desc',
+      select: '-createdBy -isDeleted -updatedAt -__v',
+      populationArray: [
+        {
+          path: 'productId',
+          select:
+            'title description price discountedPrice image category slug isAvailable',
+        },
+        { path: 'restaurantId', select: 'name description phone address' },
+      ],
+    });
+
+    if (!result.items || result.items.length === 0) {
+      throw new NotFoundException('No active offers found');
+    }
+
+    return result;
+  }
+
+  async getActiveOfferById(id: string) {
+    this.validateObjectId(id);
+    const now = new Date();
+
+    const offer = await this.offerRepository.findOne({
       filters: {
+        _id: new Types.ObjectId(id),
         status: OfferStatusEnum.ACTIVE,
         isDeleted: false,
-        startDate: { $lte: now },
         endDate: { $gte: now },
       },
-      populationArray: [{ path: 'productId' }, { path: 'restaurantId' }],
+      select: '-createdBy -isDeleted -updatedAt -__v',
+      populationArray: [
+        {
+          path: 'productId',
+          select:
+            'title description price discountedPrice image category slug isAvailable',
+        },
+        { path: 'restaurantId', select: 'name description phone address' },
+      ],
     });
-    return { data: offers };
+
+    if (!offer) {
+      throw new NotFoundException('Active offer not found');
+    }
+
+    return { data: offer };
   }
 
   @Cron(CronExpression.EVERY_5_MINUTES)

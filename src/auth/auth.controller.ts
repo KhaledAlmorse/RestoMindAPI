@@ -52,7 +52,7 @@ export class AuthController {
   }
 
   @Get('me')
-  @Auth('admin', 'customer')
+  @Auth('admin', 'customer', 'manager')
   @UseInterceptors(performanceInterceptor)
   async getMe(@AuthUser() user: IAuthUser, @Res() res: Response) {
     const result = await this.authService.getProfileData(user);

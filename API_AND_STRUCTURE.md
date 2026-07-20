@@ -36,10 +36,12 @@ RestoMindApi/
 │   │   ├── Models/                # Mongoose database schemas & models
 │   │   │   ├── user.model.ts      # User schema, hooks for encryption & hashing
 │   │   │   ├── otp.model.ts       # Verification OTP schema
+│   │   │   ├── offer.model.ts     # Special offers & promotional discount schema
 │   │   │   └── revoked-token.model.ts  # Blacklisted tokens schema (logout, refresh rotation)
 │   │   ├── Repositories/          # Encapsulated Mongoose repository operations
 │   │   │   ├── user.repository.ts
 │   │   │   ├── otp.repository.ts
+│   │   │   ├── offer.repository.ts
 │   │   │   └── revoke-token.repository.ts
 │   │   └── base.service.ts        # Base repository service (contains generic CRUD queries)
 │   │
@@ -48,6 +50,12 @@ RestoMindApi/
 │   │   ├── auth.controller.ts     # Auth HTTP controllers & routing
 │   │   ├── auth.service.ts        # Auth business logic
 │   │   └── auth.module.ts
+│   │
+│   ├── offers/                    # Offers module (promotional discounts & scheduling)
+│   │   ├── dto/                   # Offer validation DTOs (create, update, query)
+│   │   ├── offers.controller.ts   # Offers HTTP controllers
+│   │   ├── offers.service.ts      # Offers business logic & sync
+│   │   └── offers.module.ts
 │   │
 │   ├── restaurant/                # Restaurant module
 │   │   ├── dto/                   # Restaurant validation DTOs
@@ -701,3 +709,80 @@ _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of stre
 - **Headers**: `Authorization: Bearer <accessToken>`
 
 ---
+
+### 3.9 Offers Module (`/offers`)
+
+#### 1. Create Offer
+
+- **Method / URL**: `POST /offers`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Creates an offer for a product. Verifies that the product belongs to the manager's owned/assigned restaurant (`403 Forbidden` if not). Accepts date-only strings (`YYYY-MM-DD`) or full ISO datetimes.
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "productId": "<product_object_id>",
+    "discountPercentage": 20,
+    "startDate": "2026-07-20",
+    "endDate": "2026-07-30",
+    "featured": true
+  }
+  ```
+
+#### 2. Get Restaurant Offers (Manager)
+
+- **Method / URL**: `GET /offers`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns offers scoped exclusively to the manager's own restaurant.
+- **Query Params**:
+  - `status` (e.g. `active`, `scheduled`, `expired`, `cancelled`, `draft`)
+  - `productId` (e.g. `<product_object_id>`)
+  - `source` (e.g. `manual`, `ai_recommendation`)
+
+#### 3. Get Active Offers (Public Customer Store)
+
+- **Method / URL**: `GET /offers/active`
+- **Auth required**: Public (No tokens required)
+- **Description**: Returns all currently active, non-deleted offers across all restaurants within the active date window (`startDate <= now <= endDate`), with internal management fields omitted.
+- **Query Params**:
+  - `page` (e.g. `1`, default: `1`)
+  - `limit` (e.g. `10`, default: `10`)
+
+#### 4. Get Active Offer Details (Public Customer Store)
+
+- **Method / URL**: `GET /offers/active/:id`
+- **Auth required**: Public (No tokens required)
+- **Description**: Returns details for a single active, non-deleted offer within its active date window without exposing internal management fields (`createdBy`, etc.).
+
+#### 5. Get Offer by ID (Manager)
+
+- **Method / URL**: `GET /offers/:id`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Retrieves detailed offer data if it belongs to the manager's own restaurant (`403 Forbidden` if belonging to another restaurant).
+
+#### 6. Update Offer (Manager)
+
+- **Method / URL**: `PATCH /offers/:id`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Allows updating `discountPercentage`, `startDate`, `endDate`, `featured`, or `productId` for offers with `draft` or `scheduled` status belonging to the manager's restaurant.
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "discountPercentage": 25,
+    "endDate": "2026-08-05",
+    "featured": false
+  }
+  ```
+
+#### 7. Cancel Offer (Manager)
+
+- **Method / URL**: `PATCH /offers/:id/cancel`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Cancels an active or scheduled offer belonging to the manager's restaurant and recalculates/resets the associated product's discounted price.
+
+---
+

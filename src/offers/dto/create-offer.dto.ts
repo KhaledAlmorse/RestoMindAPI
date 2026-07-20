@@ -17,10 +17,16 @@ export class CreateOfferDto {
   @Max(100)
   discountPercentage!: number;
 
-  @IsDateString()
+  @IsDateString(
+    {},
+    { message: 'startDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
   startDate!: string;
 
-  @IsDateString()
+  @IsDateString(
+    {},
+    { message: 'endDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
   endDate!: string;
 
   @IsOptional()

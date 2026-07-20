@@ -6,7 +6,9 @@ import {
   IsBoolean,
   Min,
   Max,
+  IsEnum,
 } from 'class-validator';
+import { OfferStatusEnum } from 'src/Common/Types';
 
 export class UpdateOfferDto {
   @IsOptional()
@@ -20,14 +22,24 @@ export class UpdateOfferDto {
   discountPercentage?: number;
 
   @IsOptional()
-  @IsDateString()
+  @IsDateString(
+    {},
+    { message: 'startDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
   startDate?: string;
 
   @IsOptional()
-  @IsDateString()
+  @IsDateString(
+    {},
+    { message: 'endDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
   endDate?: string;
 
   @IsOptional()
   @IsBoolean()
   featured?: boolean;
+
+  @IsOptional()
+  @IsEnum(OfferStatusEnum)
+  status?: OfferStatusEnum;
 }

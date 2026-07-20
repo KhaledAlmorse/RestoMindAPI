@@ -60,7 +60,10 @@ export class OfferRepository extends BaseService<OfferType> {
     };
   }
 
-  async findMany(options: { filters?: Record<string, any>; populationArray?: any[] }) {
+  async findMany(options: {
+    filters?: Record<string, any>;
+    populationArray?: any[];
+  }) {
     const { filters = {}, populationArray = [] } = options;
     const query = this.offerModel.find(filters);
     for (const pop of populationArray) {
