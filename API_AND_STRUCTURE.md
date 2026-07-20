@@ -37,11 +37,15 @@ RestoMindApi/
 │   │   │   ├── user.model.ts      # User schema, hooks for encryption & hashing
 │   │   │   ├── otp.model.ts       # Verification OTP schema
 │   │   │   ├── offer.model.ts     # Special offers & promotional discount schema
+│   │   │   ├── ingredient.model.ts # Raw material ingredient inventory schema
+│   │   │   ├── recipe.model.ts     # Product portion recipe mapping schema
 │   │   │   └── revoked-token.model.ts  # Blacklisted tokens schema (logout, refresh rotation)
 │   │   ├── Repositories/          # Encapsulated Mongoose repository operations
 │   │   │   ├── user.repository.ts
 │   │   │   ├── otp.repository.ts
 │   │   │   ├── offer.repository.ts
+│   │   │   ├── ingredient.repository.ts
+│   │   │   ├── recipe.repository.ts
 │   │   │   └── revoke-token.repository.ts
 │   │   └── base.service.ts        # Base repository service (contains generic CRUD queries)
 │   │
@@ -50,6 +54,12 @@ RestoMindApi/
 │   │   ├── auth.controller.ts     # Auth HTTP controllers & routing
 │   │   ├── auth.service.ts        # Auth business logic
 │   │   └── auth.module.ts
+│   │
+│   ├── ingredients/               # Ingredients module (raw materials management)
+│   │   ├── dto/                   # Ingredient validation DTOs (create, update, query)
+│   │   ├── ingredients.controller.ts # Ingredients HTTP controllers
+│   │   ├── ingredients.service.ts    # Ingredients business logic
+│   │   └── ingredients.module.ts
 │   │
 │   ├── offers/                    # Offers module (promotional discounts & scheduling)
 │   │   ├── dto/                   # Offer validation DTOs (create, update, query)
@@ -470,6 +480,39 @@ In Postman, you can set this in the **Auth** tab:
 - **Method / URL**: `GET /products/:id`
 - **Auth required**: Public
 
+#### 9. Upsert Product Recipe
+
+- **Method / URL**: `PUT /products/:productId/recipe`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Creates or updates the portion recipe for a product. Validates that all ingredients belong to the manager's restaurant, units match ingredient base units, `yieldPercentage > 0`, and no duplicate ingredients exist. Accepts product ObjectId or slug.
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "ingredients": [
+      {
+        "ingredientId": "<ingredient_object_id_1>",
+        "quantityPerPortion": 0.25,
+        "unit": "kg",
+        "yieldPercentage": 95
+      },
+      {
+        "ingredientId": "<ingredient_object_id_2>",
+        "quantityPerPortion": 0.1,
+        "unit": "liter",
+        "yieldPercentage": 100
+      }
+    ]
+  }
+  ```
+
+#### 10. Get Product Recipe
+
+- **Method / URL**: `GET /products/:productId/recipe`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Retrieves the recipe mapping for a product in the manager's restaurant with populated ingredient details. Accepts product ObjectId or slug.
+
 ---
 
 ### 3.5 Favorites Module (`/favorites`)
@@ -783,5 +826,68 @@ _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of stre
 - **Auth required**: Access Token (`manager`)
 - **Headers**: `Authorization: Bearer <accessToken>`
 - **Description**: Cancels an active or scheduled offer belonging to the manager's restaurant and recalculates/resets the associated product's discounted price.
+
+---
+
+### 3.10 Ingredients Module (`/ingredients`)
+
+#### 1. Create Ingredient
+
+- **Method / URL**: `POST /ingredients`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Creates a new raw material ingredient scoped to the manager's restaurant. Checks code uniqueness per restaurant.
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "ingredientCode": "ING-FLOUR-01",
+    "name": "Wheat Flour",
+    "unit": "kg",
+    "shelfLifeDays": 30,
+    "minimumStock": 10,
+    "safetyStock": 5
+  }
+  ```
+  _(Note: `unit` must be one of `"kg"`, `"liter"`, or `"piece"`)_
+
+#### 2. Get All Ingredients (Paginated & Filtered)
+
+- **Method / URL**: `GET /ingredients`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns all non-deleted ingredients for the manager's restaurant.
+- **Query Params**:
+  - `page` (e.g. `1`, default: `1`)
+  - `limit` (e.g. `10`, default: `10`)
+  - `search` (e.g. `Flour`, searches name and ingredient code)
+
+#### 3. Get Ingredient by ID
+
+- **Method / URL**: `GET /ingredients/:id`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Retrieves details for a specific ingredient belonging to the manager's restaurant.
+
+#### 4. Update Ingredient
+
+- **Method / URL**: `PATCH /ingredients/:id`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Updates fields of an ingredient belonging to the manager's restaurant.
+- **Body (`raw JSON`)**:
+  ```json
+  {
+    "name": "Premium Wheat Flour",
+    "minimumStock": 15,
+    "safetyStock": 8
+  }
+  ```
+
+#### 5. Delete Ingredient (Soft Delete)
+
+- **Method / URL**: `DELETE /ingredients/:id`
+- **Auth required**: Access Token (`manager`)
+- **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Soft deletes an ingredient. Returns `400 Bad Request` if the ingredient is currently used in any active recipe.
 
 ---

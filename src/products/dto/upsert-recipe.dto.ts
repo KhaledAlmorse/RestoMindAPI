@@ -32,7 +32,7 @@ export class RecipeIngredientItemDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @IsPositive()
   @Max(100)
   yieldPercentage?: number;
 }

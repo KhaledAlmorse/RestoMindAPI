@@ -38,7 +38,6 @@ export class ProductsService {
     private readonly userRepository: UserRepository,
   ) {}
 
-
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
       throw new BadRequestException(`Invalid ObjectId: ${id}`);
@@ -234,6 +233,12 @@ export class ProductsService {
       filters: { _id: id },
       body: { isDeleted: true },
     });
+
+    await this.recipeRepository.update({
+      filters: { productId: new Types.ObjectId(id), isDeleted: false },
+      body: { isDeleted: true, deletedAt: new Date() } as any,
+    });
+
     return { message: 'Product deleted successfully' };
   }
 
@@ -486,11 +491,7 @@ export class ProductsService {
     return restaurant._id;
   }
 
-  async upsertRecipe(
-    idOrSlug: string,
-    dto: UpsertRecipeDto,
-    userId: string,
-  ) {
+  async upsertRecipe(idOrSlug: string, dto: UpsertRecipeDto, userId: string) {
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
 
     let product;
@@ -511,6 +512,14 @@ export class ProductsService {
     if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
       throw new ForbiddenException(
         'You can only manage recipes for products in your own restaurant',
+      );
+    }
+
+    const ingredientIds = dto.ingredients.map((item) => item.ingredientId);
+    const uniqueIds = new Set(ingredientIds);
+    if (uniqueIds.size !== ingredientIds.length) {
+      throw new BadRequestException(
+        'Recipe ingredients list contains duplicate ingredient entries',
       );
     }
 
@@ -535,6 +544,12 @@ export class ProductsService {
       ) {
         throw new BadRequestException(
           `Ingredient with ID ${item.ingredientId} belongs to a different restaurant`,
+        );
+      }
+
+      if (item.unit !== ingredient.unit) {
+        throw new BadRequestException(
+          `Unit mismatch for ingredient '${ingredient.name}'. Expected '${ingredient.unit}', got '${item.unit}'`,
         );
       }
 
@@ -591,7 +606,7 @@ export class ProductsService {
       );
     }
 
-    const recipe = await this.recipeRepository.findOne({
+    const recipe: any = await this.recipeRepository.findOne({
       filters: { productId: product._id, isDeleted: false },
       populationArray: [{ path: 'ingredients.ingredientId' }],
     });
@@ -600,7 +615,12 @@ export class ProductsService {
       throw new NotFoundException('Recipe not found for this product');
     }
 
+    if (recipe.ingredients) {
+      recipe.ingredients = recipe.ingredients.filter(
+        (item: any) => item.ingredientId && !item.ingredientId.isDeleted,
+      );
+    }
+
     return { data: recipe };
   }
 }
-

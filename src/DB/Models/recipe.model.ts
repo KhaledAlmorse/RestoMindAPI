@@ -42,7 +42,10 @@ export class Recipe {
 }
 
 const RecipeSchema = SchemaFactory.createForClass(Recipe);
-RecipeSchema.index({ productId: 1 }, { unique: true });
+RecipeSchema.index(
+  { productId: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } },
+);
 RecipeSchema.index({ restaurantId: 1, isDeleted: 1 });
 
 export const RecipeModel = MongooseModule.forFeature([

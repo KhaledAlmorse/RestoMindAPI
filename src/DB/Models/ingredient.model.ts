@@ -37,7 +37,10 @@ export class Ingredient {
 }
 
 const IngredientSchema = SchemaFactory.createForClass(Ingredient);
-IngredientSchema.index({ restaurantId: 1, ingredientCode: 1, isDeleted: 1 });
+IngredientSchema.index(
+  { restaurantId: 1, ingredientCode: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } },
+);
 IngredientSchema.index({ restaurantId: 1, isDeleted: 1 });
 
 export const IngredientModel = MongooseModule.forFeature([

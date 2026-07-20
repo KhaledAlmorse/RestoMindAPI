@@ -8,6 +8,7 @@ import {
 import { isValidObjectId, Types } from 'mongoose';
 import {
   IngredientRepository,
+  RecipeRepository,
   RestaurantRepository,
   UserRepository,
 } from 'src/DB/Repositories';
@@ -21,6 +22,7 @@ export class IngredientsService {
     private readonly ingredientRepository: IngredientRepository,
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
+    private readonly recipeRepository: RecipeRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -91,8 +93,11 @@ export class IngredientsService {
     const restaurantId = await this.getManagerRestaurantId(userId);
     const { page = '1', limit = '10', search } = query;
 
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
+    const parsedPage = parseInt(page, 10);
+    const parsedLimit = parseInt(limit, 10);
+    const pageNum = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
+    const limitNum =
+      Number.isNaN(parsedLimit) || parsedLimit < 1 ? 10 : parsedLimit;
     const skip = (pageNum - 1) * limitNum;
 
     const filters: Record<string, any> = {
@@ -139,11 +144,7 @@ export class IngredientsService {
     return { data: ingredient };
   }
 
-  async updateIngredient(
-    id: string,
-    dto: UpdateIngredientDto,
-    userId: string,
-  ) {
+  async updateIngredient(id: string, dto: UpdateIngredientDto, userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(id);
 
@@ -179,7 +180,8 @@ export class IngredientsService {
     }
 
     const updateBody: Record<string, any> = { ...dto };
-    if (dto.ingredientCode) updateBody.ingredientCode = dto.ingredientCode.trim();
+    if (dto.ingredientCode)
+      updateBody.ingredientCode = dto.ingredientCode.trim();
     if (dto.name) updateBody.name = dto.name.trim();
 
     const updated = await this.ingredientRepository.update({
@@ -205,6 +207,20 @@ export class IngredientsService {
     if (ingredient.restaurantId.toString() !== restaurantId.toString()) {
       throw new ForbiddenException(
         'You can only delete ingredients belonging to your restaurant',
+      );
+    }
+
+    const activeRecipeUsage = await this.recipeRepository.findOne({
+      filters: {
+        restaurantId,
+        isDeleted: false,
+        'ingredients.ingredientId': new Types.ObjectId(id),
+      },
+    });
+
+    if (activeRecipeUsage) {
+      throw new BadRequestException(
+        'Cannot delete ingredient because it is currently used in one or more active recipes',
       );
     }
 
