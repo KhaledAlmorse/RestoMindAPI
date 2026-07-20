@@ -14,3 +14,16 @@ export enum OtpTypeEnum {
   CONFIRMATION = 'confirmation',
   RESET_PASSWORD = 'reset-password',
 }
+
+export enum OfferStatusEnum {
+  DRAFT = 'draft',
+  SCHEDULED = 'scheduled',
+  ACTIVE = 'active',
+  EXPIRED = 'expired',
+  CANCELLED = 'cancelled',
+}
+
+export enum OfferSourceEnum {
+  MANUAL = 'manual',
+  AI_RECOMMENDATION = 'ai_recommendation',
+}

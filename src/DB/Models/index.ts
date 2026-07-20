@@ -7,3 +7,4 @@ export * from './favorite.model';
 export * from './cart.model';
 export * from './order.model';
 export * from './restaurant.model';
+export * from './offer.model';

@@ -19,7 +19,8 @@ import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateProductAvailabilityDto } from './dto/update-product-availability.dto';
 import { UpdateProductDiscountDto } from './dto/update-product-discount.dto';
 import { type Response } from 'express';
-import { Auth } from 'src/Common/Decorators';
+import { Auth, AuthUser } from 'src/Common/Decorators';
+import type { IAuthUser } from 'src/Common/Types';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { uploadFileOptions } from 'src/Common/Utils/multer.utils';
 
@@ -74,15 +75,18 @@ export class ProductsController {
   }
 
   @Patch(':id/discount')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async updateDiscount(
     @Param('id') id: string,
     @Body() body: UpdateProductDiscountDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.productsService.updateDiscount(
       id,
       body.discountedPrice,
+      body.endDate,
+      authUser.user._id.toString(),
     );
     res.status(HttpStatus.OK).json(result);
   }

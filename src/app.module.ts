@@ -11,6 +11,7 @@ import { FavoritesModule } from './favorites/favorites.module';
 import { CartModule } from './cart/cart.module';
 import { OrdersModule } from './orders/orders.module';
 import { RestaurantModule } from './restaurant/restaurant.module';
+import { OffersModule } from './offers/offers.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { RestaurantModule } from './restaurant/restaurant.module';
     CartModule,
     OrdersModule,
     RestaurantModule,
+    OffersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

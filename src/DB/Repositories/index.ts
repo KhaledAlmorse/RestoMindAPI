@@ -7,3 +7,4 @@ export * from './favorite.repository';
 export * from './cart.repository';
 export * from './order.repository';
 export * from './restaurant.repository';
+export * from './offer.repository';

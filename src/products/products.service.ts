@@ -8,6 +8,7 @@ import {
   ProductRepository,
   CategoryRepository,
   RestaurantRepository,
+  OfferRepository,
 } from 'src/DB/Repositories';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -15,6 +16,7 @@ import { QueryProductDto } from './dto/query-product.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
+import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
 
 @Injectable()
 export class ProductsService {
@@ -23,6 +25,7 @@ export class ProductsService {
     private readonly categoryRepository: CategoryRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly uploadCloudFileService: UploadCloudFileService,
+    private readonly offerRepository: OfferRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -238,7 +241,12 @@ export class ProductsService {
     return { data: updated };
   }
 
-  async updateDiscount(id: string, discountedPrice?: number) {
+  async updateDiscount(
+    id: string,
+    discountedPrice?: number,
+    endDate?: string,
+    userId?: string,
+  ) {
     this.validateObjectId(id);
     const product = await this.productRepository.findOne({
       filters: { _id: id, isDeleted: false },
@@ -261,9 +269,41 @@ export class ProductsService {
       );
     }
 
-    const updated = await this.productRepository.update({
+    const existingOverlap = await this.offerRepository.findOne({
+      filters: {
+        productId: new Types.ObjectId(id),
+        status: { $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED] },
+        isDeleted: false,
+      },
+    });
+    if (existingOverlap) {
+      throw new ConflictException(
+        'This product already has an active or scheduled offer',
+      );
+    }
+
+    const discountPercentage = Math.round(
+      (1 - discountedPrice / product.price) * 100,
+    );
+
+    const now = new Date();
+    const defaultEndDate = new Date(now);
+    defaultEndDate.setDate(defaultEndDate.getDate() + 7);
+
+    await this.offerRepository.create({
+      productId: new Types.ObjectId(id),
+      restaurantId: product.restaurantId,
+      discountPercentage,
+      startDate: now,
+      endDate: endDate ? new Date(endDate) : defaultEndDate,
+      status: OfferStatusEnum.ACTIVE,
+      source: OfferSourceEnum.MANUAL,
+      featured: false,
+      createdBy: userId ? new Types.ObjectId(userId) : new Types.ObjectId('000000000000000000000000'),
+    } as any);
+
+    const updated = await this.productRepository.findOne({
       filters: { _id: id },
-      body: { discountedPrice } as any,
     });
     return { data: updated };
   }
@@ -327,23 +367,46 @@ export class ProductsService {
     const limitNum = Math.max(1, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    // Recommendations: discounted products where discountedPrice < price
-    const filters = {
-      isDeleted: false,
-      isAvailable: true,
-      $expr: { $lt: ['$discountedPrice', '$price'] },
-    };
-
-    const result = await this.productRepository.findManyPaginated({
-      filters,
-      skip,
-      limit: limitNum,
-      sort: 'createdAt',
-      order: 'desc',
-      populationArray: ['category'],
+    const activeOffers = await this.offerRepository.findMany({
+      filters: { status: OfferStatusEnum.ACTIVE, isDeleted: false },
     });
 
-    return result;
+    activeOffers.sort((a: any, b: any) => {
+      if (a.featured && !b.featured) return -1;
+      if (!a.featured && b.featured) return 1;
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
+
+    const productIds = activeOffers.map((o) => o.productId);
+    const total = productIds.length;
+    const pagedIds = productIds.slice(skip, skip + limitNum);
+
+    let items: any[] = [];
+    if (pagedIds.length > 0) {
+      const products = await this.productRepository.findMany({
+        filters: {
+          _id: { $in: pagedIds },
+          isDeleted: false,
+          isAvailable: true,
+        },
+        populationArray: [{ path: 'category' }],
+      });
+
+      const productMap = new Map(
+        (products || []).map((p: any) => [p._id.toString(), p]),
+      );
+      items = pagedIds
+        .map((id) => productMap.get(id.toString()))
+        .filter(Boolean);
+    }
+
+    return {
+      items,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum),
+    };
   }
 
   async getProductDetails(idOrSlug: string) {
