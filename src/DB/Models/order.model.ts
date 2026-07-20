@@ -26,6 +26,13 @@ export class OrderItem {
 
 @Schema({ timestamps: true })
 export class Order {
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'OrderGroup',
+    required: false,
+  })
+  orderGroupId?: Types.ObjectId;
+
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   userId!: Types.ObjectId;
 

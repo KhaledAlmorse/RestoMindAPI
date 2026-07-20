@@ -3,21 +3,34 @@ import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import {
   OrderRepository,
+  OrderGroupRepository,
   CartRepository,
   ProductRepository,
 } from 'src/DB/Repositories';
-import { OrderModel, CartModel, ProductModel } from 'src/DB/Models';
+import {
+  OrderModel,
+  OrderGroupModel,
+  CartModel,
+  ProductModel,
+} from 'src/DB/Models';
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
 
 @Module({
-  imports: [OrderModel, CartModel, ProductModel, RestaurantModule],
+  imports: [
+    OrderModel,
+    OrderGroupModel,
+    CartModel,
+    ProductModel,
+    RestaurantModule,
+  ],
   controllers: [OrdersController],
   providers: [
     OrdersService,
     OrderRepository,
+    OrderGroupRepository,
     CartRepository,
     ProductRepository,
   ],
-  exports: [OrdersService, OrderRepository],
+  exports: [OrdersService, OrderRepository, OrderGroupRepository],
 })
 export class OrdersModule {}
