@@ -785,4 +785,3 @@ _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of stre
 - **Description**: Cancels an active or scheduled offer belonging to the manager's restaurant and recalculates/resets the associated product's discounted price.
 
 ---
-
