@@ -9,3 +9,6 @@ export * from './order.repository';
 export * from './order-group.repository';
 export * from './restaurant.repository';
 export * from './offer.repository';
+export * from './ingredient.repository';
+export * from './recipe.repository';
+

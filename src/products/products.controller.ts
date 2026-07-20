@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Patch,
   Delete,
@@ -18,6 +19,8 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateProductAvailabilityDto } from './dto/update-product-availability.dto';
 import { UpdateProductDiscountDto } from './dto/update-product-discount.dto';
+import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
+
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import type { IAuthUser } from 'src/Common/Types';
@@ -115,4 +118,35 @@ export class ProductsController {
     const result = await this.productsService.getProductDetails(id);
     res.status(HttpStatus.OK).json(result);
   }
+
+  @Put(':productId/recipe')
+  @Auth('manager')
+  async upsertRecipe(
+    @Param('productId') productId: string,
+    @Body() body: UpsertRecipeDto,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.productsService.upsertRecipe(
+      productId,
+      body,
+      authUser.user._id.toString(),
+    );
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Get(':productId/recipe')
+  @Auth('manager')
+  async getRecipe(
+    @Param('productId') productId: string,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.productsService.getRecipe(
+      productId,
+      authUser.user._id.toString(),
+    );
+    res.status(HttpStatus.OK).json(result);
+  }
 }
+

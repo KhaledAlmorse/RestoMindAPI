@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,10 +10,14 @@ import {
   CategoryRepository,
   RestaurantRepository,
   OfferRepository,
+  RecipeRepository,
+  IngredientRepository,
+  UserRepository,
 } from 'src/DB/Repositories';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
+import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
@@ -28,7 +33,11 @@ export class ProductsService {
     private readonly uploadCloudFileService: UploadCloudFileService,
     private readonly offerRepository: OfferRepository,
     private readonly offersService: OffersService,
+    private readonly recipeRepository: RecipeRepository,
+    private readonly ingredientRepository: IngredientRepository,
+    private readonly userRepository: UserRepository,
   ) {}
+
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
@@ -448,4 +457,150 @@ export class ProductsService {
     }
     return { data: product };
   }
+
+  private async getManagerRestaurantId(
+    userId: string,
+  ): Promise<Types.ObjectId> {
+    this.validateObjectId(userId);
+    const user = await this.userRepository.findOne({
+      filters: { _id: new Types.ObjectId(userId), isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.restaurantId) {
+      return new Types.ObjectId(user.restaurantId.toString());
+    }
+
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { ownerUserId: new Types.ObjectId(userId), isDeleted: false },
+    });
+
+    if (!restaurant) {
+      throw new ForbiddenException(
+        'You are not assigned to a restaurant or do not own one',
+      );
+    }
+
+    return restaurant._id;
+  }
+
+  async upsertRecipe(
+    idOrSlug: string,
+    dto: UpsertRecipeDto,
+    userId: string,
+  ) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
+
+    let product;
+    if (isValidObjectId(idOrSlug)) {
+      product = await this.productRepository.findOne({
+        filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
+      });
+    } else {
+      product = await this.productRepository.findOne({
+        filters: { slug: idOrSlug, isDeleted: false },
+      });
+    }
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only manage recipes for products in your own restaurant',
+      );
+    }
+
+    const recipeIngredients: any[] = [];
+    for (const item of dto.ingredients) {
+      this.validateObjectId(item.ingredientId);
+      const ingredient = await this.ingredientRepository.findOne({
+        filters: {
+          _id: new Types.ObjectId(item.ingredientId),
+          isDeleted: false,
+        },
+      });
+
+      if (!ingredient) {
+        throw new NotFoundException(
+          `Ingredient with ID ${item.ingredientId} not found`,
+        );
+      }
+
+      if (
+        ingredient.restaurantId.toString() !== product.restaurantId.toString()
+      ) {
+        throw new BadRequestException(
+          `Ingredient with ID ${item.ingredientId} belongs to a different restaurant`,
+        );
+      }
+
+      recipeIngredients.push({
+        ingredientId: new Types.ObjectId(item.ingredientId),
+        quantityPerPortion: item.quantityPerPortion,
+        unit: item.unit,
+        yieldPercentage: item.yieldPercentage ?? 100,
+      });
+    }
+
+    const existingRecipe = await this.recipeRepository.findOne({
+      filters: { productId: product._id, isDeleted: false },
+    });
+
+    let recipe;
+    if (existingRecipe) {
+      recipe = await this.recipeRepository.update({
+        filters: { _id: existingRecipe._id },
+        body: { ingredients: recipeIngredients } as any,
+      });
+    } else {
+      recipe = await this.recipeRepository.create({
+        restaurantId: product.restaurantId,
+        productId: product._id,
+        ingredients: recipeIngredients,
+      } as any);
+    }
+
+    return { data: recipe };
+  }
+
+  async getRecipe(idOrSlug: string, userId: string) {
+    const managerRestaurantId = await this.getManagerRestaurantId(userId);
+
+    let product;
+    if (isValidObjectId(idOrSlug)) {
+      product = await this.productRepository.findOne({
+        filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
+      });
+    } else {
+      product = await this.productRepository.findOne({
+        filters: { slug: idOrSlug, isDeleted: false },
+      });
+    }
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+      throw new ForbiddenException(
+        'You can only view recipes for products in your own restaurant',
+      );
+    }
+
+    const recipe = await this.recipeRepository.findOne({
+      filters: { productId: product._id, isDeleted: false },
+      populationArray: [{ path: 'ingredients.ingredientId' }],
+    });
+
+    if (!recipe) {
+      throw new NotFoundException('Recipe not found for this product');
+    }
+
+    return { data: recipe };
+  }
 }
+

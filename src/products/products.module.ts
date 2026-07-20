@@ -1,12 +1,26 @@
 import { Module } from '@nestjs/common';
+
 import { ProductsService } from './products.service';
 import { ProductsController } from './products.controller';
+
 import {
   ProductRepository,
   CategoryRepository,
   OfferRepository,
+  RecipeRepository,
+  IngredientRepository,
+  UserRepository,
 } from 'src/DB/Repositories';
-import { ProductModel, CategoryModel, OfferModel } from 'src/DB/Models';
+
+import {
+  ProductModel,
+  CategoryModel,
+  OfferModel,
+  RecipeModel,
+  IngredientModel,
+  UserModel,
+} from 'src/DB/Models';
+
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
 import { OffersModule } from 'src/offers/offers.module';
 
@@ -17,6 +31,9 @@ import { OffersModule } from 'src/offers/offers.module';
     RestaurantModule,
     OffersModule,
     OfferModel,
+    RecipeModel,
+    IngredientModel,
+    UserModel,
   ],
   controllers: [ProductsController],
   providers: [
@@ -24,7 +41,14 @@ import { OffersModule } from 'src/offers/offers.module';
     ProductRepository,
     CategoryRepository,
     OfferRepository,
+    RecipeRepository,
+    IngredientRepository,
+    UserRepository,
   ],
-  exports: [ProductsService, ProductRepository],
+  exports: [
+    ProductsService,
+    ProductRepository,
+    RecipeRepository,
+  ],
 })
 export class ProductsModule {}

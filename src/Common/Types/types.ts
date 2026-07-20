@@ -27,3 +27,10 @@ export enum OfferSourceEnum {
   MANUAL = 'manual',
   AI_RECOMMENDATION = 'ai_recommendation',
 }
+
+export enum IngredientUnitEnum {
+  KG = 'kg',
+  LITER = 'liter',
+  PIECE = 'piece',
+}
+

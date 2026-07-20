@@ -9,3 +9,6 @@ export * from './order.model';
 export * from './order-group.model';
 export * from './restaurant.model';
 export * from './offer.model';
+export * from './ingredient.model';
+export * from './recipe.model';
+
