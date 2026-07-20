@@ -213,17 +213,44 @@ export class OffersService {
     return { data: offers };
   }
 
-  async getOfferById(id: string, userId: string) {
+  async getOfferById(idOrSlug: string, userId: string) {
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
-    this.validateObjectId(id);
+    let offer: any = null;
 
-    const offer = await this.offerRepository.findOne({
-      filters: { _id: new Types.ObjectId(id), isDeleted: false },
-      populationArray: [
-        { path: 'productId' },
-        { path: 'createdBy', select: 'firstName lastName email' },
-      ],
-    });
+    if (isValidObjectId(idOrSlug)) {
+      offer = await this.offerRepository.findOne({
+        filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
+        populationArray: [
+          { path: 'productId' },
+          { path: 'createdBy', select: 'firstName lastName email' },
+        ],
+      });
+    }
+
+    if (!offer) {
+      let product: any = null;
+      if (isValidObjectId(idOrSlug)) {
+        product = await this.productRepository.findOne({
+          filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
+        });
+      }
+      if (!product) {
+        product = await this.productRepository.findOne({
+          filters: { slug: idOrSlug, isDeleted: false },
+        });
+      }
+
+      if (product) {
+        offer = await this.offerRepository.findOne({
+          filters: { productId: product._id, isDeleted: false },
+          populationArray: [
+            { path: 'productId' },
+            { path: 'createdBy', select: 'firstName lastName email' },
+          ],
+        });
+      }
+    }
+
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
@@ -397,27 +424,63 @@ export class OffersService {
     return result;
   }
 
-  async getActiveOfferById(id: string) {
-    this.validateObjectId(id);
+  async getActiveOfferById(idOrSlug: string) {
     const now = new Date();
+    let offer: any = null;
 
-    const offer = await this.offerRepository.findOne({
-      filters: {
-        _id: new Types.ObjectId(id),
-        status: OfferStatusEnum.ACTIVE,
-        isDeleted: false,
-        endDate: { $gte: now },
-      },
-      select: '-createdBy -isDeleted -updatedAt -__v',
-      populationArray: [
-        {
-          path: 'productId',
-          select:
-            'title description price discountedPrice image category slug isAvailable',
+    if (isValidObjectId(idOrSlug)) {
+      offer = await this.offerRepository.findOne({
+        filters: {
+          _id: new Types.ObjectId(idOrSlug),
+          status: OfferStatusEnum.ACTIVE,
+          isDeleted: false,
+          endDate: { $gte: now },
         },
-        { path: 'restaurantId', select: 'name description phone address' },
-      ],
-    });
+        select: '-createdBy -isDeleted -updatedAt -__v',
+        populationArray: [
+          {
+            path: 'productId',
+            select:
+              'title description price discountedPrice image category slug isAvailable',
+          },
+          { path: 'restaurantId', select: 'name description phone address' },
+        ],
+      });
+    }
+
+    if (!offer) {
+      let product: any = null;
+      if (isValidObjectId(idOrSlug)) {
+        product = await this.productRepository.findOne({
+          filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
+        });
+      }
+      if (!product) {
+        product = await this.productRepository.findOne({
+          filters: { slug: idOrSlug, isDeleted: false },
+        });
+      }
+
+      if (product) {
+        offer = await this.offerRepository.findOne({
+          filters: {
+            productId: product._id,
+            status: OfferStatusEnum.ACTIVE,
+            isDeleted: false,
+            endDate: { $gte: now },
+          },
+          select: '-createdBy -isDeleted -updatedAt -__v',
+          populationArray: [
+            {
+              path: 'productId',
+              select:
+                'title description price discountedPrice image category slug isAvailable',
+            },
+            { path: 'restaurantId', select: 'name description phone address' },
+          ],
+        });
+      }
+    }
 
     if (!offer) {
       throw new NotFoundException('Active offer not found');
