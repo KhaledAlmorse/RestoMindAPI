@@ -69,11 +69,20 @@ export class RestaurantService {
       ownerUserId: new Types.ObjectId(ownerUserId),
     } as any);
 
-    // Automatically update owner user's restaurantId
-    await this.userRepository.update({
-      filters: { _id: ownerUserId },
-      body: { restaurantId: newRestaurant._id } as any,
-    });
+    try {
+      // Automatically update owner user's restaurantId
+      await this.userRepository.update({
+        filters: { _id: ownerUserId },
+        body: { restaurantId: newRestaurant._id } as any,
+      });
+    } catch (error) {
+      // Rollback restaurant creation if user update fails
+      await this.restaurantRepository.update({
+        filters: { _id: newRestaurant._id },
+        body: { isDeleted: true, deletedAt: new Date() } as any,
+      });
+      throw error;
+    }
 
     return { data: newRestaurant };
   }

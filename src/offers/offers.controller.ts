@@ -28,16 +28,16 @@ export class OffersController {
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.offersService.createOffer(body, authUser.user._id.toString());
+    const result = await this.offersService.createOffer(
+      body,
+      authUser.user._id.toString(),
+    );
     res.status(HttpStatus.CREATED).json(result);
   }
 
   @Get()
   @Auth('manager', 'staff')
-  async getOffers(
-    @Query() query: QueryOfferDto,
-    @Res() res: Response,
-  ) {
+  async getOffers(@Query() query: QueryOfferDto, @Res() res: Response) {
     const result = await this.offersService.getOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
@@ -50,10 +50,7 @@ export class OffersController {
 
   @Get(':id')
   @Auth('manager', 'staff')
-  async getOfferById(
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
+  async getOfferById(@Param('id') id: string, @Res() res: Response) {
     const result = await this.offersService.getOfferById(id);
     res.status(HttpStatus.OK).json(result);
   }
@@ -71,10 +68,7 @@ export class OffersController {
 
   @Patch(':id/cancel')
   @Auth('manager')
-  async cancelOffer(
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
+  async cancelOffer(@Param('id') id: string, @Res() res: Response) {
     const result = await this.offersService.cancelOffer(id);
     res.status(HttpStatus.OK).json(result);
   }

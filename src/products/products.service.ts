@@ -17,6 +17,7 @@ import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
 import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
+import { OffersService } from 'src/offers/offers.service';
 
 @Injectable()
 export class ProductsService {
@@ -26,6 +27,7 @@ export class ProductsService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly uploadCloudFileService: UploadCloudFileService,
     private readonly offerRepository: OfferRepository,
+    private readonly offersService: OffersService,
   ) {}
 
   private validateObjectId(id: string) {
@@ -196,6 +198,11 @@ export class ProductsService {
       filters: { _id: id },
       body: updateBody,
     });
+
+    if (body.price !== undefined) {
+      await this.offersService.syncProductDiscountedPrice(id);
+    }
+
     return { data: updated };
   }
 
@@ -269,6 +276,10 @@ export class ProductsService {
       );
     }
 
+    if (!userId) {
+      throw new BadRequestException('User ID is required to update discount');
+    }
+
     const existingOverlap = await this.offerRepository.findOne({
       filters: {
         productId: new Types.ObjectId(id),
@@ -299,8 +310,10 @@ export class ProductsService {
       status: OfferStatusEnum.ACTIVE,
       source: OfferSourceEnum.MANUAL,
       featured: false,
-      createdBy: userId ? new Types.ObjectId(userId) : new Types.ObjectId('000000000000000000000000'),
+      createdBy: new Types.ObjectId(userId),
     } as any);
+
+    await this.offersService.syncProductDiscountedPrice(id);
 
     const updated = await this.productRepository.findOne({
       filters: { _id: id },
@@ -367,8 +380,14 @@ export class ProductsService {
     const limitNum = Math.max(1, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
+    const now = new Date();
     const activeOffers = await this.offerRepository.findMany({
-      filters: { status: OfferStatusEnum.ACTIVE, isDeleted: false },
+      filters: {
+        status: OfferStatusEnum.ACTIVE,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      },
     });
 
     activeOffers.sort((a: any, b: any) => {
@@ -377,28 +396,30 @@ export class ProductsService {
       return b.createdAt.getTime() - a.createdAt.getTime();
     });
 
-    const productIds = activeOffers.map((o) => o.productId);
-    const total = productIds.length;
-    const pagedIds = productIds.slice(skip, skip + limitNum);
+    const candidateProductIds = activeOffers.map((o) => o.productId);
 
-    let items: any[] = [];
-    if (pagedIds.length > 0) {
-      const products = await this.productRepository.findMany({
-        filters: {
-          _id: { $in: pagedIds },
-          isDeleted: false,
-          isAvailable: true,
-        },
-        populationArray: [{ path: 'category' }],
-      });
-
-      const productMap = new Map(
-        (products || []).map((p: any) => [p._id.toString(), p]),
-      );
-      items = pagedIds
-        .map((id) => productMap.get(id.toString()))
-        .filter(Boolean);
+    let validProducts: any[] = [];
+    if (candidateProductIds.length > 0) {
+      validProducts =
+        (await this.productRepository.findMany({
+          filters: {
+            _id: { $in: candidateProductIds },
+            isDeleted: false,
+            isAvailable: true,
+          },
+          populationArray: [{ path: 'category' }],
+        })) || [];
     }
+
+    const productMap = new Map(
+      validProducts.map((p: any) => [p._id.toString(), p]),
+    );
+    const orderedProducts = candidateProductIds
+      .map((id) => productMap.get(id.toString()))
+      .filter(Boolean);
+
+    const total = orderedProducts.length;
+    const items = orderedProducts.slice(skip, skip + limitNum);
 
     return {
       items,

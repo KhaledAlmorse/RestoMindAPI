@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { isValidObjectId, Types } from 'mongoose';
-import { OfferRepository, ProductRepository, RestaurantRepository } from 'src/DB/Repositories';
+import {
+  OfferRepository,
+  ProductRepository,
+  RestaurantRepository,
+} from 'src/DB/Repositories';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { QueryOfferDto } from './dto/query-offer.dto';
@@ -58,9 +62,10 @@ export class OffersService {
     });
 
     if (activeOffer) {
-      const discountedPrice = Math.round(
-        product.price * (1 - activeOffer.discountPercentage / 100) * 100,
-      ) / 100;
+      const discountedPrice =
+        Math.round(
+          product.price * (1 - activeOffer.discountPercentage / 100) * 100,
+        ) / 100;
       await this.productRepository.update({
         filters: { _id: productId },
         body: { discountedPrice } as any,
@@ -149,7 +154,10 @@ export class OffersService {
 
     const offers = await this.offerRepository.findMany({
       filters,
-      populationArray: [{ path: 'productId' }, { path: 'createdBy', select: 'name email' }],
+      populationArray: [
+        { path: 'productId' },
+        { path: 'createdBy', select: 'name email' },
+      ],
     });
     return { data: offers };
   }
@@ -158,7 +166,10 @@ export class OffersService {
     this.validateObjectId(id);
     const offer = await this.offerRepository.findOne({
       filters: { _id: id, isDeleted: false },
-      populationArray: [{ path: 'productId' }, { path: 'createdBy', select: 'name email' }],
+      populationArray: [
+        { path: 'productId' },
+        { path: 'createdBy', select: 'name email' },
+      ],
     });
     if (!offer) {
       throw new NotFoundException('Offer not found');
@@ -184,6 +195,7 @@ export class OffersService {
       );
     }
 
+    const updateBody: Record<string, any> = { ...dto };
     if (dto.productId) {
       this.validateObjectId(dto.productId);
       const product = await this.productRepository.findOne({
@@ -193,11 +205,8 @@ export class OffersService {
         throw new NotFoundException('Product not found');
       }
       await this.checkOverlap(dto.productId, id);
-    }
-
-    const updateBody: Record<string, any> = { ...dto };
-    if (dto.productId) {
       updateBody.productId = new Types.ObjectId(dto.productId);
+      updateBody.restaurantId = product.restaurantId;
     }
     if (dto.startDate) {
       updateBody.startDate = new Date(dto.startDate);
