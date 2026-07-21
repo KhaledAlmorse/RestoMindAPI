@@ -30,7 +30,7 @@ export class CreateOfferDto {
   endDate!: string;
 
   @IsNumber()
-  @Min(1)
+  @Min(1, { message: 'availableQuantity must be greater than zero' })
   availableQuantity!: number;
 
   @IsOptional()

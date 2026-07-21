@@ -171,7 +171,9 @@ export class OrdersService {
       if (session) {
         try {
           await session.abortTransaction();
-        } catch (_) {}
+        } catch (_) {
+          //*
+        }
       }
       if (
         err?.message?.includes('Transaction numbers are only allowed') ||
@@ -184,7 +186,9 @@ export class OrdersService {
       if (session) {
         try {
           await session.endSession();
-        } catch (_) {}
+        } catch (_) {
+          //*
+        }
       }
     }
   }
@@ -273,16 +277,11 @@ export class OrdersService {
     }[] = [];
 
     for (const item of cart.items) {
-      const rawOfferId = item.offerId?._id
-        ? item.offerId._id
-        : item.offerId;
+      const rawOfferId = item.offerId?._id ? item.offerId._id : item.offerId;
 
       const offer = await this.offerRepository.findOne({
         filters: { _id: new Types.ObjectId(rawOfferId), isDeleted: false },
-        populationArray: [
-          { path: 'productId' },
-          { path: 'restaurantId' },
-        ],
+        populationArray: [{ path: 'productId' }, { path: 'restaurantId' }],
       });
 
       if (!offer) {
@@ -296,7 +295,7 @@ export class OrdersService {
 
       if (!product || product.isDeleted) {
         throw new BadRequestException(
-          `Product for offer "${offer._id}" is no longer available`,
+          `Product for offer "${offer._id.toString()}" is no longer available`,
         );
       }
 
@@ -389,8 +388,7 @@ export class OrdersService {
           const quantity = item.quantity;
           const originalPrice =
             Number(offer.originalPrice) || Number(product.price) || 0;
-          const offerPrice =
-            Number(offer.offerPrice) || originalPrice;
+          const offerPrice = Number(offer.offerPrice) || originalPrice;
           const discountPercentage = Number(offer.discountPercentage) || 0;
           const lineTotal = offerPrice * quantity;
 
