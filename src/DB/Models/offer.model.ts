@@ -10,8 +10,23 @@ export class Offer {
   @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true })
   restaurantId!: Types.ObjectId;
 
+  @Prop({ type: Number, required: true })
+  originalPrice!: number;
+
+  @Prop({ type: Number, required: true })
+  offerPrice!: number;
+
   @Prop({ type: Number, required: true, min: 1, max: 100 })
   discountPercentage!: number;
+
+  @Prop({ type: Number, required: true, min: 1 })
+  availableQuantity!: number;
+
+  @Prop({ type: Number, required: true, min: 0 })
+  remainingQuantity!: number;
+
+  @Prop({ type: Number, default: null })
+  maxPerCustomer?: number;
 
   @Prop({ type: Date, required: true })
   startDate!: Date;

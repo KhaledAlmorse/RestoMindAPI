@@ -21,6 +21,7 @@ export enum OfferStatusEnum {
   ACTIVE = 'active',
   EXPIRED = 'expired',
   CANCELLED = 'cancelled',
+  SOLD_OUT = 'sold_out',
 }
 
 export enum OfferSourceEnum {
@@ -33,4 +34,3 @@ export enum IngredientUnitEnum {
   LITER = 'liter',
   PIECE = 'piece',
 }
-

@@ -26,7 +26,12 @@ async function migrate() {
 
   const unlinkedOrders = await ordersCollection
     .find({
-      $or: [{ orderGroupId: { $exists: false } }, { orderGroupId: null }],
+      $or: [
+        { groupOrderId: { $exists: false } },
+        { groupOrderId: null },
+        { orderGroupId: { $exists: false } },
+        { orderGroupId: null },
+      ],
     })
     .toArray();
 
@@ -36,11 +41,12 @@ async function migrate() {
 
   let count = 0;
   for (const order of unlinkedOrders) {
-    const orderGroupId = new Types.ObjectId();
+    const groupOrderId = new Types.ObjectId();
 
     const orderGroupDoc = {
-      _id: orderGroupId,
+      _id: groupOrderId,
       userId: order.userId,
+      orderIds: [order._id],
       restaurantOrderIds: [order._id],
       fullName: order.fullName || 'Legacy User',
       phoneNumber: order.phoneNumber || '',
@@ -60,7 +66,7 @@ async function migrate() {
     await orderGroupsCollection.insertOne(orderGroupDoc);
     await ordersCollection.updateOne(
       { _id: order._id },
-      { $set: { orderGroupId } },
+      { $set: { groupOrderId, orderGroupId: groupOrderId } },
     );
     count++;
   }

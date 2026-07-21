@@ -37,7 +37,7 @@ export class OffersController {
 
   @Get('active')
   async getActiveOffers(
-    @Query() query: { page?: string; limit?: string },
+    @Query() query: QueryOfferDto,
     @Res() res: Response,
   ) {
     const result = await this.offersService.getActiveOffers(query);

@@ -15,7 +15,7 @@ export class OrderGroup {
     type: [{ type: MongooseSchema.Types.ObjectId, ref: 'Order' }],
     required: true,
   })
-  restaurantOrderIds!: Types.ObjectId[];
+  orderIds!: Types.ObjectId[];
 
   @Prop({ type: String, required: true })
   fullName!: string;

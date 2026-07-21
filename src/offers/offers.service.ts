@@ -94,37 +94,6 @@ export class OffersService {
     }
   }
 
-  async syncProductDiscountedPrice(productId: string) {
-    const product = await this.productRepository.findOne({
-      filters: { _id: new Types.ObjectId(productId), isDeleted: false },
-    });
-    if (!product) return;
-
-    const activeOffer = await this.offerRepository.findOne({
-      filters: {
-        productId: new Types.ObjectId(productId),
-        status: OfferStatusEnum.ACTIVE,
-        isDeleted: false,
-      },
-    });
-
-    if (activeOffer) {
-      const discountedPrice =
-        Math.round(
-          product.price * (1 - activeOffer.discountPercentage / 100) * 100,
-        ) / 100;
-      await this.productRepository.update({
-        filters: { _id: new Types.ObjectId(productId) },
-        body: { discountedPrice } as any,
-      });
-    } else {
-      await this.productRepository.update({
-        filters: { _id: new Types.ObjectId(productId) },
-        body: { discountedPrice: product.price } as any,
-      });
-    }
-  }
-
   async createOffer(dto: CreateOfferDto, userId: string) {
     this.validateObjectId(dto.productId);
 
@@ -164,10 +133,23 @@ export class OffersService {
       ? OfferStatusEnum.ACTIVE
       : OfferStatusEnum.SCHEDULED;
 
+    const originalPrice = product.price;
+    const offerPrice =
+      Math.round(originalPrice * (1 - dto.discountPercentage / 100) * 100) /
+      100;
+    const availableQuantity = dto.availableQuantity;
+    const remainingQuantity = dto.availableQuantity;
+    const maxPerCustomer = dto.maxPerCustomer ?? null;
+
     const offer = await this.offerRepository.create({
       productId: new Types.ObjectId(dto.productId),
       restaurantId: managerRestaurantId,
+      originalPrice,
+      offerPrice,
       discountPercentage: dto.discountPercentage,
+      availableQuantity,
+      remainingQuantity,
+      maxPerCustomer,
       startDate,
       endDate,
       status,
@@ -176,17 +158,32 @@ export class OffersService {
       createdBy: new Types.ObjectId(userId),
     } as any);
 
-    if (status === OfferStatusEnum.ACTIVE) {
-      await this.syncProductDiscountedPrice(dto.productId);
-    }
-
     return { data: offer };
   }
 
   async getOffers(query: QueryOfferDto, userId: string) {
+    const {
+      status,
+      productId,
+      source,
+      categoryId,
+      restaurantId,
+      search,
+      featured,
+      minPrice,
+      maxPrice,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      page = '1',
+      limit = '10',
+    } = query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.max(1, parseInt(limit, 10));
+    const skip = (pageNum - 1) * limitNum;
+
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
 
-    const { status, productId, source } = query;
     const filters: Record<string, any> = {
       restaurantId: managerRestaurantId,
       isDeleted: false,
@@ -195,22 +192,86 @@ export class OffersService {
     if (status) {
       filters.status = status;
     }
+
     if (productId) {
       this.validateObjectId(productId);
       filters.productId = new Types.ObjectId(productId);
     }
+
     if (source) {
       filters.source = source;
     }
 
-    const offers = await this.offerRepository.findMany({
-      filters,
-      populationArray: [
-        { path: 'productId' },
-        { path: 'createdBy', select: 'firstName lastName email' },
-      ],
+    if (featured !== undefined) {
+      filters.featured = featured === 'true' || (featured as any) === true;
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      filters.offerPrice = {};
+      if (minPrice !== undefined) {
+        filters.offerPrice.$gte = parseFloat(minPrice);
+      }
+      if (maxPrice !== undefined) {
+        filters.offerPrice.$lte = parseFloat(maxPrice);
+      }
+    }
+
+    const populationArray: any[] = [
+      { path: 'productId', populate: { path: 'category' } },
+      { path: 'restaurantId' },
+    ];
+
+    let offers =
+      (await this.offerRepository.findMany({
+        filters,
+        populationArray,
+      })) || [];
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        return (
+          prod &&
+          (searchRegex.test(prod.title || '') ||
+            searchRegex.test(prod.description || ''))
+        );
+      });
+    }
+
+    if (categoryId) {
+      this.validateObjectId(categoryId);
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        if (!prod || !prod.category) return false;
+        const catId = prod.category._id
+          ? prod.category._id.toString()
+          : prod.category.toString();
+        return catId === categoryId;
+      });
+    }
+
+    const sortMultiplier = sortOrder === 'asc' ? 1 : -1;
+    offers.sort((a: any, b: any) => {
+      let valA = a[sortBy] ?? a.createdAt;
+      let valB = b[sortBy] ?? b.createdAt;
+      if (valA instanceof Date) valA = valA.getTime();
+      if (valB instanceof Date) valB = valB.getTime();
+      if (valA < valB) return -1 * sortMultiplier;
+      if (valA > valB) return 1 * sortMultiplier;
+      return 0;
     });
-    return { data: offers };
+
+    const total = offers.length;
+    const items = offers.slice(skip, skip + limitNum);
+
+    return {
+      items,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum),
+    };
   }
 
   async getOfferById(idOrSlug: string, userId: string) {
@@ -342,10 +403,6 @@ export class OffersService {
       body: updateBody,
     });
 
-    if (updated && updated.status === OfferStatusEnum.ACTIVE) {
-      await this.syncProductDiscountedPrice(updated.productId.toString());
-    }
-
     return { data: updated };
   }
 
@@ -378,50 +435,131 @@ export class OffersService {
       body: { status: OfferStatusEnum.CANCELLED } as any,
     });
 
-    const productId = offer.productId.toString();
-    await this.syncProductDiscountedPrice(productId);
-
     const updated = await this.offerRepository.findOne({
       filters: { _id: new Types.ObjectId(id) },
     });
     return { data: updated };
   }
 
-  async getActiveOffers(query: { page?: string; limit?: string }) {
-    const { page = '1', limit = '10' } = query;
+  async getActiveOffers(query: QueryOfferDto) {
+    const {
+      productId,
+      restaurantId,
+      categoryId,
+      source,
+      search,
+      featured,
+      minPrice,
+      maxPrice,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      page = '1',
+      limit = '10',
+    } = query;
+
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.max(1, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
     const now = new Date();
-    const filters = {
+    const filters: Record<string, any> = {
       status: OfferStatusEnum.ACTIVE,
       isDeleted: false,
       endDate: { $gte: now },
     };
 
-    const result = await this.offerRepository.findManyPaginated({
-      filters,
-      skip,
-      limit: limitNum,
-      sort: 'createdAt',
-      order: 'desc',
-      select: '-createdBy -isDeleted -updatedAt -__v',
-      populationArray: [
-        {
-          path: 'productId',
-          select:
-            'title description price discountedPrice image category slug isAvailable',
-        },
-        { path: 'restaurantId', select: 'name description phone address' },
-      ],
+    if (productId) {
+      this.validateObjectId(productId);
+      filters.productId = new Types.ObjectId(productId);
+    }
+
+    if (restaurantId) {
+      this.validateObjectId(restaurantId);
+      filters.restaurantId = new Types.ObjectId(restaurantId);
+    }
+
+    if (source) {
+      filters.source = source;
+    }
+
+    if (featured !== undefined) {
+      filters.featured = featured === 'true' || (featured as any) === true;
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      filters.offerPrice = {};
+      if (minPrice !== undefined) {
+        filters.offerPrice.$gte = parseFloat(minPrice);
+      }
+      if (maxPrice !== undefined) {
+        filters.offerPrice.$lte = parseFloat(maxPrice);
+      }
+    }
+
+    const populationArray: any[] = [
+      {
+        path: 'productId',
+        populate: { path: 'category' },
+        select: 'title description price image category slug isAvailable',
+      },
+      { path: 'restaurantId', select: 'name description phone address' },
+    ];
+
+    let offers =
+      (await this.offerRepository.findMany({
+        filters,
+        populationArray,
+      })) || [];
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        return (
+          prod &&
+          (searchRegex.test(prod.title || '') ||
+            searchRegex.test(prod.description || ''))
+        );
+      });
+    }
+
+    if (categoryId) {
+      this.validateObjectId(categoryId);
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        if (!prod || !prod.category) return false;
+        const catId = prod.category._id
+          ? prod.category._id.toString()
+          : prod.category.toString();
+        return catId === categoryId;
+      });
+    }
+
+    const sortMultiplier = sortOrder === 'asc' ? 1 : -1;
+    offers.sort((a: any, b: any) => {
+      let valA = a[sortBy] ?? a.createdAt;
+      let valB = b[sortBy] ?? b.createdAt;
+      if (valA instanceof Date) valA = valA.getTime();
+      if (valB instanceof Date) valB = valB.getTime();
+      if (valA < valB) return -1 * sortMultiplier;
+      if (valA > valB) return 1 * sortMultiplier;
+      return 0;
     });
 
-    if (!result.items || result.items.length === 0) {
+    const total = offers.length;
+    const items = offers.slice(skip, skip + limitNum);
+
+    if (items.length === 0) {
       throw new NotFoundException('No active offers found');
     }
 
-    return result;
+    return {
+      items,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum),
+    };
   }
 
   async getActiveOfferById(idOrSlug: string) {
@@ -440,8 +578,7 @@ export class OffersService {
         populationArray: [
           {
             path: 'productId',
-            select:
-              'title description price discountedPrice image category slug isAvailable',
+            select: 'title description price image category slug isAvailable',
           },
           { path: 'restaurantId', select: 'name description phone address' },
         ],
@@ -467,14 +604,14 @@ export class OffersService {
             productId: product._id,
             status: OfferStatusEnum.ACTIVE,
             isDeleted: false,
+            startDate: { $lte: now },
             endDate: { $gte: now },
           },
           select: '-createdBy -isDeleted -updatedAt -__v',
           populationArray: [
             {
               path: 'productId',
-              select:
-                'title description price discountedPrice image category slug isAvailable',
+              select: 'title description price image category slug isAvailable',
             },
             { path: 'restaurantId', select: 'name description phone address' },
           ],
@@ -506,7 +643,6 @@ export class OffersService {
         filters: { _id: offer._id },
         body: { status: OfferStatusEnum.ACTIVE } as any,
       });
-      await this.syncProductDiscountedPrice(offer.productId.toString());
     }
 
     const activeToExpireds = await this.offerRepository.findMany({
@@ -522,7 +658,21 @@ export class OffersService {
         filters: { _id: offer._id },
         body: { status: OfferStatusEnum.EXPIRED } as any,
       });
-      await this.syncProductDiscountedPrice(offer.productId.toString());
+    }
+
+    const activeToScheduleds = await this.offerRepository.findMany({
+      filters: {
+        status: OfferStatusEnum.ACTIVE,
+        startDate: { $gt: now },
+        isDeleted: false,
+      },
+    });
+
+    for (const offer of activeToScheduleds) {
+      await this.offerRepository.update({
+        filters: { _id: offer._id },
+        body: { status: OfferStatusEnum.SCHEDULED } as any,
+      });
     }
   }
 }

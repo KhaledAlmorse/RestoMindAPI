@@ -28,9 +28,6 @@ export class Product {
   @Prop({ type: Number, required: true, min: 0 })
   price!: number;
 
-  @Prop({ type: Number, required: true, min: 0 })
-  discountedPrice!: number;
-
   @Prop({ type: Number, default: 0, min: 0, max: 5 })
   rating!: number;
 

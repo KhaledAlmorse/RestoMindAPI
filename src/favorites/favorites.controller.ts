@@ -17,28 +17,28 @@ import { type IAuthUser } from 'src/Common/Types';
 export class FavoritesController {
   constructor(private readonly favoritesService: FavoritesService) {}
 
-  @Post(':productId')
+  @Post(':offerId')
   async addFavorite(
-    @Param('productId') productId: string,
+    @Param('offerId') offerId: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.favoritesService.addFavorite(
       user.user._id.toString(),
-      productId,
+      offerId,
     );
     res.status(HttpStatus.CREATED).json(result);
   }
 
-  @Delete(':productId')
+  @Delete(':offerId')
   async removeFavorite(
-    @Param('productId') productId: string,
+    @Param('offerId') offerId: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.favoritesService.removeFavorite(
       user.user._id.toString(),
-      productId,
+      offerId,
     );
     res.status(HttpStatus.OK).json(result);
   }
@@ -51,15 +51,15 @@ export class FavoritesController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Get(':productId/status')
+  @Get(':offerId/status')
   async checkFavoriteStatus(
-    @Param('productId') productId: string,
+    @Param('offerId') offerId: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.favoritesService.checkFavoriteStatus(
       user.user._id.toString(),
-      productId,
+      offerId,
     );
     res.status(HttpStatus.OK).json(result);
   }

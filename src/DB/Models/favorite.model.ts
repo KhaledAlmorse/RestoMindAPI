@@ -6,14 +6,14 @@ export class Favorite {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
-  productId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Offer', required: true })
+  offerId!: Types.ObjectId;
 }
 
 const FavoriteSchema = SchemaFactory.createForClass(Favorite);
 
 // Compound unique index to prevent duplicate favorites
-FavoriteSchema.index({ userId: 1, productId: 1 }, { unique: true });
+FavoriteSchema.index({ userId: 1, offerId: 1 }, { unique: true });
 
 export const FavoriteModel = MongooseModule.forFeature([
   { name: Favorite.name, schema: FavoriteSchema },

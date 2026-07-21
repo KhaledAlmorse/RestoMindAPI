@@ -37,47 +37,28 @@ RestoMindApi/
 │   │   │   ├── user.model.ts      # User schema, hooks for encryption & hashing
 │   │   │   ├── otp.model.ts       # Verification OTP schema
 │   │   │   ├── offer.model.ts     # Special offers & promotional discount schema
+│   │   │   ├── favorite.model.ts  # Customer favorite offers schema
+│   │   │   ├── cart.model.ts      # Customer shopping cart schema
+│   │   │   ├── order.model.ts     # Customer order schema
+│   │   │   ├── category.model.ts  # Category schema
+│   │   │   ├── product.model.ts   # Product catalog schema
 │   │   │   ├── ingredient.model.ts # Raw material ingredient inventory schema
 │   │   │   ├── recipe.model.ts     # Product portion recipe mapping schema
 │   │   │   └── revoked-token.model.ts  # Blacklisted tokens schema (logout, refresh rotation)
 │   │   ├── Repositories/          # Encapsulated Mongoose repository operations
-│   │   │   ├── user.repository.ts
-│   │   │   ├── otp.repository.ts
-│   │   │   ├── offer.repository.ts
-│   │   │   ├── ingredient.repository.ts
-│   │   │   ├── recipe.repository.ts
-│   │   │   └── revoke-token.repository.ts
 │   │   └── base.service.ts        # Base repository service (contains generic CRUD queries)
 │   │
 │   ├── auth/                      # Authentication module
-│   │   ├── dto/                   # Auth validation data transfer objects (DTOs)
-│   │   ├── auth.controller.ts     # Auth HTTP controllers & routing
-│   │   ├── auth.service.ts        # Auth business logic
-│   │   └── auth.module.ts
-│   │
+│   ├── cart/                      # Cart module (offer-centric shopping cart)
+│   ├── categories/                # Categories module (product categorization)
+│   ├── favorites/                 # Favorites module (offer-centric customer favorites)
 │   ├── ingredients/               # Ingredients module (raw materials management)
-│   │   ├── dto/                   # Ingredient validation DTOs (create, update, query)
-│   │   ├── ingredients.controller.ts # Ingredients HTTP controllers
-│   │   ├── ingredients.service.ts    # Ingredients business logic
-│   │   └── ingredients.module.ts
-│   │
 │   ├── offers/                    # Offers module (promotional discounts & scheduling)
-│   │   ├── dto/                   # Offer validation DTOs (create, update, query)
-│   │   ├── offers.controller.ts   # Offers HTTP controllers
-│   │   ├── offers.service.ts      # Offers business logic & sync
-│   │   └── offers.module.ts
-│   │
+│   ├── orders/                    # Orders module (order group unification & checkout)
+│   ├── products/                  # Products module (product catalog & recipes)
 │   ├── restaurant/                # Restaurant module
-│   │   ├── dto/                   # Restaurant validation DTOs
-│   │   ├── restaurant.controller.ts  # Restaurant HTTP controllers
-│   │   ├── restaurant.service.ts  # Restaurant business logic
-│   │   └── restaurant.module.ts
-│   │
+│   ├── scripts/                   # Data migration & utility scripts
 │   └── user/                      # User module (CRUD management)
-│       ├── dto/                   # User validation DTOs
-│       ├── user.controller.ts     # User HTTP controllers
-│       ├── user.service.ts        # User business logic
-│       └── user.module.ts
 │
 ├── test/                          # e2e and integration tests
 ├── .env                           # Local environment configurations (secrets, ports)
@@ -517,29 +498,33 @@ In Postman, you can set this in the **Auth** tab:
 
 ### 3.5 Favorites Module (`/favorites`)
 
-#### 1. Add Product to Favorites
+#### 1. Add Offer to Favorites
 
-- **Method / URL**: `POST /favorites/:productId`
+- **Method / URL**: `POST /favorites/:offerId`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Adds an active/scheduled offer to the customer's favorites list. Returns `400 Bad Request` if offer status is not allowed, or `409 Conflict` if already in favorites.
 
-#### 2. Remove Product from Favorites
+#### 2. Remove Offer from Favorites
 
-- **Method / URL**: `DELETE /favorites/:productId`
+- **Method / URL**: `DELETE /favorites/:offerId`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Removes an offer from the customer's favorites list.
 
-#### 3. Get All Favorite Products
+#### 3. Get All Favorite Offers
 
 - **Method / URL**: `GET /favorites`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns all favorite offers with populated offer details (including product and restaurant info).
 
-#### 4. Check If Product is Favorite
+#### 4. Check If Offer is Favorite
 
-- **Method / URL**: `GET /favorites/:productId/status`
+- **Method / URL**: `GET /favorites/:offerId/status`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns `{ "isFavorite": true/false }` for a specific offer ID.
 
 ---
 
@@ -552,7 +537,7 @@ In Postman, you can set this in the **Auth** tab:
 - **Headers**: `Authorization: Bearer <accessToken>`
 - **Description**: Returns all cart items along with unit prices, discounted prices, total item prices, and calculated cart totals (original price, discount, final price, total quantity).
 
-#### 2. Add Product to Cart
+#### 2. Add Offer to Cart
 
 - **Method / URL**: `POST /cart`
 - **Auth required**: Access Token (`customer`)
@@ -560,20 +545,20 @@ In Postman, you can set this in the **Auth** tab:
 - **Body (`raw JSON`)**:
   ```json
   {
-    "productId": "<product_object_id>",
+    "offerId": "<offer_object_id>",
     "quantity": 2
   }
   ```
 
-#### 3. Remove Product from Cart
+#### 3. Remove Offer from Cart
 
-- **Method / URL**: `DELETE /cart/:productId`
+- **Method / URL**: `DELETE /cart/:offerId`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
 
 #### 4. Update Item Quantity in Cart
 
-- **Method / URL**: `PATCH /cart/:productId`
+- **Method / URL**: `PATCH /cart/:offerId`
 - **Auth required**: Access Token (`customer`)
 - **Headers**: `Authorization: Bearer <accessToken>`
 - **Body (`raw JSON`)**:
@@ -641,21 +626,23 @@ In Postman, you can set this in the **Auth** tab:
 
 _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of street, city, country to use profile saved address)_
 
-- **Description**: Places an order using the items in the current cart. Calculates totals, saves payment method as `Cash on Delivery`, order status as `Pending`, and clears the cart on success. **If the cart contains products from more than one restaurant, it automatically splits checkout into multiple Order documents (one per restaurantId) and returns an array of orders.**
+- **Description**: Places an order using items from current cart. Aggregates all items under a single root `GroupOrder` object containing customer info, payment, delivery, overall status, and total prices, with individual restaurant orders contained inside the `orders` array.
 
-#### 2. Get My Orders
+#### 2. Get My Orders (Order History)
 
 - **Method / URL**: `GET /orders/me`
-- **Auth required**: Access Token (`customer`)
+- **Auth required**: Access Token (`customer`, `admin`, `manager`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns an array of previous checkout `GroupOrder` objects for the customer.
 - **Query Params**:
   - `restaurantId` (e.g. `<restaurant_object_id>`, optional)
 
-#### 3. Get My Order Details
+#### 3. Get Checkout Details
 
-- **Method / URL**: `GET /orders/me/:id`
-- **Auth required**: Access Token (`customer`)
+- **Method / URL**: `GET /orders/me/:id` or `GET /order-groups/:id`
+- **Auth required**: Access Token (`customer`, `admin`, `manager`)
 - **Headers**: `Authorization: Bearer <accessToken>`
+- **Description**: Returns details for a single checkout as a single `data` object containing the aggregated `GroupOrder` (including customer info, totals, overallStatus, and `orders` array). Accepts either `orderGroupId` or a sub-order `orderId`.
 
 #### 4. Get All Orders (Admin Only)
 
@@ -760,12 +747,13 @@ _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of stre
 - **Method / URL**: `POST /offers`
 - **Auth required**: Access Token (`manager`)
 - **Headers**: `Authorization: Bearer <accessToken>`
-- **Description**: Creates an offer for a product. Verifies that the product belongs to the manager's owned/assigned restaurant (`403 Forbidden` if not). Accepts date-only strings (`YYYY-MM-DD`) or full ISO datetimes.
+- **Description**: Creates an offer for a product. Verifies that the product belongs to the manager's owned/assigned restaurant (`403 Forbidden` if not). Requires `availableQuantity` ($\ge 1$), which automatically initializes `remainingQuantity = availableQuantity`. `remainingQuantity` is system-managed and must not be sent in client requests. Accepts date-only strings (`YYYY-MM-DD`) or full ISO datetimes.
 - **Body (`raw JSON`)**:
   ```json
   {
     "productId": "<product_object_id>",
     "discountPercentage": 20,
+    "availableQuantity": 50,
     "startDate": "2026-07-20",
     "endDate": "2026-07-30",
     "featured": true
@@ -777,20 +765,127 @@ _(Note: Alternately, specify `"addressId": "<saved_address_id>"` instead of stre
 - **Method / URL**: `GET /offers`
 - **Auth required**: Access Token (`manager`)
 - **Headers**: `Authorization: Bearer <accessToken>`
-- **Description**: Returns offers scoped exclusively to the manager's own restaurant.
-- **Query Params**:
-  - `status` (e.g. `active`, `scheduled`, `expired`, `cancelled`, `draft`)
-  - `productId` (e.g. `<product_object_id>`)
-  - `source` (e.g. `manual`, `ai_recommendation`)
+- **Description**: Returns offers scoped exclusively to the authenticated manager's restaurant. If `status` is omitted, returns all offers across all statuses (`active`, `scheduled`, `draft`, `expired`, `cancelled`, `sold_out`).
+
+##### Query Parameters Table
+
+| Parameter | Type | Valid Options / Pattern | Description | Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `status` | string | `active`, `scheduled`, `draft`, `expired`, `cancelled`, `sold_out` | Filter by lifecycle status. Omit to fetch all statuses. | `?status=active` |
+| `productId` | string | Valid Mongo ObjectId | Filter offers for a specific product. | `?productId=6a5f62b318d38b42b8bc4824` |
+| `categoryId` | string | Valid Mongo ObjectId | Filter offers for products in a specific category. | `?categoryId=6a5a4a16e5012931a7867bd0` |
+| `source` | string | `manual`, `ai_recommendation` | Filter by creation origin. | `?source=manual` |
+| `featured` | boolean | `true`, `false` | Filter by featured highlight. | `?featured=true` |
+| `minPrice` | number | $\ge 0$ | Minimum `offerPrice` threshold. | `?minPrice=10` |
+| `maxPrice` | number | $\ge 0$ | Maximum `offerPrice` threshold. | `?maxPrice=50` |
+| `search` | string | Text search string | Case-insensitive search in product title/description. | `?search=milk` |
+| `sortBy` | string | `createdAt`, `offerPrice`, `discountPercentage`, `startDate`, `endDate` | Field to sort by (Default: `createdAt`). | `?sortBy=offerPrice` |
+| `sortOrder` | string | `asc`, `desc` | Sorting direction (Default: `desc`). | `?sortOrder=asc` |
+| `page` | number | Positive integer | Page number (Default: `1`). | `?page=1` |
+| `limit` | number | Positive integer | Items per page (Default: `10`). | `?limit=5` |
+
+##### Test Scenarios & Postman URLs
+
+1. **Get Active Offers Only**:
+   - `GET {{URL}}/offers?status=active`
+2. **Get Scheduled Offers (Starting in Future)**:
+   - `GET {{URL}}/offers?status=scheduled`
+3. **Price Range Filtering ($10 to $30)**:
+   - `GET {{URL}}/offers?minPrice=10&maxPrice=30`
+4. **Search by Keyword**:
+   - `GET {{URL}}/offers?search=fresh`
+5. **Filter Featured Offers Only**:
+   - `GET {{URL}}/offers?featured=true`
+6. **Filter by Category**:
+   - `GET {{URL}}/offers?categoryId=6a5a4a16e5012931a7867bd0`
+7. **Sort by Price Ascending**:
+   - `GET {{URL}}/offers?sortBy=offerPrice&sortOrder=asc`
+8. **Combined Complex Filter + Pagination**:
+   - `GET {{URL}}/offers?status=active&minPrice=10&maxPrice=50&sortBy=discountPercentage&sortOrder=desc&page=1&limit=5`
+
+##### Sample JSON Response (`200 OK`)
+
+```json
+{
+  "items": [
+    {
+      "_id": "6a5f640218d38b42b8bc482a",
+      "productId": {
+        "_id": "6a5f62b318d38b42b8bc4824",
+        "title": "fresh milk",
+        "description": "Rich in iron, fresh milk.",
+        "price": 25,
+        "isAvailable": true,
+        "category": {
+          "_id": "6a5a4a16e5012931a7867bd0",
+          "name": "Dairy"
+        },
+        "slug": "fresh-milk"
+      },
+      "restaurantId": {
+        "_id": "6a5f605813012e65590dad1f",
+        "name": "Abo ali"
+      },
+      "originalPrice": 25,
+      "offerPrice": 20,
+      "discountPercentage": 20,
+      "availableQuantity": 10,
+      "remainingQuantity": 10,
+      "startDate": "2026-07-21T00:00:00.000Z",
+      "endDate": "2026-07-25T23:59:59.999Z",
+      "status": "active",
+      "source": "manual",
+      "featured": true,
+      "createdAt": "2026-07-21T12:20:18.422Z"
+    }
+  ],
+  "page": 1,
+  "limit": 5,
+  "total": 1,
+  "totalPages": 1
+}
+```
 
 #### 3. Get Active Offers (Public Customer Store)
 
 - **Method / URL**: `GET /offers/active`
 - **Auth required**: Public (No tokens required)
-- **Description**: Returns all currently active, non-deleted offers across all restaurants within the active date window (`startDate <= now <= endDate`), with internal management fields omitted.
-- **Query Params**:
-  - `page` (e.g. `1`, default: `1`)
-  - `limit` (e.g. `10`, default: `10`)
+- **Description**: Returns currently active, non-deleted offers across restaurants (`status = active` and `endDate >= now`), with internal management fields omitted (`createdBy`, `isDeleted`, `updatedAt`, `__v`). Supports full searching, filtering by restaurant, category, price range, featured status, sorting, and pagination.
+
+##### Supported Query Parameters Table
+
+| Parameter | Type | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `restaurantId` | string | Filter active offers for a specific restaurant | `?restaurantId=6a5f605813012e65590dad1f` |
+| `categoryId` | string | Filter active offers by product category ID | `?categoryId=6a5a4a16e5012931a7867bd0` |
+| `productId` | string | Filter active offers for a specific product ID | `?productId=6a5f62b318d38b42b8bc4824` |
+| `search` | string | Search active offers by product title/description | `?search=milk` |
+| `featured` | boolean | Filter active featured offers | `?featured=true` |
+| `minPrice` | number | Minimum `offerPrice` threshold | `?minPrice=10` |
+| `maxPrice` | number | Maximum `offerPrice` threshold | `?maxPrice=50` |
+| `sortBy` | string | Sort field (`createdAt`, `offerPrice`, `discountPercentage`, `startDate`, `endDate`) | `?sortBy=offerPrice` |
+| `sortOrder` | string | Sort direction (`asc`, `desc`, Default: `desc`) | `?sortOrder=asc` |
+| `page` | number | Pagination page number (Default: `1`) | `?page=1` |
+| `limit` | number | Items per page (Default: `10`) | `?limit=5` |
+
+##### Ready-to-Use Customer Test Scenarios & Postman URLs
+
+1. **Browse All Active Offers**:
+   - `GET {{URL}}/offers/active`
+2. **Filter Active Offers by Restaurant**:
+   - `GET {{URL}}/offers/active?restaurantId=6a5f605813012e65590dad1f`
+3. **Filter Active Offers by Category**:
+   - `GET {{URL}}/offers/active?categoryId=6a5a4a16e5012931a7867bd0`
+4. **Search Active Offers by Keyword**:
+   - `GET {{URL}}/offers/active?search=milk`
+5. **Filter Active Featured Offers Only**:
+   - `GET {{URL}}/offers/active?featured=true`
+6. **Price Range ($10 to $50)**:
+   - `GET {{URL}}/offers/active?minPrice=10&maxPrice=50`
+7. **Sort by Offer Price Ascending**:
+   - `GET {{URL}}/offers/active?sortBy=offerPrice&sortOrder=asc`
+8. **Combined Search, Filter & Pagination**:
+   - `GET {{URL}}/offers/active?restaurantId=6a5f605813012e65590dad1f&minPrice=10&maxPrice=50&sortBy=discountPercentage&sortOrder=desc&page=1&limit=5`
 
 #### 4. Get Active Offer Details (Public Customer Store)
 

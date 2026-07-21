@@ -29,6 +29,15 @@ export class CreateOfferDto {
   )
   endDate!: string;
 
+  @IsNumber()
+  @Min(1)
+  availableQuantity!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  maxPerCustomer?: number;
+
   @IsOptional()
   @IsBoolean()
   featured?: boolean;

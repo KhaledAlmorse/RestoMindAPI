@@ -40,29 +40,29 @@ export class CartController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Delete(':productId')
+  @Delete(':offerId')
   async removeFromCart(
-    @Param('productId') productId: string,
+    @Param('offerId') offerId: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.cartService.removeFromCart(
       user.user._id.toString(),
-      productId,
+      offerId,
     );
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Patch(':productId')
+  @Patch(':offerId')
   async updateQuantity(
-    @Param('productId') productId: string,
+    @Param('offerId') offerId: string,
     @Body() body: UpdateCartQuantityDto,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.cartService.updateQuantity(
       user.user._id.toString(),
-      productId,
+      offerId,
       body.quantity,
     );
     res.status(HttpStatus.OK).json(result);

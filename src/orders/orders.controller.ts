@@ -63,6 +63,22 @@ export class OrdersController {
     res.status(HttpStatus.OK).json(result);
   }
 
+  @Get('group/:id')
+  @Auth('customer', 'admin', 'manager')
+  async getGroupOrderDetails(
+    @Param('id') id: string,
+    @AuthUser() user: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.ordersService.getOrderGroupById(
+      id,
+      user.user.role === RolesEnum.CUSTOMER
+        ? user.user._id.toString()
+        : undefined,
+    );
+    res.status(HttpStatus.OK).json(result);
+  }
+
   @Get()
   @Auth('admin')
   async getAllOrders(
@@ -102,6 +118,27 @@ export class OrdersController {
     @Res() res: Response,
   ) {
     const result = await this.ordersService.updateOrderStatus(id, body.status);
+    res.status(HttpStatus.OK).json(result);
+  }
+}
+
+@Controller('order-groups')
+@Auth('customer', 'admin', 'manager')
+export class OrderGroupsController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @Get(':id')
+  async getOrderGroup(
+    @Param('id') id: string,
+    @AuthUser() user: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.ordersService.getOrderGroupById(
+      id,
+      user.user.role === RolesEnum.CUSTOMER
+        ? user.user._id.toString()
+        : undefined,
+    );
     res.status(HttpStatus.OK).json(result);
   }
 }

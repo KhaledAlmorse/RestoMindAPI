@@ -18,7 +18,6 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 import { UpdateProductAvailabilityDto } from './dto/update-product-availability.dto';
-import { UpdateProductDiscountDto } from './dto/update-product-discount.dto';
 import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 
 import { type Response } from 'express';
@@ -32,90 +31,87 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Post()
-  @Auth('admin')
+  @Auth('admin', 'manager')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async createProduct(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: CreateProductDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.productsService.createProduct(body, file);
+    const result = await this.productsService.createProduct(
+      body,
+      authUser,
+      file,
+    );
     res.status(HttpStatus.CREATED).json(result);
   }
 
   @Patch(':id')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateProduct(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body() body: UpdateProductDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.productsService.updateProduct(id, body, file);
+    const result = await this.productsService.updateProduct(
+      id,
+      body,
+      authUser,
+      file,
+    );
     res.status(HttpStatus.OK).json(result);
   }
 
   @Delete(':id')
-  @Auth('admin')
-  async deleteProduct(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.productsService.deleteProduct(id);
+  @Auth('admin', 'manager')
+  async deleteProduct(
+    @Param('id') id: string,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.productsService.deleteProduct(id, authUser);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Patch(':id/availability')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async changeAvailability(
     @Param('id') id: string,
     @Body() body: UpdateProductAvailabilityDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
     const result = await this.productsService.changeAvailability(
       id,
       body.isAvailable,
-    );
-    res.status(HttpStatus.OK).json(result);
-  }
-
-  @Patch(':id/discount')
-  @Auth('admin', 'manager')
-  async updateDiscount(
-    @Param('id') id: string,
-    @Body() body: UpdateProductDiscountDto,
-    @AuthUser() authUser: IAuthUser,
-    @Res() res: Response,
-  ) {
-    const result = await this.productsService.updateDiscount(
-      id,
-      body.discountedPrice,
-      body.endDate,
-      authUser.user._id.toString(),
+      authUser,
     );
     res.status(HttpStatus.OK).json(result);
   }
 
   @Get()
-  async getAllProducts(@Query() query: QueryProductDto, @Res() res: Response) {
-    const result = await this.productsService.getAllProducts(query);
-    res.status(HttpStatus.OK).json(result);
-  }
-
-  @Get('recommendations')
-  async getRecommendations(
-    @Query('page') page: string,
-    @Query('limit') limit: string,
+  @Auth('admin', 'manager')
+  async getAllProducts(
+    @Query() query: QueryProductDto,
+    @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.productsService.getRecommendations({
-      page,
-      limit,
-    });
+    const result = await this.productsService.getAllProducts(query, authUser);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Get(':id')
-  async getProductDetails(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.productsService.getProductDetails(id);
+  @Auth('admin', 'manager')
+  async getProductDetails(
+    @Param('id') id: string,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.productsService.getProductDetails(id, authUser);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -149,4 +145,3 @@ export class ProductsController {
     res.status(HttpStatus.OK).json(result);
   }
 }
-

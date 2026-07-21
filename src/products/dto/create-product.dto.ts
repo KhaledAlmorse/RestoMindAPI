@@ -75,6 +75,6 @@ export class CreateProductDto {
   isAvailable?: boolean;
 
   @IsMongoId()
-  @IsNotEmpty()
-  restaurantId!: string;
+  @IsOptional()
+  restaurantId?: string;
 }

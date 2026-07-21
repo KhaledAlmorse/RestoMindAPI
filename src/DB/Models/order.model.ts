@@ -8,20 +8,45 @@ import {
 
 @Schema({ _id: false })
 export class OrderItem {
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Offer', required: true })
+  offerId!: Types.ObjectId;
+
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Product', required: true })
   productId!: Types.ObjectId;
 
   @Prop({ type: String, required: true })
-  title!: string;
+  productTitle!: string;
+
+  @Prop({ type: String, required: false })
+  productImage?: string;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+  })
+  restaurantId!: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  restaurantName!: string;
 
   @Prop({ type: Number, required: true })
-  price!: number;
+  originalPrice!: number;
 
   @Prop({ type: Number, required: true })
-  discountedPrice!: number;
+  offerPrice!: number;
+
+  @Prop({ type: Number, required: true })
+  discountPercentage!: number;
 
   @Prop({ type: Number, required: true, min: 1 })
   quantity!: number;
+
+  @Prop({ type: Date, required: true, default: Date.now })
+  purchasedAt!: Date;
+
+  @Prop({ type: Number, required: true })
+  lineTotal!: number;
 }
 
 @Schema({ timestamps: true })
@@ -31,7 +56,7 @@ export class Order {
     ref: 'OrderGroup',
     required: false,
   })
-  orderGroupId?: Types.ObjectId;
+  groupOrderId?: Types.ObjectId;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   userId!: Types.ObjectId;

@@ -21,7 +21,8 @@ import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
-import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
+import { RolesEnum } from 'src/Common/Types';
+import type { IAuthUser } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 
 @Injectable()
@@ -44,9 +45,65 @@ export class ProductsService {
     }
   }
 
-  async createProduct(body: CreateProductDto, file?: Express.Multer.File) {
+  private async getManagerRestaurantId(
+    userId: string,
+  ): Promise<Types.ObjectId> {
+    this.validateObjectId(userId);
+    const user = await this.userRepository.findOne({
+      filters: { _id: new Types.ObjectId(userId), isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.restaurantId) {
+      return new Types.ObjectId(user.restaurantId.toString());
+    }
+
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { ownerUserId: new Types.ObjectId(userId), isDeleted: false },
+    });
+
+    if (!restaurant) {
+      throw new ForbiddenException(
+        'You are not assigned to a restaurant or do not own one',
+      );
+    }
+
+    return restaurant._id;
+  }
+
+  async createProduct(
+    body: CreateProductDto,
+    authUser: IAuthUser,
+    file?: Express.Multer.File,
+  ) {
     if (!file) {
       throw new BadRequestException('Product image is required');
+    }
+
+    let targetRestaurantId: Types.ObjectId;
+
+    if (authUser.user.role === RolesEnum.MANAGER) {
+      targetRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
+      );
+      if (
+        body.restaurantId &&
+        body.restaurantId !== targetRestaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'You can only create products for your own restaurant',
+        );
+      }
+    } else {
+      if (!body.restaurantId) {
+        throw new BadRequestException(
+          'restaurantId is required when creating a product as admin',
+        );
+      }
+      this.validateObjectId(body.restaurantId);
+      targetRestaurantId = new Types.ObjectId(body.restaurantId);
     }
 
     const price = body.price;
@@ -66,9 +123,8 @@ export class ProductsService {
       throw new NotFoundException('Category not found');
     }
 
-    this.validateObjectId(body.restaurantId);
     const restaurant = await this.restaurantRepository.findOne({
-      filters: { _id: body.restaurantId, isDeleted: false },
+      filters: { _id: targetRestaurantId, isDeleted: false },
     });
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
@@ -105,7 +161,7 @@ export class ProductsService {
       discountedPrice,
       slug,
       category: new Types.ObjectId(body.category),
-      restaurantId: new Types.ObjectId(body.restaurantId),
+      restaurantId: targetRestaurantId,
       image: uploadResult,
     } as any);
     return { data: newProduct };
@@ -114,6 +170,7 @@ export class ProductsService {
   async updateProduct(
     id: string,
     body: UpdateProductDto,
+    authUser: IAuthUser,
     file?: Express.Multer.File,
   ) {
     this.validateObjectId(id);
@@ -122,6 +179,25 @@ export class ProductsService {
     });
     if (!product) {
       throw new NotFoundException('Product not found');
+    }
+
+    if (authUser.user.role === RolesEnum.MANAGER) {
+      const managerRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
+      );
+      if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+        throw new ForbiddenException(
+          'You can only update products belonging to your own restaurant',
+        );
+      }
+      if (
+        body.restaurantId &&
+        body.restaurantId !== managerRestaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'You cannot reassign products to another restaurant',
+        );
+      }
     }
 
     const updateBody: any = { ...body };
@@ -176,17 +252,6 @@ export class ProductsService {
     }
     updateBody.slug = slug;
 
-    const finalPrice =
-      updateBody.price !== undefined ? updateBody.price : product.price;
-    const finalDiscountedPrice =
-      updateBody.discountedPrice !== undefined
-        ? updateBody.discountedPrice
-        : product.discountedPrice;
-    if (finalDiscountedPrice > finalPrice) {
-      throw new BadRequestException(
-        'Discounted price cannot be greater than the original price',
-      );
-    }
     if (file) {
       if (product.image && product.image.public_id) {
         await this.uploadCloudFileService.DeleteFileByPublicId(
@@ -207,20 +272,27 @@ export class ProductsService {
       body: updateBody,
     });
 
-    if (body.price !== undefined) {
-      await this.offersService.syncProductDiscountedPrice(id);
-    }
-
     return { data: updated };
   }
 
-  async deleteProduct(id: string) {
+  async deleteProduct(id: string, authUser: IAuthUser) {
     this.validateObjectId(id);
     const product = await this.productRepository.findOne({
       filters: { _id: id, isDeleted: false },
     });
     if (!product) {
       throw new NotFoundException('Product not found');
+    }
+
+    if (authUser.user.role === RolesEnum.MANAGER) {
+      const managerRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
+      );
+      if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+        throw new ForbiddenException(
+          'You can only delete products belonging to your own restaurant',
+        );
+      }
     }
 
     if (product.image && product.image.public_id) {
@@ -242,13 +314,28 @@ export class ProductsService {
     return { message: 'Product deleted successfully' };
   }
 
-  async changeAvailability(id: string, isAvailable?: boolean) {
+  async changeAvailability(
+    id: string,
+    isAvailable: boolean | undefined,
+    authUser: IAuthUser,
+  ) {
     this.validateObjectId(id);
     const product = await this.productRepository.findOne({
       filters: { _id: id, isDeleted: false },
     });
     if (!product) {
       throw new NotFoundException('Product not found');
+    }
+
+    if (authUser.user.role === RolesEnum.MANAGER) {
+      const managerRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
+      );
+      if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
+        throw new ForbiddenException(
+          'You can only modify products belonging to your own restaurant',
+        );
+      }
     }
 
     if (isAvailable === undefined) {
@@ -262,80 +349,7 @@ export class ProductsService {
     return { data: updated };
   }
 
-  async updateDiscount(
-    id: string,
-    discountedPrice?: number,
-    endDate?: string,
-    userId?: string,
-  ) {
-    this.validateObjectId(id);
-    const product = await this.productRepository.findOne({
-      filters: { _id: id, isDeleted: false },
-    });
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
-
-    if (discountedPrice === undefined) {
-      return { data: product };
-    }
-
-    if (discountedPrice < 0) {
-      throw new BadRequestException('Discount price cannot be negative');
-    }
-
-    if (discountedPrice > product.price) {
-      throw new BadRequestException(
-        'Discounted price cannot be greater than the original price',
-      );
-    }
-
-    if (!userId) {
-      throw new BadRequestException('User ID is required to update discount');
-    }
-
-    const existingOverlap = await this.offerRepository.findOne({
-      filters: {
-        productId: new Types.ObjectId(id),
-        status: { $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED] },
-        isDeleted: false,
-      },
-    });
-    if (existingOverlap) {
-      throw new ConflictException(
-        'This product already has an active or scheduled offer',
-      );
-    }
-
-    const discountPercentage = Math.round(
-      (1 - discountedPrice / product.price) * 100,
-    );
-
-    const now = new Date();
-    const defaultEndDate = new Date(now);
-    defaultEndDate.setDate(defaultEndDate.getDate() + 7);
-
-    await this.offerRepository.create({
-      productId: new Types.ObjectId(id),
-      restaurantId: product.restaurantId,
-      discountPercentage,
-      startDate: now,
-      endDate: endDate ? new Date(endDate) : defaultEndDate,
-      status: OfferStatusEnum.ACTIVE,
-      source: OfferSourceEnum.MANUAL,
-      featured: false,
-      createdBy: new Types.ObjectId(userId),
-    } as any);
-
-    await this.offersService.syncProductDiscountedPrice(id);
-
-    const updated = await this.productRepository.findOne({
-      filters: { _id: id },
-    });
-    return { data: updated };
-  }
-
-  async getAllProducts(query: QueryProductDto) {
+  async getAllProducts(query: QueryProductDto, authUser?: IAuthUser) {
     const {
       page = '1',
       limit = '10',
@@ -351,20 +365,32 @@ export class ProductsService {
     const limitNum = Math.max(1, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    // Filters: non-deleted and available
     const filters: Record<string, any> = {
       isDeleted: false,
-      isAvailable: true,
     };
+
+    if (authUser?.user?.role === RolesEnum.MANAGER) {
+      const managerRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
+      );
+      filters['restaurantId'] = managerRestaurantId;
+    } else if (authUser?.user?.role === RolesEnum.CUSTOMER) {
+      filters['isAvailable'] = true;
+      if (restaurantId) {
+        this.validateObjectId(restaurantId);
+        filters['restaurantId'] = new Types.ObjectId(restaurantId);
+      }
+    } else {
+      // Admin or public
+      if (restaurantId) {
+        this.validateObjectId(restaurantId);
+        filters['restaurantId'] = new Types.ObjectId(restaurantId);
+      }
+    }
 
     if (category) {
       this.validateObjectId(category);
       filters['category'] = new Types.ObjectId(category);
-    }
-
-    if (restaurantId) {
-      this.validateObjectId(restaurantId);
-      filters['restaurantId'] = new Types.ObjectId(restaurantId);
     }
 
     if (search) {
@@ -387,114 +413,45 @@ export class ProductsService {
     return result;
   }
 
-  async getRecommendations(query: { page?: string; limit?: string }) {
-    const { page = '1', limit = '10' } = query;
-
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
-    const skip = (pageNum - 1) * limitNum;
-
-    const now = new Date();
-    const activeOffers = await this.offerRepository.findMany({
-      filters: {
-        status: OfferStatusEnum.ACTIVE,
-        isDeleted: false,
-        startDate: { $lte: now },
-        endDate: { $gte: now },
-      },
-    });
-
-    activeOffers.sort((a: any, b: any) => {
-      if (a.featured && !b.featured) return -1;
-      if (!a.featured && b.featured) return 1;
-      return b.createdAt.getTime() - a.createdAt.getTime();
-    });
-
-    const candidateProductIds = activeOffers.map((o) => o.productId);
-
-    let validProducts: any[] = [];
-    if (candidateProductIds.length > 0) {
-      validProducts =
-        (await this.productRepository.findMany({
-          filters: {
-            _id: { $in: candidateProductIds },
-            isDeleted: false,
-            isAvailable: true,
-          },
-          populationArray: [{ path: 'category' }],
-        })) || [];
-    }
-
-    const productMap = new Map(
-      validProducts.map((p: any) => [p._id.toString(), p]),
-    );
-    const orderedProducts = candidateProductIds
-      .map((id) => productMap.get(id.toString()))
-      .filter(Boolean);
-
-    const total = orderedProducts.length;
-    const items = orderedProducts.slice(skip, skip + limitNum);
-
-    return {
-      items,
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages: Math.ceil(total / limitNum),
-    };
-  }
-
-  async getProductDetails(idOrSlug: string) {
-    let product;
+  async getProductDetails(idOrSlug: string, authUser?: IAuthUser) {
+    let product: any;
     if (isValidObjectId(idOrSlug)) {
       product = await this.productRepository.findOne({
-        filters: { _id: idOrSlug, isDeleted: false, isAvailable: true },
-        populationArray: [{ path: 'category' }],
+        filters: { _id: idOrSlug, isDeleted: false },
+        populationArray: [{ path: 'category' }, { path: 'restaurantId' }],
       });
     } else {
       product = await this.productRepository.findOne({
-        filters: { slug: idOrSlug, isDeleted: false, isAvailable: true },
-        populationArray: [{ path: 'category' }],
+        filters: { slug: idOrSlug, isDeleted: false },
+        populationArray: [{ path: 'category' }, { path: 'restaurantId' }],
       });
     }
     if (!product) {
-      throw new NotFoundException('Product not found or unavailable');
-    }
-    return { data: product };
-  }
-
-  private async getManagerRestaurantId(
-    userId: string,
-  ): Promise<Types.ObjectId> {
-    this.validateObjectId(userId);
-    const user = await this.userRepository.findOne({
-      filters: { _id: new Types.ObjectId(userId), isDeleted: false },
-    });
-    if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException('Product not found');
     }
 
-    if (user.restaurantId) {
-      return new Types.ObjectId(user.restaurantId.toString());
-    }
-
-    const restaurant = await this.restaurantRepository.findOne({
-      filters: { ownerUserId: new Types.ObjectId(userId), isDeleted: false },
-    });
-
-    if (!restaurant) {
-      throw new ForbiddenException(
-        'You are not assigned to a restaurant or do not own one',
+    if (authUser?.user?.role === RolesEnum.MANAGER) {
+      const managerRestaurantId = await this.getManagerRestaurantId(
+        authUser.user._id.toString(),
       );
+      const restIdStr = product.restaurantId._id
+        ? product.restaurantId._id.toString()
+        : product.restaurantId.toString();
+
+      if (restIdStr !== managerRestaurantId.toString()) {
+        throw new ForbiddenException(
+          'You can only view product details for your own restaurant',
+        );
+      }
     }
 
-    return restaurant._id;
+    return { data: product };
   }
 
   async upsertRecipe(idOrSlug: string, dto: UpsertRecipeDto, userId: string) {
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
 
-    let product;
+    let product: any;
     if (isValidObjectId(idOrSlug)) {
       product = await this.productRepository.findOne({
         filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
@@ -585,7 +542,7 @@ export class ProductsService {
   async getRecipe(idOrSlug: string, userId: string) {
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
 
-    let product;
+    let product: any;
     if (isValidObjectId(idOrSlug)) {
       product = await this.productRepository.findOne({
         filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },

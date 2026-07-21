@@ -4,14 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { FavoriteRepository, ProductRepository } from 'src/DB/Repositories';
-import { isValidObjectId } from 'mongoose';
+import { FavoriteRepository, OfferRepository } from 'src/DB/Repositories';
+import { isValidObjectId, Types } from 'mongoose';
+import { OfferStatusEnum } from 'src/Common/Types';
 
 @Injectable()
 export class FavoritesService {
   constructor(
     private readonly favoriteRepository: FavoriteRepository,
-    private readonly productRepository: ProductRepository,
+    private readonly offerRepository: OfferRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -20,80 +21,112 @@ export class FavoritesService {
     }
   }
 
-  private async getProductByIdOrSlug(idOrSlug: string) {
-    if (isValidObjectId(idOrSlug)) {
-      return await this.productRepository.findOne({
-        filters: { _id: idOrSlug, isDeleted: false },
-      });
-    } else {
-      return await this.productRepository.findOne({
-        filters: { slug: idOrSlug, isDeleted: false },
-      });
-    }
-  }
+  async addFavorite(userId: string, offerId: string) {
+    this.validateObjectId(offerId);
 
-  async addFavorite(userId: string, productId: string) {
-    const product = await this.getProductByIdOrSlug(productId);
-    if (!product) {
-      throw new NotFoundException('Product not found');
+    const offer = await this.offerRepository.findOne({
+      filters: { _id: new Types.ObjectId(offerId), isDeleted: false },
+    });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
     }
 
-    const resolvedProductId = product._id.toString();
+    const allowedStatuses = [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED];
+    if (!allowedStatuses.includes(offer.status)) {
+      throw new BadRequestException(
+        `Cannot favorite an offer with status '${offer.status}'`,
+      );
+    }
+
+    const userObjId = new Types.ObjectId(userId);
+    const offerObjId = new Types.ObjectId(offerId);
+
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId: resolvedProductId },
+      filters: {
+        $or: [
+          { userId: userObjId, offerId: offerObjId },
+          { userId: userId, offerId: offerId },
+        ],
+      },
     });
     if (existing) {
-      throw new ConflictException('Product is already in favorites');
+      throw new ConflictException('Offer is already in favorites');
     }
 
-    const newFav = await this.favoriteRepository.create({
-      userId: userId as any,
-      productId: resolvedProductId as any,
-    });
-    return { data: newFav };
+    try {
+      const newFav = await this.favoriteRepository.create({
+        userId: userObjId,
+        offerId: offerObjId,
+      });
+      return { data: newFav };
+    } catch (error: any) {
+      if (error?.code === 11000 || error?.name === 'MongoServerError') {
+        throw new ConflictException('Offer is already in favorites');
+      }
+      throw error;
+    }
   }
 
-  async removeFavorite(userId: string, productId: string) {
-    const product = await this.getProductByIdOrSlug(productId);
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
+  async removeFavorite(userId: string, offerId: string) {
+    this.validateObjectId(offerId);
 
-    const resolvedProductId = product._id.toString();
+    const userObjId = new Types.ObjectId(userId);
+    const offerObjId = new Types.ObjectId(offerId);
+
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId: resolvedProductId },
+      filters: {
+        $or: [
+          { userId: userObjId, offerId: offerObjId },
+          { userId: userId, offerId: offerId },
+        ],
+      },
     });
     if (!existing) {
-      throw new NotFoundException('Product is not in favorites');
+      throw new NotFoundException('Offer is not in favorites');
     }
 
     await this.favoriteRepository.delete({ filters: { _id: existing._id } });
-    return { message: 'Product removed from favorites' };
+    return { message: 'Offer removed from favorites' };
   }
 
   async getFavorites(userId: string) {
+    const userObjId = new Types.ObjectId(userId);
+
     const favorites =
       (await this.favoriteRepository.findMany({
-        filters: { userId },
+        filters: {
+          $or: [{ userId: userObjId }, { userId: userId }],
+        },
         populationArray: [
-          { path: 'productId', populate: { path: 'category' } },
+          {
+            path: 'offerId',
+            populate: [{ path: 'productId' }, { path: 'restaurantId' }],
+          },
         ],
       })) || [];
-    const products = favorites
-      .map((fav) => fav.productId)
-      .filter((prod) => prod !== null && !(prod as any).isDeleted);
-    return { data: products };
+
+    const offers = favorites
+      .map((fav) => fav.offerId)
+      .filter(
+        (off) => off !== null && typeof off === 'object' && !(off as any).isDeleted,
+      );
+
+    return { data: offers };
   }
 
-  async checkFavoriteStatus(userId: string, productId: string) {
-    const product = await this.getProductByIdOrSlug(productId);
-    if (!product) {
-      throw new NotFoundException('Product not found');
-    }
+  async checkFavoriteStatus(userId: string, offerId: string) {
+    this.validateObjectId(offerId);
 
-    const resolvedProductId = product._id.toString();
+    const userObjId = new Types.ObjectId(userId);
+    const offerObjId = new Types.ObjectId(offerId);
+
     const existing = await this.favoriteRepository.findOne({
-      filters: { userId, productId: resolvedProductId },
+      filters: {
+        $or: [
+          { userId: userObjId, offerId: offerObjId },
+          { userId: userId, offerId: offerId },
+        ],
+      },
     });
     return { isFavorite: !!existing };
   }
