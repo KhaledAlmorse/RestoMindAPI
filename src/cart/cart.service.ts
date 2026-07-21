@@ -134,8 +134,8 @@ export class CartService {
         continue;
       }
 
-      const product = offer.productId as any;
-      const restaurant = offer.restaurantId as any;
+      const product = offer.productId;
+      const restaurant = offer.restaurantId;
 
       const quantity = item.quantity;
       const unitOriginalPrice = offer.originalPrice;
@@ -153,14 +153,14 @@ export class CartService {
           maxPerCustomer: offer.maxPerCustomer,
           startDate: offer.startDate,
           endDate: offer.endDate,
-          product: product
+          productId: product
             ? {
                 _id: product._id,
                 title: product.title,
                 image: product.image,
               }
             : null,
-          restaurant: restaurant
+          restaurantId: restaurant
             ? {
                 _id: restaurant._id,
                 name:
@@ -223,7 +223,7 @@ export class CartService {
       cart.items[itemIndex].quantity += quantity;
     } else {
       cart.items.push({
-        offerId: new Types.ObjectId(offerId) as any,
+        offerId: new Types.ObjectId(offerId),
         quantity,
       });
     }

@@ -36,10 +36,7 @@ export class OffersController {
   }
 
   @Get('active')
-  async getActiveOffers(
-    @Query() query: QueryOfferDto,
-    @Res() res: Response,
-  ) {
+  async getActiveOffers(@Query() query: QueryOfferDto, @Res() res: Response) {
     const result = await this.offersService.getActiveOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
@@ -47,6 +44,15 @@ export class OffersController {
   @Get('active/:id')
   async getActiveOfferById(@Param('id') id: string, @Res() res: Response) {
     const result = await this.offersService.getActiveOfferById(id);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Get('recommendations')
+  async getRecommendedOffers(
+    @Query() query: QueryOfferDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.offersService.getRecommendedOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
 

@@ -60,6 +60,46 @@ export class OfferRepository extends BaseService<OfferType> {
     };
   }
 
+  /**
+   * Find offers with a compound sort, skip, and limit pushed to MongoDB.
+   * Returns { items, total } so the caller can build the paginated response.
+   */
+  async findManySorted(options: {
+    filters?: Record<string, any>;
+    sort: Record<string, 1 | -1>;
+    skip: number;
+    limit: number;
+    select?: string;
+    populationArray?: any[];
+  }) {
+    const {
+      filters = {},
+      sort,
+      skip,
+      limit,
+      select = '',
+      populationArray = [],
+    } = options;
+
+    const query = this.offerModel
+      .find(filters)
+      .select(select)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit);
+
+    for (const pop of populationArray) {
+      query.populate(pop);
+    }
+
+    const [items, total] = await Promise.all([
+      query.exec(),
+      this.offerModel.countDocuments(filters).exec(),
+    ]);
+
+    return { items, total };
+  }
+
   async findMany(options: {
     filters?: Record<string, any>;
     populationArray?: any[];
