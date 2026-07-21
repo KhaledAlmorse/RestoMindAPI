@@ -108,7 +108,8 @@ export class FavoritesService {
     const offers = favorites
       .map((fav) => fav.offerId)
       .filter(
-        (off) => off !== null && typeof off === 'object' && !(off as any).isDeleted,
+        (off) =>
+          off !== null && typeof off === 'object' && !(off as any).isDeleted,
       );
 
     return { data: offers };

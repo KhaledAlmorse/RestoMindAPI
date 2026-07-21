@@ -562,6 +562,134 @@ export class OffersService {
     };
   }
 
+  async getRecommendedOffers(query: QueryOfferDto) {
+    const {
+      categoryId,
+      restaurantId,
+      search,
+      minPrice,
+      maxPrice,
+      page = '1',
+      limit = '10',
+    } = query;
+
+    const pageNum = Math.max(1, parseInt(page, 10));
+    const limitNum = Math.max(1, parseInt(limit, 10));
+    const skip = (pageNum - 1) * limitNum;
+
+    const now = new Date();
+
+    const filters: Record<string, any> = {
+      status: OfferStatusEnum.ACTIVE,
+      isDeleted: false,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+      remainingQuantity: { $gt: 0 },
+    };
+
+    if (restaurantId) {
+      this.validateObjectId(restaurantId);
+      filters.restaurantId = new Types.ObjectId(restaurantId);
+    }
+
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      filters.offerPrice = {};
+      if (minPrice !== undefined) {
+        filters.offerPrice.$gte = parseFloat(minPrice);
+      }
+      if (maxPrice !== undefined) {
+        filters.offerPrice.$lte = parseFloat(maxPrice);
+      }
+    }
+
+    // Recommendation sort pushed to MongoDB
+    const sort: Record<string, 1 | -1> = {
+      featured: -1,
+      discountPercentage: -1,
+      endDate: 1,
+      availableQuantity: -1,
+      createdAt: -1,
+    };
+
+    // Same population as getActiveOffers for identical response shape
+    const populationArray: any[] = [
+      {
+        path: 'productId',
+        populate: { path: 'category' },
+        select: 'title description price image category slug isAvailable',
+      },
+      { path: 'restaurantId', select: 'name description phone address' },
+    ];
+
+    const needsInMemoryFilter = !!(search || categoryId);
+
+    if (!needsInMemoryFilter) {
+      // Fast path: MongoDB handles sort + pagination + count
+      const { items, total } = await this.offerRepository.findManySorted({
+        filters,
+        sort,
+        skip,
+        limit: limitNum,
+        populationArray,
+      });
+
+      return {
+        items,
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      };
+    }
+
+    // Slow path: search/categoryId depend on populated Product fields,
+    // so we let MongoDB sort but must filter + paginate in memory.
+    const { items: allSorted } = await this.offerRepository.findManySorted({
+      filters,
+      sort,
+      skip: 0,
+      limit: 0, // 0 = no limit in Mongoose, returns all matching docs
+      populationArray,
+    });
+
+    let offers = allSorted || [];
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        return (
+          prod &&
+          (searchRegex.test(prod.title || '') ||
+            searchRegex.test(prod.description || ''))
+        );
+      });
+    }
+
+    if (categoryId) {
+      this.validateObjectId(categoryId);
+      offers = offers.filter((off: any) => {
+        const prod = off.productId;
+        if (!prod || !prod.category) return false;
+        const catId = prod.category._id
+          ? prod.category._id.toString()
+          : prod.category.toString();
+        return catId === categoryId;
+      });
+    }
+
+    const total = offers.length;
+    const items = offers.slice(skip, skip + limitNum);
+
+    return {
+      items,
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages: Math.ceil(total / limitNum),
+    };
+  }
+
   async getActiveOfferById(idOrSlug: string) {
     const now = new Date();
     let offer: any = null;
