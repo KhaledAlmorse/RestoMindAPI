@@ -62,7 +62,6 @@ export class CategoriesController {
   }
 
   @Get(':id')
-  @Auth('admin')
   async getCategoryById(@Param('id') id: string, @Res() res: Response) {
     const result = await this.categoriesService.getCategoryById(id);
     res.status(HttpStatus.OK).json(result);

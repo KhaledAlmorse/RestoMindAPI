@@ -13,6 +13,7 @@ import {
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { QueryUserDto } from './dto/query-user.dto';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type Response } from 'express';
 import { type IAuthUser } from 'src/Common/Types';
@@ -24,7 +25,7 @@ export class UserController {
   // ─── POST /users ─────────────────────────────────────────────────────────────
 
   @Post()
-  @Auth('admin', 'manager')
+  @Auth('admin')
   async createUser(
     @AuthUser() user: IAuthUser,
     @Body() body: CreateUserDto,
@@ -37,40 +38,33 @@ export class UserController {
   // ─── GET /users ───────────────────────────────────────────────────────────────
 
   @Get()
-  @Auth('admin', 'manager')
+  @Auth('admin')
   async findAll(
-    @Query('page') page: string,
-    @Query('limit') limit: string,
-    @Query('search') search: string,
-    @Query('role') role: string,
-    @Query('sort') sort: string,
-    @Query('order') order: 'asc' | 'desc',
+    @AuthUser() user: IAuthUser,
+    @Query() query: QueryUserDto,
     @Res() res: Response,
   ) {
-    const result = await this.userService.findAll({
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 10,
-      search,
-      role,
-      sort,
-      order,
-    });
+    const result = await this.userService.findAll(query, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
   // ─── GET /users/:id ──────────────────────────────────────────────────────────
 
   @Get(':id')
-  @Auth('admin', 'manager')
-  async findById(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.userService.findById(id);
+  @Auth('admin')
+  async findById(
+    @Param('id') id: string,
+    @AuthUser() user: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.findById(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
   // ─── PATCH /users/:id ────────────────────────────────────────────────────────
 
   @Patch(':id')
-  @Auth('admin', 'manager')
+  @Auth('admin')
   async updateUser(
     @AuthUser() user: IAuthUser,
     @Param('id') id: string,

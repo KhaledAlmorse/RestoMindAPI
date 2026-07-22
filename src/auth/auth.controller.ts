@@ -69,7 +69,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  @Auth('admin', 'customer')
+  @Auth('admin', 'customer', 'manager')
   async logoutHandler(@AuthUser() user: IAuthUser, @Res() res: Response) {
     await this.authService.logout(user);
     res.status(HttpStatus.OK).json({ message: 'Logout successfully' });
@@ -125,7 +125,7 @@ export class AuthController {
   }
 
   @Patch('update-me')
-  @Auth('admin', 'customer')
+  @Auth('admin', 'customer', 'manager')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateMeHandler(
     @AuthUser() user: IAuthUser,

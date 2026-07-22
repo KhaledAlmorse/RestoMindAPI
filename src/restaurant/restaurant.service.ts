@@ -4,6 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Connection, isValidObjectId, Types } from 'mongoose';
 import {
   RestaurantRepository,
   UserRepository,
@@ -11,7 +13,6 @@ import {
 } from 'src/DB/Repositories';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
-import { isValidObjectId, Types } from 'mongoose';
 import { RolesEnum } from 'src/Common/Types';
 import slugify from 'slugify';
 
@@ -21,6 +22,7 @@ export class RestaurantService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly userRepository: UserRepository,
     private readonly productRepository: ProductRepository,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   private validateObjectId(id: string) {
@@ -64,27 +66,62 @@ export class RestaurantService {
       throw new ConflictException('Restaurant with this name already exists');
     }
 
-    const newRestaurant = await this.restaurantRepository.create({
-      ...body,
-      ownerUserId: new Types.ObjectId(ownerUserId),
-    } as any);
-
+    let session: any = null;
     try {
-      // Automatically update owner user's restaurantId
+      session = await this.connection.startSession();
+      session.startTransaction();
+
+      const newRestaurant = await this.restaurantRepository.create({
+        ...body,
+        ownerUserId: new Types.ObjectId(ownerUserId),
+      } as any);
+
       await this.userRepository.update({
         filters: { _id: ownerUserId },
         body: { restaurantId: newRestaurant._id } as any,
       });
-    } catch (error) {
-      // Rollback restaurant creation if user update fails
-      await this.restaurantRepository.update({
-        filters: { _id: newRestaurant._id },
-        body: { isDeleted: true, deletedAt: new Date() } as any,
-      });
-      throw error;
-    }
 
-    return { data: newRestaurant };
+      await session.commitTransaction();
+      return { data: newRestaurant };
+    } catch (error: any) {
+      if (session) {
+        try {
+          await session.abortTransaction();
+        } catch (_) {}
+      }
+
+      // Standalone Mongoose environment fallback if replica set is absent
+      if (
+        error?.message?.includes('Transaction numbers are only allowed') ||
+        error?.message?.includes('replica set')
+      ) {
+        const newRestaurant = await this.restaurantRepository.create({
+          ...body,
+          ownerUserId: new Types.ObjectId(ownerUserId),
+        } as any);
+
+        try {
+          await this.userRepository.update({
+            filters: { _id: ownerUserId },
+            body: { restaurantId: newRestaurant._id } as any,
+          });
+          return { data: newRestaurant };
+        } catch (rollbackErr) {
+          await this.restaurantRepository.update({
+            filters: { _id: newRestaurant._id },
+            body: { isDeleted: true, deletedAt: new Date() } as any,
+          });
+          throw rollbackErr;
+        }
+      }
+      throw error;
+    } finally {
+      if (session) {
+        try {
+          await session.endSession();
+        } catch (_) {}
+      }
+    }
   }
 
   async findAll(query: { page?: string; limit?: string; search?: string }) {

@@ -9,7 +9,7 @@ import {
   Query,
   Res,
   HttpStatus,
-  UnauthorizedException,
+  ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
 import { RestaurantService } from './restaurant.service';
@@ -80,9 +80,7 @@ export class RestaurantController {
   ) {
     if (user.user.role === RolesEnum.MANAGER) {
       if (!user.user.restaurantId || user.user.restaurantId.toString() !== id) {
-        throw new UnauthorizedException(
-          'You can only update your own restaurant',
-        );
+        throw new ForbiddenException('You can only update your own restaurant');
       }
     }
     const result = await this.restaurantService.updateRestaurant(id, body);

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,7 +17,8 @@ import {
 } from 'src/DB/Repositories';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { Decrypt } from 'src/Common/Security';
-import { OfferStatusEnum } from 'src/Common/Types';
+import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
+import { UserType } from 'src/DB/Models';
 
 @Injectable()
 export class OrdersService {
@@ -660,11 +662,26 @@ export class OrdersService {
     return { data: orders ?? [] };
   }
 
-  async updateOrderStatus(id: string, status: string) {
+  async updateOrderStatus(
+    id: string,
+    status: string,
+    currentUser?: UserType,
+  ) {
     this.validateObjectId(id);
     const order = await this.orderRepository.findOne({ filters: { _id: id } });
     if (!order) {
       throw new NotFoundException('Order not found');
+    }
+
+    if (currentUser && currentUser.role === RolesEnum.MANAGER) {
+      if (
+        !currentUser.restaurantId ||
+        order.restaurantId.toString() !== currentUser.restaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'You can only update status of orders belonging to your own restaurant',
+        );
+      }
     }
 
     if (order.status === 'Delivered' || order.status === 'Cancelled') {

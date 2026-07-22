@@ -8,6 +8,7 @@ import {
 import { UserRepository, RestaurantRepository } from 'src/DB/Repositories';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { QueryUserDto } from './dto/query-user.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { RolesEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
@@ -88,59 +89,112 @@ export class UserService {
 
   // ─── GET /users ───────────────────────────────────────────────────────────────
 
-  async findAll(query: {
-    page?: number;
-    limit?: number;
-    search?: string;
-    role?: string;
-    sort?: string;
-    order?: 'asc' | 'desc';
-  }) {
+  async findAll(query: QueryUserDto, currentUser?: UserType) {
     const {
       page = 1,
       limit = 10,
       search,
       role,
       sort = 'createdAt',
+      sortBy,
       order = 'desc',
+      sortOrder,
+      restaurantId,
+      isDeleted,
+      createdAt,
+      updatedAt,
     } = query;
 
-    const pageNum = Math.max(1, page);
-    const limitNum = Math.max(1, limit);
-    const skip = (pageNum - 1) * limitNum;
+    const currentPage = Math.max(1, page);
+    const pageSize = Math.max(1, limit);
+    const skip = (currentPage - 1) * pageSize;
 
-    // Build filter — always exclude soft-deleted users
-    const filters: Record<string, unknown> = { isDeleted: false };
+    const sortField = sortBy || sort || 'createdAt';
+    const sortDir = sortOrder || order || 'desc';
 
-    if (role) {
-      filters['role'] = role;
+    // Build filter
+    const filters: Record<string, unknown> = {};
+
+    if (isDeleted === 'true') {
+      filters['isDeleted'] = true;
+    } else {
+      filters['isDeleted'] = false;
     }
 
-    if (search) {
+    if (currentUser?.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
+      filters['restaurantId'] = currentUser.restaurantId;
+      filters['role'] = RolesEnum.STAFF;
+    } else {
+      if (role) {
+        filters['role'] = role;
+      }
+      if (restaurantId) {
+        this.validateObjectId(restaurantId);
+        filters['restaurantId'] = new Types.ObjectId(restaurantId);
+      }
+    }
+
+    if (search && search.trim() !== '') {
+      const searchRegex = { $regex: search.trim(), $options: 'i' };
       filters['$or'] = [
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { firstName: searchRegex },
+        { lastName: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex },
       ];
     }
 
-    const users = await this.userRepository.findManyPaginated({
+    if (createdAt) {
+      const createdDate = new Date(createdAt);
+      if (!isNaN(createdDate.getTime())) {
+        const startOfDay = new Date(createdDate.setHours(0, 0, 0, 0));
+        const endOfDay = new Date(createdDate.setHours(23, 59, 59, 999));
+        filters['createdAt'] = { $gte: startOfDay, $lte: endOfDay };
+      }
+    }
+
+    if (updatedAt) {
+      const updatedDate = new Date(updatedAt);
+      if (!isNaN(updatedDate.getTime())) {
+        const startOfDay = new Date(updatedDate.setHours(0, 0, 0, 0));
+        const endOfDay = new Date(updatedDate.setHours(23, 59, 59, 999));
+        filters['updatedAt'] = { $gte: startOfDay, $lte: endOfDay };
+      }
+    }
+
+    const paginatedResult = await this.userRepository.findManyPaginated({
       filters,
       select: '-password',
       skip,
-      limit: limitNum,
-      sort,
-      order,
+      limit: pageSize,
+      sort: sortField,
+      order: sortDir,
     });
 
+    const totalItems = paginatedResult.total;
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    const hasNextPage = currentPage < totalPages;
+    const hasPreviousPage = currentPage > 1;
+
     return {
-      data: users,
+      data: paginatedResult.items,
+      totalItems,
+      totalPages,
+      currentPage,
+      pageSize,
+      hasNextPage,
+      hasPreviousPage,
     };
   }
 
   // ─── GET /users/:id ──────────────────────────────────────────────────────────
 
-  async findById(id: string) {
+  async findById(id: string, currentUser?: UserType) {
     this.validateObjectId(id);
 
     const user = await this.userRepository.findOne({
@@ -150,6 +204,23 @@ export class UserService {
 
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    if (currentUser?.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
+      if (
+        !user.restaurantId ||
+        user.restaurantId.toString() !== currentUser.restaurantId.toString() ||
+        user.role !== RolesEnum.STAFF
+      ) {
+        throw new ForbiddenException(
+          'Managers can only view staff belonging to their own restaurant',
+        );
+      }
     }
 
     return {
@@ -180,8 +251,13 @@ export class UserService {
       );
     }
 
-    // Security check: Manager updating Admin/Manager
+    // Security check: Manager updating Admin/Manager/Other restaurant staff
     if (currentUser.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
       if (user.role === RolesEnum.ADMIN) {
         throw new ForbiddenException('Managers cannot update administrators');
       }
@@ -190,6 +266,15 @@ export class UserService {
         id !== currentUser._id.toString()
       ) {
         throw new ForbiddenException('Managers cannot update other managers');
+      }
+      if (
+        user.role === RolesEnum.STAFF &&
+        (!user.restaurantId ||
+          user.restaurantId.toString() !== currentUser.restaurantId.toString())
+      ) {
+        throw new ForbiddenException(
+          'Managers can only update staff belonging to their own restaurant',
+        );
       }
       if (
         body.role &&
@@ -201,7 +286,7 @@ export class UserService {
       }
       if (
         body.restaurantId &&
-        body.restaurantId !== currentUser.restaurantId?.toString()
+        body.restaurantId !== currentUser.restaurantId.toString()
       ) {
         throw new ForbiddenException(
           'Managers can only assign users to their own restaurant',

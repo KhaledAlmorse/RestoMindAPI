@@ -45,6 +45,16 @@ export class Restaurant {
 
 const RestaurantSchema = SchemaFactory.createForClass(Restaurant);
 
+RestaurantSchema.index(
+  { ownerUserId: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } },
+);
+
+RestaurantSchema.index(
+  { name: 1 },
+  { unique: true, partialFilterExpression: { isDeleted: false } },
+);
+
 export const RestaurantModel = MongooseModule.forFeature([
   { name: Restaurant.name, schema: RestaurantSchema },
 ]);

@@ -8,7 +8,7 @@ import {
   Res,
   HttpStatus,
   Query,
-  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -101,7 +101,7 @@ export class OrdersController {
         !user.user.restaurantId ||
         user.user.restaurantId.toString() !== restaurantId
       ) {
-        throw new UnauthorizedException(
+        throw new ForbiddenException(
           'You can only view orders for your own restaurant',
         );
       }
@@ -111,13 +111,18 @@ export class OrdersController {
   }
 
   @Patch(':id/status')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async updateOrderStatus(
     @Param('id') id: string,
     @Body() body: UpdateOrderStatusDto,
+    @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.updateOrderStatus(id, body.status);
+    const result = await this.ordersService.updateOrderStatus(
+      id,
+      body.status,
+      user.user,
+    );
     res.status(HttpStatus.OK).json(result);
   }
 }
