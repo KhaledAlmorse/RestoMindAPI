@@ -72,9 +72,13 @@ export class OrderGroup {
 
   @Prop({ type: Number, required: true })
   totalQuantity!: number;
+
+  @Prop({ type: String, default: 'Pending' })
+  overallStatus!: string;
 }
 
 const OrderGroupSchema = SchemaFactory.createForClass(OrderGroup);
+OrderGroupSchema.index({ overallStatus: 1, createdAt: -1 });
 
 export const OrderGroupModel = MongooseModule.forFeature([
   { name: OrderGroup.name, schema: OrderGroupSchema },

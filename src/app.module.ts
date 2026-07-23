@@ -13,6 +13,7 @@ import { OrdersModule } from './orders/orders.module';
 import { RestaurantModule } from './restaurant/restaurant.module';
 import { OffersModule } from './offers/offers.module';
 import { IngredientsModule } from './ingredients/ingredients.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { IngredientsModule } from './ingredients/ingredients.module';
     RestaurantModule,
     OffersModule,
     IngredientsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

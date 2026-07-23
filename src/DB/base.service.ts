@@ -76,4 +76,10 @@ export abstract class BaseService<TDocument extends Document> {
   async updateMany(filters: any, body: any) {
     return await this.model.updateMany(filters, body).exec();
   }
+  async aggregate(pipeline: any[]): Promise<any[]> {
+    return await this.model.aggregate(pipeline).exec();
+  }
+  async countDocuments(filters: any = {}): Promise<number> {
+    return await this.model.countDocuments(filters).exec();
+  }
 }

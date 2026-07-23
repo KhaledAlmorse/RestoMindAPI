@@ -502,6 +502,7 @@ export class OrdersService {
         totalDiscount: groupTotalDiscount,
         finalTotalPrice: groupFinalTotalPrice,
         totalQuantity: groupTotalQuantity,
+        overallStatus: 'Pending',
       });
 
       // Clear customer's cart
@@ -743,6 +744,18 @@ export class OrdersService {
           });
         }
       }
+    }
+
+    // Recompute and persist parent OrderGroup's overallStatus
+    if (order.groupOrderId) {
+      const siblingOrders = await this.orderRepository.findMany({
+        filters: { groupOrderId: order.groupOrderId },
+      });
+      const newOverallStatus = this.computeOverallStatus(siblingOrders || []);
+      await this.orderGroupRepository.update({
+        filters: { _id: order.groupOrderId },
+        body: { overallStatus: newOverallStatus } as any,
+      });
     }
 
     return { data: updated };
