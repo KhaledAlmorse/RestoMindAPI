@@ -21,7 +21,8 @@ This document is the **single source of truth** for the **RestoMindApi** backend
    - [4.9 Orders & Order Groups Module (`/orders`, `/order-groups`)](#49-orders--order-groups-module-orders-order-groups)
    - [4.10 Favorites Module (`/favorites`)](#410-favorites-module-favorites)
    - [4.11 Sales Module (`/sales`)](#411-sales-module-sales)
-   - [4.12 App Root Module (`/`)](#412-app-root-module-)
+   - [4.12 Dashboard Module (`/dashboard`)](#412-dashboard-module-dashboard)
+   - [4.13 App Root Module (`/`)](#413-app-root-module-)
 
 ---
 
@@ -1763,11 +1764,160 @@ Or for paginated lists:
 
 ---
 
-### 4.12 App Root Module (`/`)
+### 4.12 Dashboard Module (`/dashboard`)
+
+#### 1. Get Admin Dashboard
+- **Route**: `GET /dashboard/admin`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Query Parameters**:
+  - `startDate`: ISO date string (optional)
+  - `endDate`: ISO date string (optional)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "kpis": {
+      "revenue": {
+        "current": 436.38,
+        "previous": 350.00,
+        "changePercent": 24.68
+      },
+      "orders": {
+        "current": 15,
+        "previous": 12,
+        "changePercent": 25.00
+      },
+      "activeOffers": 8,
+      "pendingOrders": 2,
+      "activeRestaurants": 5,
+      "netProfit": 375.29,
+      "taxDeduction": 61.09,
+      "avgOrderValue": 29.09,
+      "totalUsers": 120,
+      "totalRestaurants": 6
+    },
+    "topProducts": [
+      {
+        "id": "669fc3333333333abcdef444",
+        "rank": 1,
+        "name": "Margherita Pizza",
+        "count": 42,
+        "maxCount": 42
+      }
+    ],
+    "topCategories": [
+      {
+        "id": "669fc4444444444abcdef333",
+        "rank": 1,
+        "name": "Pizza",
+        "count": 65,
+        "maxCount": 65
+      }
+    ],
+    "topRestaurants": [
+      {
+        "id": "669fc8888888888abcdef222",
+        "rank": 1,
+        "name": "Pizza Gourmet Express",
+        "count": 28,
+        "maxCount": 28
+      }
+    ],
+    "fulfillmentMethods": [
+      {
+        "id": "home_delivery",
+        "type": "Home Delivery",
+        "name": "Home Delivery",
+        "count": 12,
+        "percentage": 80
+      },
+      {
+        "id": "store_pickup",
+        "type": "Store Pickup",
+        "name": "Store Pickup",
+        "count": 3,
+        "percentage": 20
+      }
+    ]
+  }
+  ```
+
+---
+
+#### 2. Get Manager Dashboard
+- **Route**: `GET /dashboard/manager`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Security Check**: Scoped strictly to the manager's assigned restaurant (`restaurantId`). System-wide metrics (`activeRestaurants`, `totalUsers`, `totalRestaurants`, `topRestaurants`) are completely excluded.
+- **Query Parameters**:
+  - `startDate`: ISO date string (optional)
+  - `endDate`: ISO date string (optional)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "restaurantName": "Pizza Gourmet Express",
+    "kpis": {
+      "revenue": {
+        "current": 250.00,
+        "previous": 200.00,
+        "changePercent": 25.00
+      },
+      "orders": {
+        "current": 8,
+        "previous": 6,
+        "changePercent": 33.33
+      },
+      "activeOffers": 3,
+      "pendingOrders": 1,
+      "netProfit": 215.00,
+      "taxDeduction": 35.00,
+      "avgOrderValue": 31.25
+    },
+    "topProducts": [
+      {
+        "id": "669fc3333333333abcdef444",
+        "rank": 1,
+        "name": "Margherita Pizza",
+        "count": 20,
+        "maxCount": 20
+      }
+    ],
+    "topCategories": [
+      {
+        "id": "669fc4444444444abcdef333",
+        "rank": 1,
+        "name": "Pizza",
+        "count": 30,
+        "maxCount": 30
+      }
+    ],
+    "fulfillmentMethods": [
+      {
+        "id": "home_delivery",
+        "type": "Home Delivery",
+        "name": "Home Delivery",
+        "count": 6,
+        "percentage": 75
+      },
+      {
+        "id": "store_pickup",
+        "type": "Store Pickup",
+        "name": "Store Pickup",
+        "count": 2,
+        "percentage": 25
+      }
+    ]
+  }
+  ```
+
+---
+
+### 4.13 App Root Module (`/`)
 
 #### 1. Health / Root Hello
 - **Route**: `GET /`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
 - **Success Response** (200 OK): `"Hello World!"`
+
 

@@ -4,72 +4,57 @@ export interface KpiMetric {
   changePercent: number;
 }
 
-export interface RevenueTrendItem {
-  date: string;
-  revenue: number;
-  orders: number;
+export interface AdminKpis {
+  revenue: KpiMetric;
+  orders: KpiMetric;
+  activeOffers: number;
+  pendingOrders: number;
+  activeRestaurants: number;
+  netProfit: number;
+  taxDeduction: number;
+  avgOrderValue: number;
+  totalUsers: number;
+  totalRestaurants: number;
 }
 
-export interface OrdersByStatus {
-  Pending: number;
-  Confirmed: number;
-  Preparing: number;
-  Ready: number;
-  OutForDelivery: number;
-  Delivered: number;
-  Cancelled: number;
+export interface ManagerKpis {
+  revenue: KpiMetric;
+  orders: KpiMetric;
+  activeOffers: number;
+  pendingOrders: number;
+  netProfit: number;
+  taxDeduction: number;
+  avgOrderValue: number;
 }
 
-export interface RecentOrderItem {
-  orderGroupId: string;
-  customerName: string;
-  restaurantNames: string[];
-  finalTotalPrice: number;
-  overallStatus: string;
-  createdAt: string;
-}
-
-export type AlertType =
-  | 'stuck_pending'
-  | 'high_cancellation'
-  | 'no_active_offers'
-  | 'inactive_restaurants';
-
-export type AlertSeverity = 'critical' | 'warning' | 'info';
-
-export interface DashboardAlert {
+export interface RankedItem {
   id: string;
-  type: AlertType;
-  severity: AlertSeverity;
-  message: string;
-  count?: number;
-  actionUrl?: string;
+  rank: number;
+  name: string;
+  count: number;
+  maxCount: number;
+}
+
+export interface FulfillmentMethodItem {
+  id: string;
+  type: string;
+  name: string;
+  count: number;
+  percentage: number;
 }
 
 export interface DashboardStatsResponse {
-  kpis: {
-    revenue: KpiMetric;
-    orders: KpiMetric;
-    activeOffers: number;
-    pendingOrders: number;
-    activeRestaurants: number;
-  };
-  revenueTrend: RevenueTrendItem[];
-  ordersByStatus: OrdersByStatus;
-  recentOrders: RecentOrderItem[];
-  alerts: DashboardAlert[];
+  kpis: AdminKpis;
+  topProducts: RankedItem[];
+  topCategories: RankedItem[];
+  topRestaurants: RankedItem[];
+  fulfillmentMethods: FulfillmentMethodItem[];
 }
 
 export interface ManagerDashboardStatsResponse {
   restaurantName: string;
-  kpis: {
-    revenue: KpiMetric;
-    orders: KpiMetric;
-    activeOffers: number;
-    pendingOrders: number;
-  };
-  revenueTrend: RevenueTrendItem[];
-  ordersByStatus: OrdersByStatus;
-  recentOrders: RecentOrderItem[];
-  alerts: DashboardAlert[];
+  kpis: ManagerKpis;
+  topProducts: RankedItem[];
+  topCategories: RankedItem[];
+  fulfillmentMethods: FulfillmentMethodItem[];
 }
