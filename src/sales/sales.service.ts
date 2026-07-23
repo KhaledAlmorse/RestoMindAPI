@@ -95,9 +95,8 @@ export class SalesService {
 
   async getSalesSummary(currentUser: UserType, query: QuerySalesDto) {
     const filters = this.buildFilters(currentUser, query);
-    const summary = await this.salesTransactionRepository.aggregateSalesSummary(
-      filters,
-    );
+    const summary =
+      await this.salesTransactionRepository.aggregateSalesSummary(filters);
     return { data: summary };
   }
 }

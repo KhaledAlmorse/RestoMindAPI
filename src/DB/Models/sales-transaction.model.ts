@@ -66,9 +66,11 @@ SalesTransactionSchema.index({ source: 1 });
 SalesTransactionSchema.index({ orderId: 1 });
 SalesTransactionSchema.index(
   { orderId: 1, productId: 1 },
-  { unique: true, partialFilterExpression: { orderId: { $exists: true, $ne: null } } },
+  {
+    unique: true,
+    partialFilterExpression: { orderId: { $exists: true, $ne: null } },
+  },
 );
-
 
 export const SalesTransactionModel = MongooseModule.forFeature([
   { name: SalesTransaction.name, schema: SalesTransactionSchema },

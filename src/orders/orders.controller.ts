@@ -15,6 +15,7 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QueryRestaurantOrdersDto } from './dto/query-restaurant-orders.dto';
 import { QueryOrderListingDto } from './dto/query-order-listing.dto';
+import { QueryMyOrdersDto } from './dto/query-my-orders.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { RolesEnum, type IAuthUser } from 'src/Common/Types';
@@ -41,12 +42,12 @@ export class OrdersController {
   @Auth('customer')
   async getMyOrders(
     @AuthUser() user: IAuthUser,
-    @Query('restaurantId') restaurantId: string,
+    @Query() query: QueryMyOrdersDto,
     @Res() res: Response,
   ) {
     const result = await this.ordersService.getMyOrders(
       user.user._id.toString(),
-      restaurantId,
+      query,
     );
     res.status(HttpStatus.OK).json(result);
   }

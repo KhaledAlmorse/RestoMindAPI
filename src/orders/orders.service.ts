@@ -20,6 +20,7 @@ import {
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QueryRestaurantOrdersDto } from './dto/query-restaurant-orders.dto';
 import { QueryOrderListingDto } from './dto/query-order-listing.dto';
+import { QueryMyOrdersDto } from './dto/query-my-orders.dto';
 import { Decrypt } from 'src/Common/Security';
 import { OfferStatusEnum, RolesEnum, SalesSourceEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
@@ -539,14 +540,75 @@ export class OrdersService {
     return { data: await this.formatOrderGroup(populatedGroup) };
   }
 
-  async getMyOrders(userId: string, restaurantId?: string) {
+  async getMyOrders(userId: string, query: QueryMyOrdersDto | string = {}) {
     this.validateObjectId(userId);
 
+    const queryObj: QueryMyOrdersDto =
+      typeof query === 'string' ? { restaurantId: query } : query;
+
+    const currentPage = Math.max(1, Number(queryObj.page) || 1);
+    const pageSize = Math.max(1, Number(queryObj.limit) || 10);
+    const skip = (currentPage - 1) * pageSize;
+    const status = queryObj.status;
+    const restaurantId = queryObj.restaurantId;
+
     const userObjId = new Types.ObjectId(userId);
-    const groups = await this.orderGroupRepository.findMany({
-      filters: {
+    const userFilter = { $or: [{ userId: userObjId }, { userId }] };
+
+    let groupFilters: any = userFilter;
+
+    if (
+      (restaurantId && restaurantId !== 'undefined' && restaurantId !== '') ||
+      status
+    ) {
+      const orderFilters: Record<string, any> = {
         $or: [{ userId: userObjId }, { userId }],
-      },
+      };
+
+      if (restaurantId && restaurantId !== 'undefined' && restaurantId !== '') {
+        this.validateObjectId(restaurantId);
+        orderFilters.restaurantId = new Types.ObjectId(restaurantId);
+      }
+
+      if (status) {
+        orderFilters.status = status;
+      }
+
+      const matchingOrders = await this.orderRepository.findMany({
+        filters: orderFilters,
+        select: 'groupOrderId',
+      });
+
+      const matchingGroupIdsFromOrders = (matchingOrders || [])
+        .map((o: any) => o.groupOrderId?.toString())
+        .filter(Boolean);
+
+      let matchingGroupIdsDirect: string[] = [];
+      if (status) {
+        const directGroups = await this.orderGroupRepository.findMany({
+          filters: { ...userFilter, overallStatus: status },
+          select: '_id',
+        });
+        matchingGroupIdsDirect = (directGroups || []).map((g: any) =>
+          g._id.toString(),
+        );
+      }
+
+      const allMatchingGroupIds = Array.from(
+        new Set([...matchingGroupIdsFromOrders, ...matchingGroupIdsDirect]),
+      ).map((id) => new Types.ObjectId(id));
+
+      groupFilters = {
+        $and: [userFilter, { _id: { $in: allMatchingGroupIds } }],
+      };
+    }
+
+    const paginatedResult = await this.orderGroupRepository.findManyPaginated({
+      filters: groupFilters,
+      skip,
+      limit: pageSize,
+      sort: 'createdAt',
+      order: 'desc',
       populationArray: [
         {
           path: 'orderIds',
@@ -555,26 +617,24 @@ export class OrdersService {
       ],
     });
 
-    if (!groups || groups.length === 0) {
-      return { data: [] };
-    }
-
-    let resultGroups = groups;
-    if (restaurantId && restaurantId !== 'undefined' && restaurantId !== '') {
-      this.validateObjectId(restaurantId);
-      resultGroups = groups.filter((group: any) =>
-        (group.orderIds || []).some(
-          (sub: any) =>
-            sub.restaurantId?._id?.toString() === restaurantId ||
-            sub.restaurantId?.toString() === restaurantId,
-        ),
-      );
-    }
+    const totalItems = paginatedResult.total;
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    const hasNextPage = currentPage < totalPages;
+    const hasPreviousPage = currentPage > 1;
 
     const formattedGroups = await Promise.all(
-      resultGroups.map((g) => this.formatOrderGroup(g)),
+      (paginatedResult.items || []).map((g) => this.formatOrderGroup(g)),
     );
-    return { data: formattedGroups };
+
+    return {
+      data: formattedGroups,
+      totalItems,
+      totalPages,
+      currentPage,
+      pageSize,
+      hasNextPage,
+      hasPreviousPage,
+    };
   }
 
   async getMyOrderDetails(userId: string, id: string) {
@@ -798,7 +858,9 @@ export class OrdersService {
 
     // Response optimization: lightweight restaurant projection
     const formattedData = paginatedResult.items.map((orderDoc: any) => {
-      const orderObj = orderDoc.toObject ? orderDoc.toObject() : { ...orderDoc };
+      const orderObj = orderDoc.toObject
+        ? orderDoc.toObject()
+        : { ...orderDoc };
       const rest = orderObj.restaurantId;
       if (rest && typeof rest === 'object') {
         const restaurantObj: any = {
