@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
@@ -14,14 +15,17 @@ import {
   UserRepository,
   RestaurantRepository,
   OfferRepository,
+  SalesTransactionRepository,
 } from 'src/DB/Repositories';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { Decrypt } from 'src/Common/Security';
-import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
+import { OfferStatusEnum, RolesEnum, SalesSourceEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly orderGroupRepository: OrderGroupRepository,
@@ -30,6 +34,7 @@ export class OrdersService {
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly offerRepository: OfferRepository,
+    private readonly salesTransactionRepository: SalesTransactionRepository,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -663,11 +668,7 @@ export class OrdersService {
     return { data: orders ?? [] };
   }
 
-  async updateOrderStatus(
-    id: string,
-    status: string,
-    currentUser?: UserType,
-  ) {
+  async updateOrderStatus(id: string, status: string, currentUser?: UserType) {
     this.validateObjectId(id);
     const order = await this.orderRepository.findOne({ filters: { _id: id } });
     if (!order) {
@@ -695,6 +696,54 @@ export class OrdersService {
       filters: { _id: id },
       body: { status } as any,
     });
+
+    // Sales History sync side effect if status transitions to Delivered
+    if (status === 'Delivered') {
+      try {
+        for (const item of order.items || []) {
+          let promotionActive = false;
+          let featured = false;
+
+          if (item.offerId) {
+            const offerId = (item.offerId as any)._id || item.offerId;
+            const offer = await this.offerRepository.findOne({
+              filters: { _id: offerId },
+            });
+            if (offer) {
+              promotionActive =
+                offer.status === OfferStatusEnum.ACTIVE ||
+                offer.discountPercentage > 0;
+              featured = !!offer.featured;
+            } else if (item.discountPercentage > 0) {
+              promotionActive = true;
+            }
+          } else if (item.discountPercentage > 0) {
+            promotionActive = true;
+          }
+
+          await this.salesTransactionRepository.create({
+            restaurantId: order.restaurantId,
+            productId: item.productId,
+            date: item.purchasedAt || (order as any).createdAt || new Date(),
+            quantitySold: item.quantity,
+            basePrice: item.originalPrice,
+            sellingPrice: item.offerPrice,
+            promotionActive,
+            featured,
+            stockoutMinutes: 0,
+            cancelledOrders: 0,
+            returnedOrders: 0,
+            salesChannel: 'marketplace',
+            source: SalesSourceEnum.MARKETPLACE_ORDER,
+            orderId: order._id,
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to sync sales transaction for delivered order ${id}: ${err.message}`,
+        );
+      }
+    }
 
     // Inventory restoration side effect if status transitions to Cancelled
     if (status === 'Cancelled') {

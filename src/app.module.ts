@@ -14,6 +14,7 @@ import { RestaurantModule } from './restaurant/restaurant.module';
 import { OffersModule } from './offers/offers.module';
 import { IngredientsModule } from './ingredients/ingredients.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { SalesModule } from './sales/sales.module';
 
 @Module({
   imports: [
@@ -30,9 +31,11 @@ import { DashboardModule } from './dashboard/dashboard.module';
     OffersModule,
     IngredientsModule,
     DashboardModule,
+    SalesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+
 

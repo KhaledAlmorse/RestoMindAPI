@@ -34,3 +34,19 @@ export enum IngredientUnitEnum {
   LITER = 'liter',
   PIECE = 'piece',
 }
+
+export enum SalesSourceEnum {
+  CSV_IMPORT = 'csv_import',
+  MARKETPLACE_ORDER = 'marketplace_order',
+  POS_SYNC = 'pos_sync',
+}
+
+export enum OrderStatusEnum {
+  PENDING = 'Pending',
+  CONFIRMED = 'Confirmed',
+  PREPARING = 'Preparing',
+  READY = 'Ready',
+  OUT_FOR_DELIVERY = 'Out For Delivery',
+  DELIVERED = 'Delivered',
+  CANCELLED = 'Cancelled',
+}

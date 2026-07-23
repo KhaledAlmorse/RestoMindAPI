@@ -7,6 +7,7 @@ import {
   CartRepository,
   ProductRepository,
   OfferRepository,
+  SalesTransactionRepository,
 } from 'src/DB/Repositories';
 import {
   OrderModel,
@@ -14,6 +15,7 @@ import {
   CartModel,
   ProductModel,
   OfferModel,
+  SalesTransactionModel,
 } from 'src/DB/Models';
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
 
@@ -24,6 +26,7 @@ import { RestaurantModule } from 'src/restaurant/restaurant.module';
     CartModel,
     ProductModel,
     OfferModel,
+    SalesTransactionModel,
     RestaurantModule,
   ],
   controllers: [OrdersController, OrderGroupsController],
@@ -34,6 +37,7 @@ import { RestaurantModule } from 'src/restaurant/restaurant.module';
     CartRepository,
     ProductRepository,
     OfferRepository,
+    SalesTransactionRepository,
   ],
   exports: [OrdersService, OrderRepository, OrderGroupRepository],
 })

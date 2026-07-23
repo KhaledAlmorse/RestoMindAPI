@@ -230,11 +230,12 @@ onOfferEndsOrCancels(offer):
 - Search the codebase for every place `orders.service.ts` or the order status enum is referenced (e.g., any notification logic, any other module importing order status) and confirm none of them assume the old "no side effect" behavior.
 
 ### Checklist
-- [ ] `sales_transactions` model implemented
-- [ ] Order → sales_transactions sync added on `Delivered`, wrapped so failures don't affect the order write
-- [ ] `promotionActive`/`featured` on each synced row correctly reflects whether an `Offer` was active for that product at order time
-- [ ] All pre-existing order status tests re-run and pass unchanged
-- [ ] `GET /sales` and `/sales/summary` return correct data after a test order is marked Delivered
+- [x] `sales_transactions` model implemented
+- [x] Order → sales_transactions sync added on `Delivered`, wrapped so failures don't affect the order write
+- [x] `promotionActive`/`featured` on each synced row correctly reflects whether an `Offer` was active for that product at order time
+- [x] All pre-existing order status tests re-run and pass unchanged
+- [x] `GET /sales` and `/sales/summary` return correct data after a test order is marked Delivered
+
 
 ### Testing (Postman)
 1. Run through the full Phase-A order flow (cart → order → status progression) exactly as before — confirm `Delivered` still works and the response shape is unchanged.

@@ -5,6 +5,7 @@ import {
   Types,
   Schema as MongooseSchema,
 } from 'mongoose';
+import { OrderStatusEnum } from 'src/Common/Types';
 
 @Schema({ _id: false })
 export class OrderItem {
@@ -129,15 +130,8 @@ export class Order {
 
   @Prop({
     type: String,
-    enum: [
-      'Pending',
-      'Confirmed',
-      'Preparing',
-      'Out For Delivery',
-      'Delivered',
-      'Cancelled',
-    ],
-    default: 'Pending',
+    enum: Object.values(OrderStatusEnum),
+    default: OrderStatusEnum.PENDING,
     required: true,
   })
   status!: string;

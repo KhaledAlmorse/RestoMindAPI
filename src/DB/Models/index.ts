@@ -11,4 +11,6 @@ export * from './restaurant.model';
 export * from './offer.model';
 export * from './ingredient.model';
 export * from './recipe.model';
+export * from './sales-transaction.model';
+
 

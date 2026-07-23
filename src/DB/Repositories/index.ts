@@ -11,4 +11,6 @@ export * from './restaurant.repository';
 export * from './offer.repository';
 export * from './ingredient.repository';
 export * from './recipe.repository';
+export * from './sales-transaction.repository';
+
 
