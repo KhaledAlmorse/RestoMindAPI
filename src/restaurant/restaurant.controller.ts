@@ -15,6 +15,7 @@ import {
 import { RestaurantService } from './restaurant.service';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
+import { QueryRestaurantDto } from './dto/query-restaurant.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { RolesEnum, type IAuthUser } from 'src/Common/Types';
@@ -36,16 +37,10 @@ export class RestaurantController {
   @Get()
   @Auth('admin')
   async getAllRestaurants(
-    @Query('page') page: string,
-    @Query('limit') limit: string,
-    @Query('search') search: string,
+    @Query() query: QueryRestaurantDto,
     @Res() res: Response,
   ) {
-    const result = await this.restaurantService.findAll({
-      page,
-      limit,
-      search,
-    });
+    const result = await this.restaurantService.findAll(query);
     res.status(HttpStatus.OK).json(result);
   }
 

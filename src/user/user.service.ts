@@ -5,7 +5,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRepository, RestaurantRepository } from 'src/DB/Repositories';
+import {
+  UserRepository,
+  RestaurantRepository,
+  OfferRepository,
+} from 'src/DB/Repositories';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUserDto } from './dto/query-user.dto';
@@ -18,6 +22,7 @@ export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
+    private readonly offerRepository: OfferRepository,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -372,9 +377,22 @@ export class UserService {
       }
     }
 
+    // Business Rule: Check if manager is currently assigned as owner of an active restaurant
+    const activeOwnedRestaurant = await this.restaurantRepository.findOne({
+      filters: { ownerUserId: new Types.ObjectId(id), isDeleted: false },
+    });
+
+    if (activeOwnedRestaurant) {
+      throw new ConflictException({
+        message:
+          'Unable to delete this manager because they are currently assigned as the owner of an active restaurant. Please delete the restaurant or transfer its ownership before deleting this manager.',
+        code: 'MANAGER_HAS_ACTIVE_RESTAURANT',
+      });
+    }
+
     await this.userRepository.update({
       filters: { _id: id },
-      body: { isDeleted: true } as any,
+      body: { isDeleted: true, restaurantId: null } as any,
     });
 
     return { message: 'User deleted successfully' };

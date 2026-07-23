@@ -34,9 +34,15 @@ export class CartService {
     // 1. Offer exists check
     const offer = await this.offerRepository.findOne({
       filters: { _id: new Types.ObjectId(offerId), isDeleted: false },
+      populationArray: [{ path: 'restaurantId' }],
     });
     if (!offer) {
       throw new NotFoundException('Offer not found');
+    }
+
+    const restaurant = offer.restaurantId as any;
+    if (!restaurant || restaurant.isDeleted || restaurant.isActive === false) {
+      throw new BadRequestException('Restaurant is inactive or deleted');
     }
 
     // 2. Offer status check
@@ -136,6 +142,13 @@ export class CartService {
 
       const product = offer.productId;
       const restaurant = offer.restaurantId;
+      if (
+        !restaurant ||
+        restaurant.isDeleted ||
+        restaurant.isActive === false
+      ) {
+        continue;
+      }
 
       const quantity = item.quantity;
       const unitOriginalPrice = offer.originalPrice;

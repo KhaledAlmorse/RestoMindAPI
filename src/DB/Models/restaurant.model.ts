@@ -6,8 +6,8 @@ export class Restaurant {
   @Prop({ type: String, required: true })
   name!: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  ownerUserId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: false, default: null })
+  ownerUserId?: Types.ObjectId | null;
 
   @Prop({ type: String, required: false })
   description?: string;

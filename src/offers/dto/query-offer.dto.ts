@@ -1,4 +1,4 @@
-import { IsOptional, IsEnum, IsMongoId, IsString } from 'class-validator';
+import { IsOptional, IsEnum, IsMongoId, IsString, IsDateString } from 'class-validator';
 import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
 
 export class QueryOfferDto {
@@ -37,6 +37,20 @@ export class QueryOfferDto {
   @IsOptional()
   @IsString()
   maxPrice?: string;
+
+  @IsOptional()
+  @IsDateString(
+    {},
+    { message: 'startDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString(
+    {},
+    { message: 'endDate must be a valid date (YYYY-MM-DD or ISO string)' },
+  )
+  endDate?: string;
 
   @IsOptional()
   @IsString()

@@ -6,6 +6,7 @@ import {
   Patch,
   Delete,
   Param,
+  Query,
   Res,
   HttpStatus,
   UseInterceptors,
@@ -14,6 +15,7 @@ import {
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { QueryCategoryDto } from './dto/query-category.dto';
 import { type Response } from 'express';
 import { Auth } from 'src/Common/Decorators';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -56,8 +58,11 @@ export class CategoriesController {
   }
 
   @Get()
-  async getAllCategories(@Res() res: Response) {
-    const result = await this.categoriesService.getAllCategories();
+  async getAllCategories(
+    @Query() query: QueryCategoryDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.categoriesService.getAllCategories(query);
     res.status(HttpStatus.OK).json(result);
   }
 

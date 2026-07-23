@@ -4,9 +4,11 @@ import {
   IsDateString,
   IsOptional,
   IsBoolean,
+  IsEnum,
   Min,
   Max,
 } from 'class-validator';
+import { OfferStatusEnum } from 'src/Common/Types';
 
 export class CreateOfferDto {
   @IsMongoId()
@@ -41,4 +43,8 @@ export class CreateOfferDto {
   @IsOptional()
   @IsBoolean()
   featured?: boolean;
+
+  @IsOptional()
+  @IsEnum(OfferStatusEnum, { message: 'status must be a valid OfferStatusEnum' })
+  status?: OfferStatusEnum;
 }

@@ -1,13 +1,27 @@
 import { Module } from '@nestjs/common';
 import { RestaurantService } from './restaurant.service';
 import { RestaurantController } from './restaurant.controller';
-import { RestaurantRepository, ProductRepository } from 'src/DB/Repositories';
-import { RestaurantModel, ProductModel } from 'src/DB/Models';
+import {
+  RestaurantRepository,
+  ProductRepository,
+  OfferRepository,
+} from 'src/DB/Repositories';
+import { RestaurantModel, ProductModel, OfferModel } from 'src/DB/Models';
 
 @Module({
-  imports: [RestaurantModel, ProductModel],
+  imports: [RestaurantModel, ProductModel, OfferModel],
   controllers: [RestaurantController],
-  providers: [RestaurantService, RestaurantRepository, ProductRepository],
-  exports: [RestaurantService, RestaurantRepository, ProductRepository],
+  providers: [
+    RestaurantService,
+    RestaurantRepository,
+    ProductRepository,
+    OfferRepository,
+  ],
+  exports: [
+    RestaurantService,
+    RestaurantRepository,
+    ProductRepository,
+    OfferRepository,
+  ],
 })
 export class RestaurantModule {}

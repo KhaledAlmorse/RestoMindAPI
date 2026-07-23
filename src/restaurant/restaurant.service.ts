@@ -10,9 +10,11 @@ import {
   RestaurantRepository,
   UserRepository,
   ProductRepository,
+  OfferRepository,
 } from 'src/DB/Repositories';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
+import { QueryRestaurantDto } from './dto/query-restaurant.dto';
 import { RolesEnum } from 'src/Common/Types';
 import slugify from 'slugify';
 
@@ -22,6 +24,7 @@ export class RestaurantService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly userRepository: UserRepository,
     private readonly productRepository: ProductRepository,
+    private readonly offerRepository: OfferRepository,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -87,7 +90,9 @@ export class RestaurantService {
       if (session) {
         try {
           await session.abortTransaction();
-        } catch (_) {}
+        } catch (_) {
+          //*
+        }
       }
 
       // Standalone Mongoose environment fallback if replica set is absent
@@ -119,30 +124,64 @@ export class RestaurantService {
       if (session) {
         try {
           await session.endSession();
-        } catch (_) {}
+        } catch (_) {
+          //*
+        }
       }
     }
   }
 
-  async findAll(query: { page?: string; limit?: string; search?: string }) {
-    const { page = '1', limit = '10', search } = query;
+  async findAll(query: QueryRestaurantDto) {
+    const {
+      page = '1',
+      limit = '10',
+      search,
+      status,
+      ownerUserId,
+      isActive,
+      isDeleted,
+      sort = 'createdAt',
+      order = 'desc',
+    } = query;
 
     const pageNum = Math.max(1, parseInt(page, 10));
     const limitNum = Math.max(1, parseInt(limit, 10));
     const skip = (pageNum - 1) * limitNum;
 
-    const filters: Record<string, any> = { isDeleted: false };
+    const filters: Record<string, any> = {};
 
-    if (search) {
-      filters['name'] = { $regex: search, $options: 'i' };
+    if (isDeleted !== undefined && isDeleted !== '') {
+      filters.isDeleted = isDeleted === 'true' || (isDeleted as any) === true;
+    } else {
+      filters.isDeleted = false;
     }
+
+    if (status !== undefined && status.trim() !== '') {
+      filters.status = status.trim();
+    }
+
+    if (ownerUserId !== undefined && ownerUserId.trim() !== '') {
+      this.validateObjectId(ownerUserId.trim());
+      filters.ownerUserId = new Types.ObjectId(ownerUserId.trim());
+    }
+
+    if (isActive !== undefined && isActive !== '') {
+      filters.isActive = isActive === 'true' || (isActive as any) === true;
+    }
+
+    if (search !== undefined && search.trim() !== '') {
+      filters.name = { $regex: search.trim(), $options: 'i' };
+    }
+
+    const sortField = sort || 'createdAt';
+    const sortOrder = order === 'asc' ? 'asc' : 'desc';
 
     const result = await this.restaurantRepository.findManyPaginated({
       filters,
       skip,
       limit: limitNum,
-      sort: 'createdAt',
-      order: 'desc',
+      sort: sortField,
+      order: sortOrder,
       populationArray: [{ path: 'ownerUserId', select: '-password' }],
     });
 
@@ -184,7 +223,7 @@ export class RestaurantService {
 
     const oldOwnerId = restaurant.ownerUserId;
     const ownerChanged =
-      body.ownerUserId && body.ownerUserId !== oldOwnerId.toString();
+      body.ownerUserId && body.ownerUserId !== oldOwnerId?.toString();
 
     if (body.ownerUserId) {
       this.validateObjectId(body.ownerUserId);
@@ -220,11 +259,13 @@ export class RestaurantService {
     });
 
     if (ownerChanged) {
-      // Clear old owner
-      await this.userRepository.update({
-        filters: { _id: oldOwnerId },
-        body: { restaurantId: null } as any,
-      });
+      // Clear old owner if existed
+      if (oldOwnerId) {
+        await this.userRepository.update({
+          filters: { _id: oldOwnerId },
+          body: { restaurantId: null } as any,
+        });
+      }
       // Set new owner
       await this.userRepository.update({
         filters: { _id: body.ownerUserId },
@@ -273,8 +314,15 @@ export class RestaurantService {
       body: {
         isDeleted: true,
         deletedAt: new Date(),
+        ownerUserId: null,
       } as any,
     });
+
+    // Soft delete all offers belonging to this restaurant
+    await this.offerRepository.updateMany(
+      { restaurantId: new Types.ObjectId(id) },
+      { isDeleted: true },
+    );
 
     // Clear owner user's restaurantId
     if (restaurant.ownerUserId) {

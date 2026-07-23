@@ -8,6 +8,7 @@ import {
 import { CategoryRepository, ProductRepository } from 'src/DB/Repositories';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { QueryCategoryDto } from './dto/query-category.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import { CategoryType } from 'src/DB/Models';
@@ -165,11 +166,54 @@ export class CategoriesService implements OnModuleInit {
     return { message: 'Category deleted successfully' };
   }
 
-  async getAllCategories() {
-    const categories = await this.categoryRepository.findMany({
-      filters: { isDeleted: false },
-    });
-    return { data: categories };
+  async getAllCategories(query?: QueryCategoryDto) {
+    const { page, limit, search, isDeleted } = query || {};
+
+    const filters: Record<string, any> = {};
+
+    if (isDeleted !== undefined && isDeleted !== '') {
+      filters.isDeleted = isDeleted === 'true' || (isDeleted as any) === true;
+    } else {
+      filters.isDeleted = false;
+    }
+
+    if (search !== undefined && search.trim() !== '') {
+      filters.name = { $regex: search.trim(), $options: 'i' };
+    }
+
+    if (page || limit) {
+      const pageNum = Math.max(1, parseInt(page || '1', 10));
+      const limitNum = Math.max(1, parseInt(limit || '10', 10));
+      const skip = (pageNum - 1) * limitNum;
+
+      const result = await this.categoryRepository.findManyPaginated({
+        filters,
+        skip,
+        limit: limitNum,
+        sort: 'createdAt',
+        order: 'desc',
+      });
+
+      return {
+        data: result.items,
+        items: result.items,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      };
+    }
+
+    const categories =
+      (await this.categoryRepository.findMany({
+        filters,
+      })) || [];
+
+    return {
+      data: categories,
+      items: categories,
+      total: categories.length,
+    };
   }
 
   async getCategoryById(id: string) {

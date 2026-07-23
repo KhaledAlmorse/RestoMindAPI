@@ -99,6 +99,15 @@ export class OffersService {
 
     const managerRestaurantId = await this.getManagerRestaurantId(userId);
 
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { _id: managerRestaurantId, isDeleted: false },
+    });
+    if (!restaurant || restaurant.isActive === false) {
+      throw new BadRequestException(
+        'Cannot create offer for an inactive restaurant',
+      );
+    }
+
     const product = await this.productRepository.findOne({
       filters: { _id: new Types.ObjectId(dto.productId), isDeleted: false },
     });
@@ -125,13 +134,15 @@ export class OffersService {
       throw new BadRequestException('endDate must be in the future');
     }
 
-    const todayYMD = now.toISOString().split('T')[0];
-    const startYMD = startDate.toISOString().split('T')[0];
-    const isStartingTodayOrPast = startDate <= now || startYMD <= todayYMD;
-
-    const status = isStartingTodayOrPast
-      ? OfferStatusEnum.ACTIVE
-      : OfferStatusEnum.SCHEDULED;
+    let status = dto.status;
+    if (!status) {
+      const todayYMD = now.toISOString().split('T')[0];
+      const startYMD = startDate.toISOString().split('T')[0];
+      const isStartingTodayOrPast = startDate <= now || startYMD <= todayYMD;
+      status = isStartingTodayOrPast
+        ? OfferStatusEnum.ACTIVE
+        : OfferStatusEnum.SCHEDULED;
+    }
 
     const originalPrice = product.price;
     const offerPrice =
@@ -214,6 +225,14 @@ export class OffersService {
       if (maxPrice !== undefined) {
         filters.offerPrice.$lte = parseFloat(maxPrice);
       }
+    }
+
+    if (query.startDate) {
+      filters.startDate = { $gte: this.parseStartDate(query.startDate) };
+    }
+
+    if (query.endDate) {
+      filters.endDate = { $lte: this.parseEndDate(query.endDate) };
     }
 
     const populationArray: any[] = [
@@ -465,8 +484,23 @@ export class OffersService {
     const filters: Record<string, any> = {
       status: OfferStatusEnum.ACTIVE,
       isDeleted: false,
+      startDate: { $lte: now },
       endDate: { $gte: now },
     };
+
+    if (query.startDate) {
+      filters.startDate = {
+        $gte: this.parseStartDate(query.startDate),
+        $lte: now,
+      };
+    }
+
+    if (query.endDate) {
+      filters.endDate = {
+        $lte: this.parseEndDate(query.endDate),
+        $gte: now,
+      };
+    }
 
     if (productId) {
       this.validateObjectId(productId);
@@ -502,7 +536,10 @@ export class OffersService {
         populate: { path: 'category' },
         select: 'title description price image category slug isAvailable',
       },
-      { path: 'restaurantId', select: 'name description phone address' },
+      {
+        path: 'restaurantId',
+        select: 'name description phone address isActive isDeleted',
+      },
     ];
 
     let offers =
@@ -510,6 +547,14 @@ export class OffersService {
         filters,
         populationArray,
       })) || [];
+
+    // Filter out offers whose restaurant is inactive or soft deleted
+    offers = offers.filter(
+      (off: any) =>
+        off.restaurantId &&
+        off.restaurantId.isActive !== false &&
+        !off.restaurantId.isDeleted,
+    );
 
     if (search) {
       const searchRegex = new RegExp(search, 'i');
@@ -618,10 +663,13 @@ export class OffersService {
         populate: { path: 'category' },
         select: 'title description price image category slug isAvailable',
       },
-      { path: 'restaurantId', select: 'name description phone address' },
+      {
+        path: 'restaurantId',
+        select: 'name description phone address isActive isDeleted',
+      },
     ];
 
-    const needsInMemoryFilter = !!(search || categoryId);
+    const needsInMemoryFilter = true;
 
     if (!needsInMemoryFilter) {
       // Fast path: MongoDB handles sort + pagination + count
@@ -678,6 +726,14 @@ export class OffersService {
       });
     }
 
+    // Filter out offers whose restaurant is inactive or soft deleted
+    offers = offers.filter(
+      (off: any) =>
+        off.restaurantId &&
+        off.restaurantId.isActive !== false &&
+        !off.restaurantId.isDeleted,
+    );
+
     const total = offers.length;
     const items = offers.slice(skip, skip + limitNum);
 
@@ -694,22 +750,28 @@ export class OffersService {
     const now = new Date();
     let offer: any = null;
 
+    const populationArray: any[] = [
+      {
+        path: 'productId',
+        select: 'title description price image category slug isAvailable',
+      },
+      {
+        path: 'restaurantId',
+        select: 'name description phone address isActive isDeleted',
+      },
+    ];
+
     if (isValidObjectId(idOrSlug)) {
       offer = await this.offerRepository.findOne({
         filters: {
           _id: new Types.ObjectId(idOrSlug),
           status: OfferStatusEnum.ACTIVE,
           isDeleted: false,
+          startDate: { $lte: now },
           endDate: { $gte: now },
         },
         select: '-createdBy -isDeleted -updatedAt -__v',
-        populationArray: [
-          {
-            path: 'productId',
-            select: 'title description price image category slug isAvailable',
-          },
-          { path: 'restaurantId', select: 'name description phone address' },
-        ],
+        populationArray,
       });
     }
 
@@ -736,18 +798,17 @@ export class OffersService {
             endDate: { $gte: now },
           },
           select: '-createdBy -isDeleted -updatedAt -__v',
-          populationArray: [
-            {
-              path: 'productId',
-              select: 'title description price image category slug isAvailable',
-            },
-            { path: 'restaurantId', select: 'name description phone address' },
-          ],
+          populationArray,
         });
       }
     }
 
-    if (!offer) {
+    if (
+      !offer ||
+      !offer.restaurantId ||
+      offer.restaurantId.isActive === false ||
+      offer.restaurantId.isDeleted
+    ) {
       throw new NotFoundException('Active offer not found');
     }
 
