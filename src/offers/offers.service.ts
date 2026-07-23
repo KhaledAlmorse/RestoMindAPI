@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { isValidObjectId, Types } from 'mongoose';
@@ -19,13 +20,17 @@ import { QueryOfferDto } from './dto/query-offer.dto';
 import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
 
 @Injectable()
-export class OffersService {
+export class OffersService implements OnModuleInit {
   constructor(
     private readonly offerRepository: OfferRepository,
     private readonly productRepository: ProductRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly userRepository: UserRepository,
   ) {}
+
+  async onModuleInit() {
+    await this.processStatusTransitions();
+  }
 
   private parseStartDate(dateStr: string): Date {
     const trimmed = dateStr.trim();

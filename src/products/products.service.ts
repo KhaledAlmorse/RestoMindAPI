@@ -21,7 +21,7 @@ import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
-import { RolesEnum } from 'src/Common/Types';
+import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
 import type { IAuthUser } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 
@@ -310,6 +310,11 @@ export class ProductsService {
       filters: { productId: new Types.ObjectId(id), isDeleted: false },
       body: { isDeleted: true, deletedAt: new Date() } as any,
     });
+
+    await this.offerRepository.updateMany(
+      { productId: new Types.ObjectId(id) },
+      { isDeleted: true, status: OfferStatusEnum.CANCELLED },
+    );
 
     return { message: 'Product deleted successfully' };
   }

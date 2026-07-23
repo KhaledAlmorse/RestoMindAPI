@@ -20,7 +20,8 @@ This document is the **single source of truth** for the **RestoMindApi** backend
    - [4.8 Cart Module (`/cart`)](#48-cart-module-cart)
    - [4.9 Orders & Order Groups Module (`/orders`, `/order-groups`)](#49-orders--order-groups-module-orders-order-groups)
    - [4.10 Favorites Module (`/favorites`)](#410-favorites-module-favorites)
-   - [4.11 App Root Module (`/`)](#411-app-root-module-)
+   - [4.11 Sales Module (`/sales`)](#411-sales-module-sales)
+   - [4.12 App Root Module (`/`)](#412-app-root-module-)
 
 ---
 
@@ -1466,7 +1467,7 @@ Or for paginated lists:
     "fullName": "John Doe",
     "phoneNumber": "+1234567890",
     "emailAddress": "johndoe@example.com",
-    "deliveryMethod": "Delivery",
+    "deliveryMethod": "Home Delivery",
     "deliveryAddress": {
       "street": "123 Main St",
       "city": "Metropolis",
@@ -1477,15 +1478,15 @@ Or for paginated lists:
   ```
 - **Validation Rules**:
   - `fullName`, `phoneNumber`, `emailAddress`: required strings
-  - `deliveryMethod`: enum required (`Delivery`, `Pickup`)
-  - `deliveryAddress`: object required when deliveryMethod is `Delivery`
+  - `deliveryMethod`: enum required (`Home Delivery`, `Store Pickup`)
+  - `deliveryAddress`: object required when deliveryMethod is `Home Delivery`
 - **Success Response** (201 Created):
   ```json
   {
     "data": {
       "orderGroupId": "669fc999888777abcdef999",
       "overallStatus": "Pending",
-      "formattedChildOrders": [ ... ]
+      "orders": [ ... ]
     }
   }
   ```
@@ -1495,7 +1496,7 @@ Or for paginated lists:
 #### 2. Get Customer Orders (`me`)
 - **Route**: `GET /orders/me`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`, `admin`, `manager`
+- **Allowed Roles**: `customer`
 - **Query Parameters**: `restaurantId` (optional Mongo ObjectId string)
 - **Success Response** (200 OK):
   ```json
@@ -1509,7 +1510,7 @@ Or for paginated lists:
 #### 3. Get Customer Order Details By Id
 - **Route**: `GET /orders/me/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`, `admin`, `manager`
+- **Allowed Roles**: `customer`
 - **Path Parameters**: `id`
 - **Success Response** (200 OK):
   ```json
@@ -1523,7 +1524,7 @@ Or for paginated lists:
 #### 4. Get Group Order Details By Id
 - **Route**: `GET /orders/group/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`, `admin`, `manager`
+- **Allowed Roles**: `customer`, `admin`
 - **Path Parameters**: `id`
 - **Success Response** (200 OK):
   ```json
@@ -1538,11 +1539,53 @@ Or for paginated lists:
 - **Route**: `GET /orders`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
-- **Query Parameters**: `restaurantId` (optional Mongo ObjectId string)
+- **Query Parameters**:
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+  - `search`: string (matches `fullName`, `emailAddress`, `phoneNumber`, `groupOrderId`, or order `_id`)
+  - `status`: enum string (`Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
+  - `paymentMethod`: string (`Cash on Delivery`)
+  - `deliveryMethod`: string (`Home Delivery`, `Store Pickup`)
+  - `startDate`: ISO date string (filters `createdAt >= startDate 00:00:00.000Z`)
+  - `endDate`: ISO date string (filters `createdAt <= endDate 23:59:59.999Z`)
+  - `minTotalPrice`: number (filters `finalTotalPrice >= minTotalPrice`)
+  - `maxTotalPrice`: number (filters `finalTotalPrice <= maxTotalPrice`)
+  - `restaurantId`: Mongo ObjectId string (filter by restaurant)
+  - `sortBy` / `sort`: string (`createdAt`, `updatedAt`, `finalTotalPrice`, `totalQuantity`, `status`; default `createdAt`)
+  - `sortOrder` / `order`: string (`asc`, `desc`; default `desc`)
 - **Success Response** (200 OK):
   ```json
   {
-    "data": [ ... ]
+    "data": [
+      {
+        "_id": "669fc999888777abcdef999",
+        "groupOrderId": "669fc888777666abcdef888",
+        "userId": "669fc1234567890abcdef123",
+        "restaurant": {
+          "_id": "669fc8888888888abcdef222",
+          "name": "Pizza Gourmet Express"
+        },
+        "items": [ ... ],
+        "totalOriginalPrice": 25.98,
+        "totalDiscount": 5.20,
+        "finalTotalPrice": 20.78,
+        "totalQuantity": 2,
+        "fullName": "John Doe",
+        "phoneNumber": "+1234567890",
+        "emailAddress": "johndoe@example.com",
+        "deliveryMethod": "Home Delivery",
+        "paymentMethod": "Cash on Delivery",
+        "status": "Pending",
+        "createdAt": "2026-07-23T20:00:00.000Z",
+        "updatedAt": "2026-07-23T20:00:00.000Z"
+      }
+    ],
+    "totalItems": 1,
+    "totalPages": 1,
+    "currentPage": 1,
+    "pageSize": 10,
+    "hasNextPage": false,
+    "hasPreviousPage": false
   }
   ```
 
@@ -1553,10 +1596,41 @@ Or for paginated lists:
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
 - **Path Parameters**: `restaurantId`
+- **Security Check**: Managers can ONLY view orders for their own assigned restaurant (`restaurantId` must match manager's `user.restaurantId`).
+- **Query Parameters**:
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+  - `search`: string (matches `fullName`, `emailAddress`, `phoneNumber`, `groupOrderId`, or order `_id`)
+  - `status`: enum string (`Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
+  - `paymentMethod`: string
+  - `deliveryMethod`: string
+  - `startDate`: ISO date string
+  - `endDate`: ISO date string
+  - `minTotalPrice`: number
+  - `maxTotalPrice`: number
+  - `sortBy` / `sort`: string (`createdAt`, `updatedAt`, `finalTotalPrice`, `totalQuantity`, `status`; default `createdAt`)
+  - `sortOrder` / `order`: string (`asc`, `desc`; default `desc`)
 - **Success Response** (200 OK):
   ```json
   {
-    "data": [ ... ]
+    "data": [
+      {
+        "_id": "669fc999888777abcdef999",
+        "restaurant": {
+          "_id": "669fc8888888888abcdef222",
+          "name": "Pizza Gourmet Express"
+        },
+        "items": [ ... ],
+        "finalTotalPrice": 20.78,
+        "status": "Pending"
+      }
+    ],
+    "totalItems": 1,
+    "totalPages": 1,
+    "currentPage": 1,
+    "pageSize": 10,
+    "hasNextPage": false,
+    "hasPreviousPage": false
   }
   ```
 
@@ -1567,6 +1641,7 @@ Or for paginated lists:
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
 - **Path Parameters**: `id`
+- **Security Check**: Managers can only update status of orders belonging to their own restaurant.
 - **Request Body**:
   ```json
   {
@@ -1574,11 +1649,17 @@ Or for paginated lists:
   }
   ```
 - **Validation Rules**:
-  - `status`: enum string required (`Pending`, `Preparing`, `Ready`, `Delivered`, `Cancelled`)
+  - `status`: enum string required (`OrderStatusEnum`: `Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
+- **Side Effects**:
+  - `Delivered`: Idempotently creates `SalesTransaction` records for each order line item (`source: marketplace_order`).
+  - `Cancelled`: Restores offer remaining quantity and reactivates offer if previously `sold_out`.
 - **Success Response** (200 OK):
   ```json
   {
-    "data": { ... }
+    "data": {
+      "_id": "669fc999888777abcdef999",
+      "status": "Preparing"
+    }
   }
   ```
 
@@ -1587,7 +1668,7 @@ Or for paginated lists:
 #### 8. Get Order Group By Id (`/order-groups`)
 - **Route**: `GET /order-groups/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`, `admin`, `manager`
+- **Allowed Roles**: `admin`
 - **Path Parameters**: `id`
 - **Success Response** (200 OK):
   ```json
@@ -1598,71 +1679,95 @@ Or for paginated lists:
 
 ---
 
-### 4.10 Favorites Module (`/favorites`)
+### 4.11 Sales Module (`/sales`)
 
-#### 1. Add Offer to Favorites
-- **Route**: `POST /favorites/:offerId`
+#### 1. Get Sales Transactions (Paginated & Filtered)
+- **Route**: `GET /sales`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Path Parameters**: `offerId`
-- **Success Response** (201 Created):
+- **Allowed Roles**: `admin`, `manager`
+- **Security Check**: Managers are automatically scoped to their own assigned `restaurantId`.
+- **Query Parameters**:
+  - `restaurantId`: Mongo ObjectId string (Admin only; Managers restricted to their own)
+  - `productId`: Mongo ObjectId string
+  - `startDate`: ISO date string (filters `date >= startDate 00:00:00.000Z`)
+  - `endDate`: ISO date string (filters `date <= endDate 23:59:59.999Z`)
+  - `source`: enum string (`csv_import`, `marketplace_order`, `pos_sync`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+  - `sort`: string (default `date`)
+  - `order`: string (`asc`, `desc`; default `desc`)
+- **Success Response** (200 OK):
   ```json
   {
     "data": {
-      "_id": "669fc777666555abcdef000",
-      "userId": "669fc1234567890abcdef123",
-      "offerId": "669fc0000000000abcdef777"
+      "items": [
+        {
+          "_id": "669fd1111111111abcdef000",
+          "restaurantId": {
+            "_id": "669fc8888888888abcdef222",
+            "name": "Pizza Gourmet Express"
+          },
+          "productId": {
+            "_id": "669fc3333333333abcdef444",
+            "title": "Margherita Pizza",
+            "price": 12.99,
+            "discountedPrice": 10.39
+          },
+          "date": "2026-07-23T20:00:00.000Z",
+          "quantitySold": 2,
+          "basePrice": 12.99,
+          "sellingPrice": 10.39,
+          "promotionActive": true,
+          "featured": true,
+          "salesChannel": "marketplace",
+          "source": "marketplace_order",
+          "orderId": "669fc999888777abcdef999"
+        }
+      ],
+      "page": 1,
+      "limit": 10,
+      "total": 1,
+      "totalPages": 1
     }
   }
   ```
 
 ---
 
-#### 2. Remove Offer from Favorites
-- **Route**: `DELETE /favorites/:offerId`
+#### 2. Get Sales Summary Statistics
+- **Route**: `GET /sales/summary`
 - **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Path Parameters**: `offerId`
+- **Allowed Roles**: `admin`, `manager`
+- **Security Check**: Managers are automatically scoped to their own assigned `restaurantId`.
+- **Query Parameters**:
+  - `restaurantId`: Mongo ObjectId string (Admin only)
+  - `productId`: Mongo ObjectId string
+  - `startDate`: ISO date string (full day bounds)
+  - `endDate`: ISO date string (full day bounds)
+  - `source`: enum string (`csv_import`, `marketplace_order`, `pos_sync`)
 - **Success Response** (200 OK):
   ```json
   {
-    "message": "Favorite removed successfully"
+    "data": {
+      "totalTransactions": 15,
+      "totalQuantitySold": 42,
+      "totalGrossRevenue": 545.58,
+      "totalNetRevenue": 436.38,
+      "totalDiscountsGiven": 109.20,
+      "promotionalSalesCount": 42,
+      "featuredSalesCount": 42,
+      "averageSellingPrice": 10.39
+    }
   }
   ```
 
 ---
 
-#### 3. Get Customer Favorites List
-- **Route**: `GET /favorites`
-- **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": [ ... ]
-  }
-  ```
-
----
-
-#### 4. Check Offer Favorite Status
-- **Route**: `GET /favorites/:offerId/status`
-- **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Path Parameters**: `offerId`
-- **Success Response** (200 OK):
-  ```json
-  {
-    "isFavorite": true
-  }
-  ```
-
----
-
-### 4.11 App Root Module (`/`)
+### 4.12 App Root Module (`/`)
 
 #### 1. Health / Root Hello
 - **Route**: `GET /`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
 - **Success Response** (200 OK): `"Hello World!"`
+

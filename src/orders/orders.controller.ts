@@ -13,6 +13,8 @@ import {
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { QueryRestaurantOrdersDto } from './dto/query-restaurant-orders.dto';
+import { QueryOrderListingDto } from './dto/query-order-listing.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { RolesEnum, type IAuthUser } from 'src/Common/Types';
@@ -36,7 +38,7 @@ export class OrdersController {
   }
 
   @Get('me')
-  @Auth('customer', 'admin', 'manager')
+  @Auth('customer')
   async getMyOrders(
     @AuthUser() user: IAuthUser,
     @Query('restaurantId') restaurantId: string,
@@ -50,7 +52,7 @@ export class OrdersController {
   }
 
   @Get('me/:id')
-  @Auth('customer', 'admin', 'manager')
+  @Auth('customer')
   async getMyOrderDetails(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
@@ -64,28 +66,23 @@ export class OrdersController {
   }
 
   @Get('group/:id')
-  @Auth('customer', 'admin', 'manager')
+  @Auth('customer', 'admin')
   async getGroupOrderDetails(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.getOrderGroupById(
-      id,
-      user.user.role === RolesEnum.CUSTOMER
-        ? user.user._id.toString()
-        : undefined,
-    );
+    const result = await this.ordersService.getOrderGroupById(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Get()
   @Auth('admin')
   async getAllOrders(
-    @Query('restaurantId') restaurantId: string,
+    @Query() query: QueryOrderListingDto,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.getAllOrders(restaurantId);
+    const result = await this.ordersService.getAllOrders(query);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -93,6 +90,7 @@ export class OrdersController {
   @Auth('admin', 'manager')
   async getRestaurantOrders(
     @Param('restaurantId') restaurantId: string,
+    @Query() query: QueryRestaurantOrdersDto,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
@@ -106,7 +104,10 @@ export class OrdersController {
         );
       }
     }
-    const result = await this.ordersService.getRestaurantOrders(restaurantId);
+    const result = await this.ordersService.getRestaurantOrders(
+      restaurantId,
+      query,
+    );
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -128,7 +129,7 @@ export class OrdersController {
 }
 
 @Controller('order-groups')
-@Auth('customer', 'admin', 'manager')
+@Auth('admin')
 export class OrderGroupsController {
   constructor(private readonly ordersService: OrdersService) {}
 
@@ -138,12 +139,7 @@ export class OrderGroupsController {
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.getOrderGroupById(
-      id,
-      user.user.role === RolesEnum.CUSTOMER
-        ? user.user._id.toString()
-        : undefined,
-    );
+    const result = await this.ordersService.getOrderGroupById(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 }

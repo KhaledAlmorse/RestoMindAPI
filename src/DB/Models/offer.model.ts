@@ -78,6 +78,8 @@ OfferSchema.index({ productId: 1, status: 1 });
 OfferSchema.index({ restaurantId: 1, status: 1 });
 OfferSchema.index({ status: 1, startDate: 1 });
 OfferSchema.index({ status: 1, endDate: 1 });
+OfferSchema.index({ recommendationId: 1 }, { sparse: true });
+
 
 export const OfferModel = MongooseModule.forFeature([
   { name: Offer.name, schema: OfferSchema },

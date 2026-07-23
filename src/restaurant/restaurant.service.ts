@@ -11,11 +11,13 @@ import {
   UserRepository,
   ProductRepository,
   OfferRepository,
+  IngredientRepository,
+  RecipeRepository,
 } from 'src/DB/Repositories';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { QueryRestaurantDto } from './dto/query-restaurant.dto';
-import { RolesEnum } from 'src/Common/Types';
+import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
 import slugify from 'slugify';
 
 @Injectable()
@@ -25,6 +27,8 @@ export class RestaurantService {
     private readonly userRepository: UserRepository,
     private readonly productRepository: ProductRepository,
     private readonly offerRepository: OfferRepository,
+    private readonly ingredientRepository: IngredientRepository,
+    private readonly recipeRepository: RecipeRepository,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -318,10 +322,28 @@ export class RestaurantService {
       } as any,
     });
 
-    // Soft delete all offers belonging to this restaurant
+    // Soft delete all offers belonging to this restaurant and mark status cancelled
     await this.offerRepository.updateMany(
       { restaurantId: new Types.ObjectId(id) },
+      { isDeleted: true, status: OfferStatusEnum.CANCELLED },
+    );
+
+    // Soft delete all products belonging to this restaurant
+    await this.productRepository.updateMany(
+      { restaurantId: new Types.ObjectId(id) },
       { isDeleted: true },
+    );
+
+    // Soft delete all ingredients belonging to this restaurant
+    await this.ingredientRepository.updateMany(
+      { restaurantId: new Types.ObjectId(id) },
+      { isDeleted: true, deletedAt: new Date() },
+    );
+
+    // Soft delete all recipes belonging to this restaurant
+    await this.recipeRepository.updateMany(
+      { restaurantId: new Types.ObjectId(id) },
+      { isDeleted: true, deletedAt: new Date() },
     );
 
     // Clear owner user's restaurantId

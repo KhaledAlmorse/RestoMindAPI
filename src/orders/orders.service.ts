@@ -18,6 +18,8 @@ import {
   SalesTransactionRepository,
 } from 'src/DB/Repositories';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { QueryRestaurantOrdersDto } from './dto/query-restaurant-orders.dto';
+import { QueryOrderListingDto } from './dto/query-order-listing.dto';
 import { Decrypt } from 'src/Common/Security';
 import { OfferStatusEnum, RolesEnum, SalesSourceEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
@@ -64,7 +66,7 @@ export class OrdersService {
     return 'Processing';
   }
 
-  private async formatOrderGroup(group: any) {
+  private async formatOrderGroup(group: any, managerRestaurantId?: string) {
     let childOrders = group.orderIds || group.restaurantOrderIds || [];
 
     const isUnpopulated =
@@ -85,6 +87,15 @@ export class OrdersService {
       if (fetchedChildOrders && fetchedChildOrders.length > 0) {
         childOrders = fetchedChildOrders;
       }
+    }
+
+    if (managerRestaurantId) {
+      childOrders = childOrders.filter((sub: any) => {
+        const restId = sub?.restaurantId?._id
+          ? sub.restaurantId._id.toString()
+          : sub?.restaurantId?.toString() || sub?.restaurantId;
+        return restId === managerRestaurantId;
+      });
     }
 
     const overallStatus = this.computeOverallStatus(childOrders);
@@ -509,11 +520,11 @@ export class OrdersService {
         totalQuantity: groupTotalQuantity,
         overallStatus: 'Pending',
       });
-
-      // Clear customer's cart
-      cart.items = [];
-      await this.cartRepository.save(cart);
     });
+
+    // Clear customer's cart after successful order creation
+    cart.items = [];
+    await this.cartRepository.save(cart);
 
     const populatedGroup = await this.orderGroupRepository.findOne({
       filters: { _id: groupOrderId },
@@ -610,7 +621,7 @@ export class OrdersService {
     return { data: await this.formatOrderGroup(group) };
   }
 
-  async getOrderGroupById(id: string, userId?: string) {
+  async getOrderGroupById(id: string, currentUser?: UserType | string) {
     this.validateObjectId(id);
     const targetId = new Types.ObjectId(id);
 
@@ -618,9 +629,15 @@ export class OrdersService {
       $or: [{ _id: targetId }, { orderIds: targetId }],
     };
 
-    if (userId) {
-      this.validateObjectId(userId);
-      filters.userId = new Types.ObjectId(userId);
+    let userObj: UserType | null = null;
+    if (typeof currentUser === 'string') {
+      this.validateObjectId(currentUser);
+      filters.userId = new Types.ObjectId(currentUser);
+    } else if (currentUser && typeof currentUser === 'object') {
+      userObj = currentUser;
+      if (currentUser.role === RolesEnum.CUSTOMER) {
+        filters.userId = new Types.ObjectId(currentUser._id.toString());
+      }
     }
 
     const group = await this.orderGroupRepository.findOne({
@@ -637,23 +654,185 @@ export class OrdersService {
       throw new NotFoundException('Checkout details not found');
     }
 
+    if (userObj && userObj.role === RolesEnum.MANAGER) {
+      if (!userObj.restaurantId) {
+        throw new ForbiddenException('Manager is not assigned to a restaurant');
+      }
+      const managerRestId = userObj.restaurantId.toString();
+      const childOrders = group.orderIds || [];
+      const hasMatchingOrder = childOrders.some(
+        (sub: any) =>
+          sub &&
+          (sub.restaurantId?._id?.toString() === managerRestId ||
+            sub.restaurantId?.toString() === managerRestId),
+      );
+      if (!hasMatchingOrder) {
+        throw new ForbiddenException(
+          'You can only view orders belonging to your own restaurant',
+        );
+      }
+      return { data: await this.formatOrderGroup(group, managerRestId) };
+    }
+
     return { data: await this.formatOrderGroup(group) };
   }
 
-  async getAllOrders(restaurantId?: string) {
-    const filters: any = {};
-    if (restaurantId && restaurantId !== 'undefined' && restaurantId !== '') {
-      this.validateObjectId(restaurantId);
-      filters.restaurantId = new Types.ObjectId(restaurantId);
+  private buildOrderFilters(
+    query: QueryOrderListingDto = {},
+    overrideRestaurantId?: string,
+  ) {
+    const filters: Record<string, any> = {};
+
+    const targetRestaurantId = overrideRestaurantId || query?.restaurantId;
+    if (
+      targetRestaurantId &&
+      targetRestaurantId !== 'undefined' &&
+      targetRestaurantId !== ''
+    ) {
+      this.validateObjectId(targetRestaurantId);
+      filters.restaurantId = new Types.ObjectId(targetRestaurantId);
     }
-    const orders = await this.orderRepository.findMany({
-      filters,
-      populationArray: [{ path: 'restaurantId' }],
-    });
-    return { data: orders ?? [] };
+
+    if (query?.status) {
+      filters.status = query.status;
+    }
+
+    if (query?.paymentMethod) {
+      filters.paymentMethod = query.paymentMethod;
+    }
+
+    if (query?.deliveryMethod) {
+      filters.deliveryMethod = query.deliveryMethod;
+    }
+
+    if (query?.startDate || query?.endDate) {
+      filters.createdAt = {};
+      if (query.startDate) {
+        const start = new Date(query.startDate);
+        if (query.startDate.trim().length === 10) {
+          start.setUTCHours(0, 0, 0, 0);
+        }
+        filters.createdAt.$gte = start;
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        if (query.endDate.trim().length === 10) {
+          end.setUTCHours(23, 59, 59, 999);
+        }
+        filters.createdAt.$lte = end;
+      }
+    }
+
+    if (
+      query?.minTotalPrice !== undefined ||
+      query?.maxTotalPrice !== undefined
+    ) {
+      filters.finalTotalPrice = {};
+      if (query.minTotalPrice !== undefined) {
+        filters.finalTotalPrice.$gte = Number(query.minTotalPrice);
+      }
+      if (query.maxTotalPrice !== undefined) {
+        filters.finalTotalPrice.$lte = Number(query.maxTotalPrice);
+      }
+    }
+
+    if (query?.search && query.search.trim() !== '') {
+      const searchTerm = query.search.trim();
+      const searchRegex = { $regex: searchTerm, $options: 'i' };
+
+      const orConditions: any[] = [
+        { fullName: searchRegex },
+        { emailAddress: searchRegex },
+        { phoneNumber: searchRegex },
+      ];
+
+      if (isValidObjectId(searchTerm)) {
+        orConditions.push({ _id: new Types.ObjectId(searchTerm) });
+        orConditions.push({ groupOrderId: new Types.ObjectId(searchTerm) });
+      }
+
+      filters.$or = orConditions;
+    }
+
+    return filters;
   }
 
-  async getRestaurantOrders(restaurantId: string) {
+  private async executePaginatedOrdersQuery(
+    filters: Record<string, any>,
+    query: QueryOrderListingDto = {},
+  ) {
+    const currentPage = Math.max(1, query.page || 1);
+    const pageSize = Math.max(1, query.limit || 10);
+    const skip = (currentPage - 1) * pageSize;
+
+    const allowedSortFields = [
+      'createdAt',
+      'updatedAt',
+      'finalTotalPrice',
+      'totalQuantity',
+      'status',
+    ];
+    let sortField = query.sortBy || query.sort || 'createdAt';
+    if (!allowedSortFields.includes(sortField)) {
+      sortField = 'createdAt';
+    }
+
+    const sortOrder = query.sortOrder || query.order || 'desc';
+
+    const paginatedResult = await this.orderRepository.findManyPaginated({
+      filters,
+      skip,
+      limit: pageSize,
+      sort: sortField,
+      order: sortOrder,
+      populationArray: [
+        { path: 'userId', select: '-password' },
+        { path: 'restaurantId', select: '_id name title image logo' },
+      ],
+    });
+
+    const totalItems = paginatedResult.total;
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    const hasNextPage = currentPage < totalPages;
+    const hasPreviousPage = currentPage > 1;
+
+    // Response optimization: lightweight restaurant projection
+    const formattedData = paginatedResult.items.map((orderDoc: any) => {
+      const orderObj = orderDoc.toObject ? orderDoc.toObject() : { ...orderDoc };
+      const rest = orderObj.restaurantId;
+      if (rest && typeof rest === 'object') {
+        const restaurantObj: any = {
+          _id: rest._id ? rest._id.toString() : rest.toString(),
+          name: rest.name || rest.title || '',
+        };
+        if (rest.image) restaurantObj.image = rest.image;
+        if (rest.logo) restaurantObj.logo = rest.logo;
+        orderObj.restaurant = restaurantObj;
+        delete orderObj.restaurantId;
+      }
+      return orderObj;
+    });
+
+    return {
+      data: formattedData,
+      totalItems,
+      totalPages,
+      currentPage,
+      pageSize,
+      hasNextPage,
+      hasPreviousPage,
+    };
+  }
+
+  async getAllOrders(query: QueryOrderListingDto = {}) {
+    const filters = this.buildOrderFilters(query);
+    return await this.executePaginatedOrdersQuery(filters, query);
+  }
+
+  async getRestaurantOrders(
+    restaurantId: string,
+    query: QueryOrderListingDto = {},
+  ) {
     this.validateObjectId(restaurantId);
     const restaurant = await this.restaurantRepository.findOne({
       filters: { _id: restaurantId, isDeleted: false },
@@ -661,11 +840,9 @@ export class OrdersService {
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
     }
-    const orders = await this.orderRepository.findMany({
-      filters: { restaurantId: new Types.ObjectId(restaurantId) },
-      populationArray: [{ path: 'userId', select: '-password' }],
-    });
-    return { data: orders ?? [] };
+
+    const filters = this.buildOrderFilters(query, restaurantId);
+    return await this.executePaginatedOrdersQuery(filters, query);
   }
 
   async updateOrderStatus(id: string, status: string, currentUser?: UserType) {
@@ -719,6 +896,13 @@ export class OrdersService {
             }
           } else if (item.discountPercentage > 0) {
             promotionActive = true;
+          }
+
+          const existingTx = await this.salesTransactionRepository.findOne({
+            filters: { orderId: order._id, productId: item.productId },
+          });
+          if (existingTx) {
+            continue;
           }
 
           await this.salesTransactionRepository.create({

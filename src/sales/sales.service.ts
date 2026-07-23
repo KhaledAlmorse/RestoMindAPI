@@ -54,10 +54,18 @@ export class SalesService {
     if (query.startDate || query.endDate) {
       filters.date = {};
       if (query.startDate) {
-        filters.date.$gte = new Date(query.startDate);
+        const start = new Date(query.startDate);
+        if (query.startDate.trim().length === 10) {
+          start.setUTCHours(0, 0, 0, 0);
+        }
+        filters.date.$gte = start;
       }
       if (query.endDate) {
-        filters.date.$lte = new Date(query.endDate);
+        const end = new Date(query.endDate);
+        if (query.endDate.trim().length === 10) {
+          end.setUTCHours(23, 59, 59, 999);
+        }
+        filters.date.$lte = end;
       }
     }
 
