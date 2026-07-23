@@ -155,14 +155,17 @@ export class DashboardService {
       Confirmed: 0,
       Preparing: 0,
       Ready: 0,
-      'Out For Delivery': 0,
+      OutForDelivery: 0,
       Delivered: 0,
       Cancelled: 0,
     };
 
     for (const item of rawCounts) {
-      if (item._id && Object.prototype.hasOwnProperty.call(initial, item._id)) {
-        (initial as any)[item._id] = item.count || 0;
+      if (!item._id) continue;
+      const key =
+        item._id === 'Out For Delivery' ? 'OutForDelivery' : item._id;
+      if (Object.prototype.hasOwnProperty.call(initial, key)) {
+        (initial as any)[key] = item.count || 0;
       }
     }
 

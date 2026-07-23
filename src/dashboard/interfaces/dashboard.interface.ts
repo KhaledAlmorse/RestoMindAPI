@@ -15,7 +15,7 @@ export interface OrdersByStatus {
   Confirmed: number;
   Preparing: number;
   Ready: number;
-  'Out For Delivery': number;
+  OutForDelivery: number;
   Delivered: number;
   Cancelled: number;
 }
