@@ -193,7 +193,78 @@ describe('OrdersService', () => {
       );
 
       expect(result.data).toBeDefined();
-      expect(result.data.orderGroupId).toBe(mockGroupId.toString());
+    });
+  });
+
+  describe('getAllOrders', () => {
+    it('should return grouped order list for admin with populated user info', async () => {
+      const mockUserId = new Types.ObjectId();
+      const mockGroupId = new Types.ObjectId();
+      const order1Id = new Types.ObjectId();
+      const order2Id = new Types.ObjectId();
+      const rest1Id = new Types.ObjectId();
+      const rest2Id = new Types.ObjectId();
+
+      orderGroupRepo.findManyPaginated.mockResolvedValue({
+        items: [
+          {
+            _id: mockGroupId,
+            userId: {
+              _id: mockUserId,
+              firstName: 'user1',
+              lastName: 'Info',
+              email: 'user1@gmail.com',
+            },
+            fullName: 'user1 Info',
+            phoneNumber: '01098101014',
+            emailAddress: 'user1@gmail.com',
+            deliveryMethod: 'Home Delivery',
+            paymentMethod: 'Cash on Delivery',
+            totalOriginalPrice: 115,
+            totalDiscount: 16.25,
+            finalTotalPrice: 98.75,
+            totalQuantity: 3,
+            overallStatus: 'Delivered',
+            orderIds: [
+              {
+                _id: order1Id,
+                status: 'Delivered',
+                restaurantId: { _id: rest1Id, name: 'restaurant_For_Manager1' },
+                items: [{ productTitle: 'product2', quantity: 1 }],
+                createdAt: new Date(),
+              },
+              {
+                _id: order2Id,
+                status: 'Delivered',
+                restaurantId: { _id: rest2Id, name: 'restaurant_For_Manager2' },
+                items: [
+                  { productTitle: 'product4', quantity: 1 },
+                  { productTitle: 'product3', quantity: 1 },
+                ],
+                createdAt: new Date(),
+              },
+            ],
+            createdAt: new Date(),
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1,
+      });
+
+      const result = await service.getAllOrders({});
+      expect(result.data).toBeDefined();
+      expect(Array.isArray(result.data)).toBe(true);
+      expect(result.data.length).toBe(1);
+      const groupDoc = (result.data as any)[0];
+      expect(groupDoc.orderGroupId).toBe(mockGroupId.toString());
+      expect(groupDoc.userId._id.toString()).toBe(mockUserId.toString());
+      expect(groupDoc.items.length).toBe(3);
+      expect(groupDoc.items[0].restaurantName).toBe('restaurant_For_Manager1');
+      expect(groupDoc.items[1].restaurantName).toBe('restaurant_For_Manager2');
+      expect(groupDoc.orders).toBeUndefined();
+      expect(result.totalItems).toBe(1);
     });
   });
 });

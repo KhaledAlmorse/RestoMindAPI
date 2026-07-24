@@ -101,24 +101,42 @@ export class OrdersService {
 
     const overallStatus = this.computeOverallStatus(childOrders);
 
-    const formattedChildOrders = childOrders
-      .filter((sub: any) => sub && typeof sub === 'object' && sub._id)
-      .map((sub: any) => {
-        const restaurant = sub.restaurantId;
-        const restaurantObj = restaurant
-          ? {
-              _id: restaurant._id
-                ? restaurant._id.toString()
-                : restaurant.toString(),
-              name:
-                restaurant.name ||
-                restaurant.restaurantName ||
-                restaurant.title ||
-                '',
-            }
-          : null;
+    const validChildOrders = childOrders.filter(
+      (sub: any) => sub && typeof sub === 'object' && sub._id,
+    );
 
-        const items = (sub.items || []).map((item: any) => ({
+    const allItems: any[] = [];
+    let computedOriginalPrice = 0;
+    let computedDiscount = 0;
+    let computedTotalPrice = 0;
+    let computedQuantity = 0;
+
+    for (const sub of validChildOrders) {
+      const restaurant = sub.restaurantId;
+      const subRestaurantId = restaurant?._id
+        ? restaurant._id.toString()
+        : restaurant?.toString() || '';
+      const subRestaurantName =
+        restaurant?.name ||
+        restaurant?.restaurantName ||
+        restaurant?.title ||
+        sub.restaurantName ||
+        '';
+
+      for (const item of sub.items || []) {
+        const itemRestId = item.restaurantId?._id
+          ? item.restaurantId._id.toString()
+          : item.restaurantId?.toString() || subRestaurantId;
+        const itemRestName =
+          item.restaurantName || subRestaurantName || '';
+
+        const origPrice = item.originalPrice ?? item.price ?? 0;
+        const offPrice = item.offerPrice ?? item.discountedPrice ?? 0;
+        const qty = item.quantity ?? 1;
+        const lineTot = item.lineTotal ?? offPrice * qty;
+        const discPct = item.discountPercentage ?? 0;
+
+        allItems.push({
           offerId: item.offerId?._id
             ? item.offerId._id.toString()
             : item.offerId?.toString() || item.offerId,
@@ -127,52 +145,76 @@ export class OrdersService {
             : item.productId?.toString() || item.productId,
           productTitle: item.productTitle || item.title || '',
           productImage: item.productImage || '',
-          restaurantId: item.restaurantId?._id
-            ? item.restaurantId._id.toString()
-            : item.restaurantId?.toString() || item.restaurantId,
-          restaurantName: item.restaurantName || '',
-          originalPrice: item.originalPrice ?? item.price ?? 0,
-          offerPrice: item.offerPrice ?? item.discountedPrice ?? 0,
-          discountPercentage: item.discountPercentage ?? 0,
-          quantity: item.quantity,
-          purchasedAt: item.purchasedAt || sub.createdAt,
-          lineTotal:
-            item.lineTotal ??
-            (item.offerPrice ?? item.discountedPrice ?? 0) * item.quantity,
-        }));
+          restaurantId: itemRestId,
+          restaurantName: itemRestName,
+          originalPrice: origPrice,
+          offerPrice: offPrice,
+          discountPercentage: discPct,
+          quantity: qty,
+          purchasedAt: item.purchasedAt || sub.createdAt || group.createdAt,
+          lineTotal: lineTot,
+        });
 
-        return {
-          orderId: sub._id ? sub._id.toString() : sub.toString(),
-          restaurant: restaurantObj,
-          items,
-          totalOriginalPrice: sub.totalOriginalPrice ?? 0,
-          totalDiscount: sub.totalDiscount ?? 0,
-          finalTotalPrice: sub.finalTotalPrice ?? 0,
-          totalQuantity: sub.totalQuantity ?? 0,
-          status: sub.status || 'Pending',
-          createdAt: sub.createdAt,
-        };
-      });
+        computedOriginalPrice += origPrice * qty;
+        computedDiscount += Math.max(0, (origPrice - offPrice) * qty);
+        computedTotalPrice += lineTot;
+        computedQuantity += qty;
+      }
+    }
+
+    let formattedUserId: any = group.userId;
+    if (
+      group.userId &&
+      typeof group.userId === 'object' &&
+      (group.userId._id || group.userId.firstName || group.userId.email)
+    ) {
+      const userObj = group.userId.toObject
+        ? group.userId.toObject()
+        : { ...group.userId };
+      delete userObj.password;
+      if (userObj._id) {
+        userObj.id = userObj._id.toString();
+      }
+      formattedUserId = userObj;
+    } else if (group.userId?._id) {
+      formattedUserId = group.userId._id.toString();
+    } else if (group.userId) {
+      formattedUserId = group.userId.toString();
+    }
+
+    const totalOriginalPrice = allItems.length
+      ? computedOriginalPrice
+      : (group.totalOriginalPrice ?? 0);
+    const totalDiscount = allItems.length
+      ? computedDiscount
+      : (group.totalDiscount ?? 0);
+    const finalTotalPrice = allItems.length
+      ? computedTotalPrice
+      : (group.finalTotalPrice ?? 0);
+    const totalQuantity = allItems.length
+      ? computedQuantity
+      : (group.totalQuantity ?? 0);
 
     return {
+      _id: group._id.toString(),
+      groupOrderId: group._id.toString(),
       orderGroupId: group._id.toString(),
-      userId: group.userId?._id
-        ? group.userId._id.toString()
-        : group.userId?.toString(),
+      userId: formattedUserId,
       fullName: group.fullName,
       phoneNumber: group.phoneNumber,
       emailAddress: group.emailAddress,
       deliveryMethod: group.deliveryMethod,
       deliveryAddress: group.deliveryAddress,
-      specialNotes: group.specialNotes,
       paymentMethod: group.paymentMethod,
-      totalOriginalPrice: group.totalOriginalPrice ?? 0,
-      totalDiscount: group.totalDiscount ?? 0,
-      finalTotalPrice: group.finalTotalPrice ?? 0,
-      totalQuantity: group.totalQuantity ?? 0,
+      specialNotes: group.specialNotes,
       overallStatus,
-      orders: formattedChildOrders,
+      items: allItems,
+      totalOriginalPrice,
+      totalDiscount,
+      finalTotalPrice,
+      totalQuantity,
       createdAt: group.createdAt,
+      updatedAt: group.updatedAt || group.createdAt,
     };
   }
 
@@ -887,8 +929,157 @@ export class OrdersService {
   }
 
   async getAllOrders(query: QueryOrderListingDto = {}) {
-    const filters = this.buildOrderFilters(query);
-    return await this.executePaginatedOrdersQuery(filters, query);
+    const currentPage = Math.max(1, query.page || 1);
+    const pageSize = Math.max(1, query.limit || 10);
+    const skip = (currentPage - 1) * pageSize;
+
+    const filters: Record<string, any> = {};
+
+    if (query.paymentMethod) {
+      filters.paymentMethod = query.paymentMethod;
+    }
+
+    if (query.deliveryMethod) {
+      filters.deliveryMethod = query.deliveryMethod;
+    }
+
+    if (query.status) {
+      const matchingChildOrders = await this.orderRepository.findMany({
+        filters: { status: query.status },
+        select: 'groupOrderId',
+      });
+      const childGroupIds = (matchingChildOrders || [])
+        .map((o: any) => o.groupOrderId?.toString())
+        .filter(Boolean);
+
+      filters.$or = [
+        { overallStatus: query.status },
+        { _id: { $in: childGroupIds.map((id) => new Types.ObjectId(id)) } },
+      ];
+    }
+
+    if (
+      query.restaurantId &&
+      query.restaurantId !== 'undefined' &&
+      query.restaurantId !== ''
+    ) {
+      this.validateObjectId(query.restaurantId);
+      const matchingChildOrders = await this.orderRepository.findMany({
+        filters: { restaurantId: new Types.ObjectId(query.restaurantId) },
+        select: 'groupOrderId',
+      });
+      const groupIds = (matchingChildOrders || [])
+        .map((o: any) => o.groupOrderId?.toString())
+        .filter(Boolean);
+
+      filters._id = { $in: groupIds.map((id) => new Types.ObjectId(id)) };
+    }
+
+    if (query.startDate || query.endDate) {
+      filters.createdAt = {};
+      if (query.startDate) {
+        const start = new Date(query.startDate);
+        if (query.startDate.trim().length === 10) {
+          start.setUTCHours(0, 0, 0, 0);
+        }
+        filters.createdAt.$gte = start;
+      }
+      if (query.endDate) {
+        const end = new Date(query.endDate);
+        if (query.endDate.trim().length === 10) {
+          end.setUTCHours(23, 59, 59, 999);
+        }
+        filters.createdAt.$lte = end;
+      }
+    }
+
+    if (
+      query.minTotalPrice !== undefined ||
+      query.maxTotalPrice !== undefined
+    ) {
+      filters.finalTotalPrice = {};
+      if (query.minTotalPrice !== undefined) {
+        filters.finalTotalPrice.$gte = Number(query.minTotalPrice);
+      }
+      if (query.maxTotalPrice !== undefined) {
+        filters.finalTotalPrice.$lte = Number(query.maxTotalPrice);
+      }
+    }
+
+    if (query.search && query.search.trim() !== '') {
+      const searchTerm = query.search.trim();
+      const searchRegex = { $regex: searchTerm, $options: 'i' };
+
+      const searchOr: any[] = [
+        { fullName: searchRegex },
+        { emailAddress: searchRegex },
+        { phoneNumber: searchRegex },
+      ];
+
+      if (isValidObjectId(searchTerm)) {
+        const objId = new Types.ObjectId(searchTerm);
+        searchOr.push({ _id: objId });
+        searchOr.push({ userId: objId });
+        searchOr.push({ orderIds: objId });
+      }
+
+      if (filters.$or) {
+        filters.$and = [{ $or: filters.$or }, { $or: searchOr }];
+        delete filters.$or;
+      } else {
+        filters.$or = searchOr;
+      }
+    }
+
+    const allowedSortFields = [
+      'createdAt',
+      'updatedAt',
+      'finalTotalPrice',
+      'totalQuantity',
+      'overallStatus',
+    ];
+    let sortField = query.sortBy || query.sort || 'createdAt';
+    if (!allowedSortFields.includes(sortField)) {
+      sortField = 'createdAt';
+    }
+
+    const sortOrder = query.sortOrder || query.order || 'desc';
+
+    const paginatedResult = await this.orderGroupRepository.findManyPaginated({
+      filters,
+      skip,
+      limit: pageSize,
+      sort: sortField,
+      order: sortOrder,
+      populationArray: [
+        { path: 'userId', select: '-password' },
+        {
+          path: 'orderIds',
+          populate: [{ path: 'restaurantId' }],
+        },
+      ],
+    });
+
+    const formattedData = await Promise.all(
+      (paginatedResult.items || []).map((group) =>
+        this.formatOrderGroup(group),
+      ),
+    );
+
+    const totalItems = paginatedResult.total;
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
+    const hasNextPage = currentPage < totalPages;
+    const hasPreviousPage = currentPage > 1;
+
+    return {
+      data: formattedData,
+      totalItems,
+      totalPages,
+      currentPage,
+      pageSize,
+      hasNextPage,
+      hasPreviousPage,
+    };
   }
 
   async getRestaurantOrders(
