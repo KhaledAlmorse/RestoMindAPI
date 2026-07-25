@@ -198,7 +198,6 @@ export class OrdersService {
     return {
       _id: group._id.toString(),
       groupOrderId: group._id.toString(),
-      orderGroupId: group._id.toString(),
       userId: formattedUserId,
       fullName: group.fullName,
       phoneNumber: group.phoneNumber,
@@ -213,6 +212,163 @@ export class OrdersService {
       totalDiscount,
       finalTotalPrice,
       totalQuantity,
+      updatedAt: group.updatedAt || group.createdAt,
+    };
+  }
+
+  private async formatCustomerOrderGroup(group: any) {
+    let childOrders = group.orderIds || group.restaurantOrderIds || [];
+
+    const isUnpopulated =
+      !childOrders.length ||
+      childOrders.some(
+        (sub: any) =>
+          !sub ||
+          typeof sub !== 'object' ||
+          !sub._id ||
+          typeof sub.status === 'undefined',
+      );
+
+    if (isUnpopulated && group._id) {
+      const fetchedChildOrders = await this.orderRepository.findMany({
+        filters: { groupOrderId: group._id },
+        populationArray: [{ path: 'restaurantId' }],
+      });
+      if (fetchedChildOrders && fetchedChildOrders.length > 0) {
+        childOrders = fetchedChildOrders;
+      }
+    }
+
+    const overallStatus = this.computeOverallStatus(childOrders);
+
+    const validChildOrders = childOrders.filter(
+      (sub: any) => sub && typeof sub === 'object' && sub._id,
+    );
+
+    const formattedOrders: any[] = [];
+    let computedOriginalPrice = 0;
+    let computedDiscount = 0;
+    let computedTotalPrice = 0;
+    let computedQuantity = 0;
+
+    for (const sub of validChildOrders) {
+      const restaurant = sub.restaurantId;
+      const subRestaurantId = restaurant?._id
+        ? restaurant._id.toString()
+        : restaurant?.toString() || '';
+      const subRestaurantName =
+        restaurant?.name ||
+        restaurant?.restaurantName ||
+        restaurant?.title ||
+        sub.restaurantName ||
+        '';
+
+      const restaurantObj = {
+        _id: subRestaurantId,
+        name: subRestaurantName,
+      };
+
+      const subOrderItems: any[] = [];
+      let subOrigPrice = 0;
+      let subDiscPrice = 0;
+      let subFinalPrice = 0;
+      let subQty = 0;
+
+      for (const item of sub.items || []) {
+        const pId = item.productId?._id
+          ? item.productId._id.toString()
+          : item.productId?.toString() || item.productId || '';
+        const oId = item.offerId?._id
+          ? item.offerId._id.toString()
+          : item.offerId?.toString() || item.offerId || '';
+        const title = item.productTitle || item.title || '';
+        const origPrice = item.originalPrice ?? item.price ?? 0;
+        const offPrice = item.offerPrice ?? item.discountedPrice ?? 0;
+        const qty = item.quantity ?? 1;
+        const lineTot = item.lineTotal ?? offPrice * qty;
+        const discPct = item.discountPercentage ?? 0;
+        const img = item.productImage || item.image || '';
+
+        const subItemObj: any = {
+          productId: pId,
+          title: title,
+          price: origPrice,
+          discountedPrice: offPrice,
+          quantity: qty,
+        };
+        if (oId) subItemObj.offerId = oId;
+        if (discPct) subItemObj.discountPercentage = discPct;
+        if (img) subItemObj.productImage = img;
+
+        subOrderItems.push(subItemObj);
+
+        subOrigPrice += origPrice * qty;
+        subFinalPrice += lineTot;
+        subQty += qty;
+      }
+
+      subDiscPrice = Math.max(0, subOrigPrice - subFinalPrice);
+
+      formattedOrders.push({
+        orderId: sub._id.toString(),
+        restaurant: restaurantObj,
+        status: sub.status || 'Pending',
+        items: subOrderItems,
+        totalOriginalPrice: sub.totalOriginalPrice ?? subOrigPrice,
+        totalDiscount: sub.totalDiscount ?? subDiscPrice,
+        finalTotalPrice: sub.finalTotalPrice ?? subFinalPrice,
+        totalQuantity: sub.totalQuantity ?? subQty,
+        createdAt: sub.createdAt || group.createdAt,
+      });
+
+      computedOriginalPrice += subOrigPrice;
+      computedDiscount += subDiscPrice;
+      computedTotalPrice += subFinalPrice;
+      computedQuantity += subQty;
+    }
+
+    let formattedUserId: string = '';
+    if (group.userId?._id) {
+      formattedUserId = group.userId._id.toString();
+    } else if (typeof group.userId === 'object' && group.userId) {
+      formattedUserId =
+        group.userId._id?.toString() ||
+        group.userId.id ||
+        group.userId.toString();
+    } else if (group.userId) {
+      formattedUserId = group.userId.toString();
+    }
+
+    const totalOriginalPrice = validChildOrders.length
+      ? computedOriginalPrice
+      : (group.totalOriginalPrice ?? 0);
+    const totalDiscount = validChildOrders.length
+      ? computedDiscount
+      : (group.totalDiscount ?? 0);
+    const finalTotalPrice = validChildOrders.length
+      ? computedTotalPrice
+      : (group.finalTotalPrice ?? 0);
+    const totalQuantity = validChildOrders.length
+      ? computedQuantity
+      : (group.totalQuantity ?? 0);
+
+    return {
+      _id: group._id.toString(),
+      groupOrderId: group._id.toString(),
+      userId: formattedUserId,
+      fullName: group.fullName,
+      phoneNumber: group.phoneNumber,
+      emailAddress: group.emailAddress,
+      deliveryMethod: group.deliveryMethod,
+      deliveryAddress: group.deliveryAddress,
+      paymentMethod: group.paymentMethod,
+      specialNotes: group.specialNotes,
+      overallStatus,
+      totalOriginalPrice,
+      totalDiscount,
+      finalTotalPrice,
+      totalQuantity,
+      orders: formattedOrders,
       createdAt: group.createdAt,
       updatedAt: group.updatedAt || group.createdAt,
     };
@@ -579,7 +735,7 @@ export class OrdersService {
       ],
     });
 
-    return { data: await this.formatOrderGroup(populatedGroup) };
+    return { data: await this.formatCustomerOrderGroup(populatedGroup) };
   }
 
   async getMyOrders(userId: string, query: QueryMyOrdersDto | string = {}) {
@@ -665,7 +821,9 @@ export class OrdersService {
     const hasPreviousPage = currentPage > 1;
 
     const formattedGroups = await Promise.all(
-      (paginatedResult.items || []).map((g) => this.formatOrderGroup(g)),
+      (paginatedResult.items || []).map((g) =>
+        this.formatCustomerOrderGroup(g),
+      ),
     );
 
     return {
@@ -690,7 +848,7 @@ export class OrdersService {
     let group = await this.orderGroupRepository.findOne({
       filters: {
         _id: targetId,
-        userId: userObjId,
+        $or: [{ userId: userObjId }, { userId }],
       },
       populationArray: [
         {
@@ -704,7 +862,7 @@ export class OrdersService {
     if (!group) {
       group = await this.orderGroupRepository.findOne({
         filters: {
-          userId: userObjId,
+          $or: [{ userId: userObjId }, { userId }],
           orderIds: targetId,
         },
         populationArray: [
@@ -720,7 +878,7 @@ export class OrdersService {
       throw new NotFoundException('Checkout details not found');
     }
 
-    return { data: await this.formatOrderGroup(group) };
+    return { data: await this.formatCustomerOrderGroup(group) };
   }
 
   async getOrderGroupById(id: string, currentUser?: UserType | string) {
@@ -1100,9 +1258,208 @@ export class OrdersService {
 
   async updateOrderStatus(id: string, status: string, currentUser?: UserType) {
     this.validateObjectId(id);
+    const targetObjId = new Types.ObjectId(id);
+
+    // 1. Check if target ID is an OrderGroup
+    const group = await this.orderGroupRepository.findOne({
+      filters: { _id: targetObjId },
+      populationArray: [
+        {
+          path: 'orderIds',
+          populate: [{ path: 'restaurantId' }],
+        },
+      ],
+    });
+
+    if (group) {
+      let childOrders: any[] = (group.orderIds as any[]) || [];
+      const isUnpopulated =
+        !childOrders.length ||
+        childOrders.some(
+          (sub: any) => !sub || typeof sub !== 'object' || !sub._id,
+        );
+
+      if (isUnpopulated) {
+        childOrders =
+          (await this.orderRepository.findMany({
+            filters: { groupOrderId: group._id },
+          })) || [];
+      }
+
+      let targetChildOrders = childOrders;
+      if (currentUser && currentUser.role === RolesEnum.MANAGER) {
+        if (!currentUser.restaurantId) {
+          throw new ForbiddenException(
+            'Manager is not assigned to a restaurant',
+          );
+        }
+        const managerRestId = currentUser.restaurantId.toString();
+        targetChildOrders = childOrders.filter((sub: any) => {
+          const restId = sub?.restaurantId?._id
+            ? sub.restaurantId._id.toString()
+            : sub?.restaurantId?.toString() || sub?.restaurantId;
+          return restId === managerRestId;
+        });
+
+        if (targetChildOrders.length === 0) {
+          throw new ForbiddenException(
+            'You can only update status of orders belonging to your own restaurant',
+          );
+        }
+      }
+
+      for (const childOrder of targetChildOrders) {
+        if (
+          childOrder.status === 'Delivered' ||
+          childOrder.status === 'Cancelled'
+        ) {
+          if (childOrder.status === status) continue;
+        }
+
+        await this.orderRepository.update({
+          filters: { _id: childOrder._id },
+          body: { status } as any,
+        });
+
+        if (status === 'Delivered') {
+          try {
+            for (const item of childOrder.items || []) {
+              let promotionActive = false;
+              let featured = false;
+
+              if (item.offerId) {
+                const offerId = (item.offerId as any)._id || item.offerId;
+                const offer = await this.offerRepository.findOne({
+                  filters: { _id: offerId },
+                });
+                if (offer) {
+                  promotionActive =
+                    offer.status === OfferStatusEnum.ACTIVE ||
+                    offer.discountPercentage > 0;
+                  featured = !!offer.featured;
+                } else if (item.discountPercentage > 0) {
+                  promotionActive = true;
+                }
+              } else if (item.discountPercentage > 0) {
+                promotionActive = true;
+              }
+
+              const existingTx = await this.salesTransactionRepository.findOne({
+                filters: {
+                  orderId: childOrder._id,
+                  productId: item.productId,
+                },
+              });
+              if (existingTx) continue;
+
+              await this.salesTransactionRepository.create({
+                restaurantId:
+                  childOrder.restaurantId?._id || childOrder.restaurantId,
+                productId: item.productId,
+                date: item.purchasedAt || childOrder.createdAt || new Date(),
+                quantitySold: item.quantity,
+                basePrice: item.originalPrice,
+                sellingPrice: item.offerPrice,
+                promotionActive,
+                featured,
+                stockoutMinutes: 0,
+                cancelledOrders: 0,
+                returnedOrders: 0,
+                salesChannel: 'marketplace',
+                source: SalesSourceEnum.MARKETPLACE_ORDER,
+                orderId: childOrder._id,
+              });
+            }
+          } catch (err: any) {
+            this.logger.warn(
+              `Failed to sync sales transaction for order ${childOrder._id}: ${err.message}`,
+            );
+          }
+        }
+
+        if (status === 'Cancelled') {
+          const now = new Date();
+          for (const item of childOrder.items || []) {
+            if (!item.offerId) continue;
+            const offerId = item.offerId._id || item.offerId;
+            const quantity = item.quantity;
+            const lineTotal = item.lineTotal || 0;
+
+            await this.offerRepository.update({
+              filters: { _id: offerId },
+              body: { $inc: { remainingQuantity: quantity } } as any,
+            });
+
+            const updatedOffer = await this.offerRepository.findOne({
+              filters: { _id: offerId },
+            });
+
+            if (
+              updatedOffer &&
+              updatedOffer.status === OfferStatusEnum.SOLD_OUT &&
+              updatedOffer.remainingQuantity > 0 &&
+              now >= updatedOffer.startDate &&
+              now <= updatedOffer.endDate
+            ) {
+              await this.offerRepository.update({
+                filters: { _id: offerId },
+                body: { status: OfferStatusEnum.ACTIVE } as any,
+              });
+            }
+
+            if (updatedOffer && updatedOffer.recommendationId) {
+              await this.offerRepository.update({
+                filters: { _id: offerId },
+                body: {
+                  $inc: {
+                    actualUnitsSold: -quantity,
+                    actualRevenueRecovered: -lineTotal,
+                  },
+                } as any,
+              });
+            }
+          }
+        }
+      }
+
+      const allSiblingOrders = await this.orderRepository.findMany({
+        filters: { groupOrderId: group._id },
+      });
+      const newOverallStatus = this.computeOverallStatus(
+        allSiblingOrders || [],
+      );
+
+      await this.orderGroupRepository.update({
+        filters: { _id: group._id },
+        body: { overallStatus: newOverallStatus } as any,
+      });
+
+      const updatedGroup = await this.orderGroupRepository.findOne({
+        filters: { _id: group._id },
+        populationArray: [
+          { path: 'userId', select: '-password' },
+          {
+            path: 'orderIds',
+            populate: [{ path: 'restaurantId' }],
+          },
+        ],
+      });
+
+      return {
+        data:
+          currentUser?.role === RolesEnum.MANAGER && currentUser.restaurantId
+            ? await this.formatOrderGroup(
+                updatedGroup,
+                currentUser.restaurantId.toString(),
+              )
+            : await this.formatOrderGroup(updatedGroup),
+      };
+    }
+
+    // 2. Single child order fallback
     const order = await this.orderRepository.findOne({ filters: { _id: id } });
     if (!order) {
-      throw new NotFoundException('Order not found');
+      throw new NotFoundException('Order or OrderGroup not found');
     }
 
     if (currentUser && currentUser.role === RolesEnum.MANAGER) {
@@ -1127,7 +1484,6 @@ export class OrdersService {
       body: { status } as any,
     });
 
-    // Sales History sync side effect if status transitions to Delivered
     if (status === 'Delivered') {
       try {
         for (const item of order.items || []) {
@@ -1154,9 +1510,7 @@ export class OrdersService {
           const existingTx = await this.salesTransactionRepository.findOne({
             filters: { orderId: order._id, productId: item.productId },
           });
-          if (existingTx) {
-            continue;
-          }
+          if (existingTx) continue;
 
           await this.salesTransactionRepository.create({
             restaurantId: order.restaurantId,
@@ -1182,7 +1536,6 @@ export class OrdersService {
       }
     }
 
-    // Inventory restoration side effect if status transitions to Cancelled
     if (status === 'Cancelled') {
       const now = new Date();
       for (const item of order.items || []) {
@@ -1191,15 +1544,11 @@ export class OrdersService {
         const quantity = item.quantity;
         const lineTotal = item.lineTotal || 0;
 
-        // Atomically increment remainingQuantity
         await this.offerRepository.update({
           filters: { _id: offerId },
-          body: {
-            $inc: { remainingQuantity: quantity },
-          } as any,
+          body: { $inc: { remainingQuantity: quantity } } as any,
         });
 
-        // Reactivate offer if sold_out and within active date window
         const updatedOffer = await this.offerRepository.findOne({
           filters: { _id: offerId },
         });
@@ -1217,7 +1566,6 @@ export class OrdersService {
           });
         }
 
-        // Reverse AI recommendation statistics
         if (updatedOffer && updatedOffer.recommendationId) {
           await this.offerRepository.update({
             filters: { _id: offerId },
@@ -1232,7 +1580,6 @@ export class OrdersService {
       }
     }
 
-    // Recompute and persist parent OrderGroup's overallStatus
     if (order.groupOrderId) {
       const siblingOrders = await this.orderRepository.findMany({
         filters: { groupOrderId: order.groupOrderId },

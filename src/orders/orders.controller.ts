@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Query,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
@@ -112,16 +113,37 @@ export class OrdersController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Patch(':id/status')
+  @Patch('status')
   @Auth('admin', 'manager')
-  async updateOrderStatus(
-    @Param('id') id: string,
+  async updateOrderStatusByQuery(
+    @Query('groupOrderId') groupOrderId: string,
     @Body() body: UpdateOrderStatusDto,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
+    if (!groupOrderId) {
+      throw new BadRequestException('groupOrderId query parameter is required');
+    }
     const result = await this.ordersService.updateOrderStatus(
-      id,
+      groupOrderId,
+      body.status,
+      user.user,
+    );
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Patch(':id/status')
+  @Auth('admin', 'manager')
+  async updateOrderStatus(
+    @Param('id') id: string,
+    @Query('groupOrderId') queryGroupOrderId: string,
+    @Body() body: UpdateOrderStatusDto,
+    @AuthUser() user: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const targetId = queryGroupOrderId || id;
+    const result = await this.ordersService.updateOrderStatus(
+      targetId,
       body.status,
       user.user,
     );

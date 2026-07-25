@@ -132,7 +132,7 @@ describe('OrdersService', () => {
       expect(data).toBeDefined();
       expect(Array.isArray(data)).toBe(true);
       expect(data.length).toBe(1);
-      expect(data[0].orderGroupId).toBe(group1Id.toString());
+      expect(data[0].groupOrderId).toBe(group1Id.toString());
       expect(result.totalItems).toBe(1);
       expect(result.totalPages).toBe(1);
       expect(result.currentPage).toBe(1);
@@ -258,7 +258,7 @@ describe('OrdersService', () => {
       expect(Array.isArray(result.data)).toBe(true);
       expect(result.data.length).toBe(1);
       const groupDoc = (result.data as any)[0];
-      expect(groupDoc.orderGroupId).toBe(mockGroupId.toString());
+      expect(groupDoc.groupOrderId).toBe(mockGroupId.toString());
       expect(groupDoc.userId._id.toString()).toBe(mockUserId.toString());
       expect(groupDoc.items.length).toBe(3);
       expect(groupDoc.items[0].restaurantName).toBe('restaurant_For_Manager1');
