@@ -12,5 +12,8 @@ export * from './offer.model';
 export * from './ingredient.model';
 export * from './recipe.model';
 export * from './sales-transaction.model';
-
-
+export * from './inventory-batch.model';
+export * from './stock-transaction.model';
+export * from './waste-event.model';
+export * from './supplier.model';
+export * from './purchase-order.model';
