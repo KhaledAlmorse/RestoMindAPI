@@ -127,8 +127,7 @@ export class OrdersService {
         const itemRestId = item.restaurantId?._id
           ? item.restaurantId._id.toString()
           : item.restaurantId?.toString() || subRestaurantId;
-        const itemRestName =
-          item.restaurantName || subRestaurantName || '';
+        const itemRestName = item.restaurantName || subRestaurantName || '';
 
         const origPrice = item.originalPrice ?? item.price ?? 0;
         const offPrice = item.offerPrice ?? item.discountedPrice ?? 0;
@@ -1328,7 +1327,7 @@ export class OrdersService {
               let featured = false;
 
               if (item.offerId) {
-                const offerId = (item.offerId as any)._id || item.offerId;
+                const offerId = item.offerId._id || item.offerId;
                 const offer = await this.offerRepository.findOne({
                   filters: { _id: offerId },
                 });
