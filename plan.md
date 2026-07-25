@@ -77,52 +77,59 @@ _`sales_transactions` model active. Completed marketplace orders (`Delivered`) a
 
 ---
 
-## Phase 3 — Inventory, Batches, Waste Events, Suppliers & Purchase Orders
+## Phase 3 — Inventory, Stock, Waste Events, Suppliers & Purchase Orders
 
-**Primary Role in AI Pipeline:** Provides stock availability, expiration dates, unit costs, and incoming purchase orders needed for **Weekly Supplier Planning (Secondary Flow)** and **Phase 6 Waste Risk Formulas** (`usableAvailableStock = sum(batches where expiryDate > targetDate)`).
+### Endpoints to implement
 
-### Endpoints to Implement
+| Method | Endpoint                       | Roles     |
+| ------ | ------------------------------ | --------- |
+| POST   | `/inventory/batches`           | `manager` |
+| GET    | `/inventory/batches`           | `manager` |
+| POST   | `/inventory/transactions`      | `manager` |
+| GET    | `/inventory/transactions`      | `manager` |
+| POST   | `/inventory/waste-events`      | `manager` |
+| GET    | `/inventory/waste-events`      | `manager` |
+| POST   | `/suppliers`                   | `manager` |
+| GET    | `/suppliers`                   | `manager` |
+| POST   | `/purchase-orders`             | `manager` |
+| GET    | `/purchase-orders`             | `manager` |
+| PATCH  | `/purchase-orders/:id/receive` | `manager` |
 
-| Method | Endpoint                       | Roles     | Description                                                                  |
-| ------ | ------------------------------ | --------- | ---------------------------------------------------------------------------- |
-| POST   | `/inventory/batches`           | `manager` | Create stock batch with expiry date & unit cost                              |
-| GET    | `/inventory/batches`           | `manager` | List batches (filterable by `ingredientId`, `expiringBefore`)                |
-| POST   | `/inventory/transactions`      | `manager` | Record stock transactions (`purchase`, `consumption`, `waste`, `adjustment`) |
-| GET    | `/inventory/transactions`      | `manager` | Query transaction ledger                                                     |
-| POST   | `/inventory/waste-events`      | `manager` | Log detailed waste events (`wasteReason`, `estimatedCost`)                   |
-| GET    | `/inventory/waste-events`      | `manager` | Query waste events for reporting                                             |
-| POST   | `/suppliers`                   | `manager` | Create supplier record (`leadTimeDays`, `contactInfo`)                       |
-| GET    | `/suppliers`                   | `manager` | List suppliers                                                               |
-| POST   | `/purchase-orders`             | `manager` | Draft or send purchase order (fed by Weekly AI Forecasts)                    |
-| GET    | `/purchase-orders`             | `manager` | List purchase orders                                                         |
-| PATCH  | `/purchase-orders/:id/receive` | `manager` | Receive PO → auto-creates `inventory_batches`                                |
+### Models
 
-### Database Models Required
+- **New:** `inventory-batch.model.ts` — `restaurantId, ingredientId, batchNumber, quantityRemaining, unitCost, expiryDate, receivedDate`.
+- **New:** `stock-transaction.model.ts` — `restaurantId, ingredientId, batchId?, transactionType (purchase|consumption|waste|adjustment|transfer_in|transfer_out|return_to_supplier), quantity, unit, date`.
+- **New:** `waste-event.model.ts` — `restaurantId, ingredientId, batchId?, quantity, unit, wasteReason (expired|overproduction|preparation_loss|spoiled|customer_return|damaged|incorrect_order|unknown), estimatedCost, date`.
+- **New:** `supplier.model.ts` — `restaurantId, name, contactInfo, leadTimeDays`.
+- **New:** `purchase-order.model.ts` — `restaurantId, supplierId, items: [{ ingredientId, quantity, unit, unitCost }], status (draft|sent|received|cancelled), expectedDeliveryDate, createdBy`.
 
-```typescript
-// inventory-batch.model.ts
-_id                ObjectId
-restaurantId       ObjectId → Restaurant         required (index)
-ingredientId       ObjectId → Ingredient         required (index)
-batchNumber        String                        required
-quantityRemaining  Number                        required (min 0)
-unitCost           Number                        required
-expiryDate         Date                          required (index for AI waste formula)
-receivedDate       Date                          default Date.now
+### Services / validation
 
-// waste-event.model.ts
-_id                ObjectId
-restaurantId       ObjectId → Restaurant         required (index)
-ingredientId       ObjectId → Ingredient         required
-batchId            ObjectId → InventoryBatch     optional
-quantity           Number                        required
-unit               String                        required
-wasteReason        expired|overproduction|prep_loss|spoiled|damaged|other  required
-estimatedCost      Number                        required
-date               Date                          default Date.now (index)
-```
+- `PATCH /purchase-orders/:id/receive` creates the corresponding `inventory_batches` row(s) — this is the one endpoint in this phase with a side effect on another new collection (both new this phase, so lower risk than Phase 2's Orders touch-point, but still test the two together).
+- `POST /inventory/transactions` of type `waste` should also allow (not require) linking a `waste-event` for the fuller reason/cost detail — decide whether these are the same write or two related writes; recommend two writes (a generic ledger row + an optional detailed waste-event) rather than overloading one collection with optional reason fields, consistent with the target schema design.
 
----
+### Dependency check
+
+- Requires `ingredients` (Phase 1). No dependency on Phase 2's sales data.
+
+### Non-breaking guarantee
+
+- Entirely new collections and new routes — no existing endpoint is modified in this phase. Confirm none of the new route paths collide with existing ones (they don't, per the list above).
+
+### Checklist
+
+- [ ] All 5 new models implemented with soft-delete/timestamps matching existing conventions
+- [ ] `purchase-orders/:id/receive` correctly creates batch(es) and is tested together with `POST /inventory/batches`
+- [ ] Existing modules (Products, Orders, Restaurants) untouched — quick regression pass
+
+### Testing (Postman)
+
+1. Create a supplier, then a purchase order referencing 2 ingredients from Phase 1.
+2. Mark it received (`PATCH /purchase-orders/:id/receive`) — confirm matching `inventory_batches` rows appear.
+3. Record a manual purchase and a manual waste transaction via `POST /inventory/transactions`.
+4. Record a detailed waste event via `POST /inventory/waste-events` and confirm it's queryable by `wasteReason`.
+
+**⏸ STOP — confirm Phase 3 works before continuing.**
 
 ## Phase 4 — Import Center (CSV Upload Pipeline & AI Auto-Ingest)
 
