@@ -50,3 +50,32 @@ export enum OrderStatusEnum {
   DELIVERED = 'Delivered',
   CANCELLED = 'Cancelled',
 }
+
+export enum StockTransactionTypeEnum {
+  PURCHASE = 'purchase',
+  CONSUMPTION = 'consumption',
+  WASTE = 'waste',
+  ADJUSTMENT = 'adjustment',
+  TRANSFER_IN = 'transfer_in',
+  TRANSFER_OUT = 'transfer_out',
+  RETURN_TO_SUPPLIER = 'return_to_supplier',
+}
+
+export enum WasteReasonEnum {
+  EXPIRED = 'expired',
+  OVERPRODUCTION = 'overproduction',
+  PREPARATION_LOSS = 'preparation_loss',
+  SPOILED = 'spoiled',
+  CUSTOMER_RETURN = 'customer_return',
+  DAMAGED = 'damaged',
+  INCORRECT_ORDER = 'incorrect_order',
+  UNKNOWN = 'unknown',
+}
+
+export enum PurchaseOrderStatusEnum {
+  DRAFT = 'draft',
+  SENT = 'sent',
+  RECEIVED = 'received',
+  CANCELLED = 'cancelled',
+}
+

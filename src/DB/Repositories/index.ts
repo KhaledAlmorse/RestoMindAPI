@@ -12,5 +12,8 @@ export * from './offer.repository';
 export * from './ingredient.repository';
 export * from './recipe.repository';
 export * from './sales-transaction.repository';
-
-
+export * from './inventory-batch.repository';
+export * from './stock-transaction.repository';
+export * from './waste-event.repository';
+export * from './supplier.repository';
+export * from './purchase-order.repository';
