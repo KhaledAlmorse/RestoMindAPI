@@ -35,6 +35,16 @@ export abstract class BaseService<TDocument extends Document> {
     return await this.model.create(document);
   }
 
+  async createMany(documents: Partial<TDocument>[]): Promise<TDocument[]> {
+    return (await this.model.insertMany(documents as any)) as unknown as TDocument[];
+  }
+
+  async findOneAndUpdate(options: { filters: any; updateData: any }): Promise<TDocument | null> {
+    return await this.model
+      .findOneAndUpdate(options.filters, options.updateData, { new: true })
+      .exec();
+  }
+
   async findOne(options: findOneOptions<TDocument>): Promise<TDocument | null> {
     return await this.model
       .findOne(options.filters)

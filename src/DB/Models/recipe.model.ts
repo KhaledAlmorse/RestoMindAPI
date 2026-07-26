@@ -28,7 +28,7 @@ export class Recipe {
   @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true })
   restaurantId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Product', required: true, unique: true })
+  @Prop({ type: Types.ObjectId, ref: 'Product', required: true })
   productId!: Types.ObjectId;
 
   @Prop({ type: [RecipeIngredientSchema], required: true, default: [] })

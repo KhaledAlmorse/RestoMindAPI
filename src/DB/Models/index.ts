@@ -17,3 +17,5 @@ export * from './stock-transaction.model';
 export * from './waste-event.model';
 export * from './supplier.model';
 export * from './purchase-order.model';
+export * from './import-job.model';
+

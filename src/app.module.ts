@@ -18,6 +18,7 @@ import { SalesModule } from './sales/sales.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
+import { ImportsModule } from './imports/imports.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
     InventoryModule,
     SuppliersModule,
     PurchaseOrdersModule,
+    ImportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

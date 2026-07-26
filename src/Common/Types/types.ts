@@ -79,3 +79,19 @@ export enum PurchaseOrderStatusEnum {
   CANCELLED = 'cancelled',
 }
 
+export enum ImportTypeEnum {
+  SALES_HISTORY = 'sales_history',
+  INVENTORY_TRANSACTIONS = 'inventory_transactions',
+  RECIPES = 'recipes',
+  MENU_ITEMS = 'menu_items',
+  INGREDIENTS = 'ingredients',
+}
+
+export enum ImportJobStatusEnum {
+  PROCESSING = 'processing',
+  VALIDATED = 'validated',
+  AI_INGEST_PENDING = 'ai_ingest_pending',
+  AI_INGEST_FAILED = 'ai_ingest_failed',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+}

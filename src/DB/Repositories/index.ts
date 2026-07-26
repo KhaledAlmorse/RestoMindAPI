@@ -17,3 +17,5 @@ export * from './stock-transaction.repository';
 export * from './waste-event.repository';
 export * from './supplier.repository';
 export * from './purchase-order.repository';
+export * from './import-job.repository';
+

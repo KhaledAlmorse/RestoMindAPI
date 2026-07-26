@@ -50,6 +50,9 @@ export class SalesTransaction {
   @Prop({ type: Types.ObjectId, ref: 'ImportJob', default: null })
   importJobId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Offer', default: null })
+  offerId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'Order', default: null })
   orderId?: Types.ObjectId;
 
@@ -63,6 +66,7 @@ SalesTransactionSchema.index({ restaurantId: 1, date: -1 });
 SalesTransactionSchema.index({ productId: 1, date: -1 });
 SalesTransactionSchema.index({ restaurantId: 1, productId: 1, date: -1 });
 SalesTransactionSchema.index({ source: 1 });
+SalesTransactionSchema.index({ offerId: 1 });
 SalesTransactionSchema.index({ orderId: 1 });
 SalesTransactionSchema.index(
   { orderId: 1, productId: 1 },
