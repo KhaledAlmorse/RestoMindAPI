@@ -10,6 +10,7 @@ import {
   IngredientRepository,
   RecipeRepository,
   RestaurantRepository,
+  SupplierRepository,
   UserRepository,
 } from 'src/DB/Repositories';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
@@ -23,6 +24,7 @@ export class IngredientsService {
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly recipeRepository: RecipeRepository,
+    private readonly supplierRepository: SupplierRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -76,6 +78,23 @@ export class IngredientsService {
       );
     }
 
+    let supplierObjectId: Types.ObjectId | null = null;
+    if (dto.supplierId) {
+      this.validateObjectId(dto.supplierId);
+      const supplier = await this.supplierRepository.findOne({
+        filters: {
+          _id: new Types.ObjectId(dto.supplierId),
+          restaurantId,
+          isDeleted: false,
+        },
+      });
+
+      if (!supplier) {
+        throw new NotFoundException('Supplier not found in your restaurant');
+      }
+      supplierObjectId = new Types.ObjectId(dto.supplierId);
+    }
+
     const ingredient = await this.ingredientRepository.create({
       restaurantId,
       ingredientCode: dto.ingredientCode.trim(),
@@ -84,6 +103,7 @@ export class IngredientsService {
       shelfLifeDays: dto.shelfLifeDays,
       minimumStock: dto.minimumStock ?? 0,
       safetyStock: dto.safetyStock ?? 0,
+      supplierId: supplierObjectId,
     } as any);
 
     return { data: ingredient };
@@ -179,10 +199,27 @@ export class IngredientsService {
       }
     }
 
+    if (dto.supplierId) {
+      this.validateObjectId(dto.supplierId);
+      const supplier = await this.supplierRepository.findOne({
+        filters: {
+          _id: new Types.ObjectId(dto.supplierId),
+          restaurantId,
+          isDeleted: false,
+        },
+      });
+
+      if (!supplier) {
+        throw new NotFoundException('Supplier not found in your restaurant');
+      }
+    }
+
     const updateBody: Record<string, any> = { ...dto };
     if (dto.ingredientCode)
       updateBody.ingredientCode = dto.ingredientCode.trim();
     if (dto.name) updateBody.name = dto.name.trim();
+    if (dto.supplierId)
+      updateBody.supplierId = new Types.ObjectId(dto.supplierId);
 
     const updated = await this.ingredientRepository.update({
       filters: { _id: new Types.ObjectId(id) },

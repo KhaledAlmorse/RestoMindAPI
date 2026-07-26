@@ -20,6 +20,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { ImportsModule } from './imports/imports.module';
 import { ProductionPlanningModule } from './production-planning/production-planning.module';
+import { WeeklyPredictionModule } from './weekly-prediction/weekly-prediction.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { ProductionPlanningModule } from './production-planning/production-plann
     PurchaseOrdersModule,
     ImportsModule,
     ProductionPlanningModule,
+    WeeklyPredictionModule,
   ],
 
   controllers: [AppController],

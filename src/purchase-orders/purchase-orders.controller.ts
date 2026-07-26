@@ -18,9 +18,7 @@ import type { IAuthUser } from 'src/Common/Types';
 
 @Controller('purchase-orders')
 export class PurchaseOrdersController {
-  constructor(
-    private readonly purchaseOrdersService: PurchaseOrdersService,
-  ) {}
+  constructor(private readonly purchaseOrdersService: PurchaseOrdersService) {}
 
   @Post()
   @Auth('manager')

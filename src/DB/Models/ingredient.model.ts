@@ -29,6 +29,9 @@ export class Ingredient {
   @Prop({ type: Number, default: 0, min: 0 })
   safetyStock!: number;
 
+  @Prop({ type: Types.ObjectId, ref: 'Supplier', default: null })
+  supplierId?: Types.ObjectId;
+
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
 

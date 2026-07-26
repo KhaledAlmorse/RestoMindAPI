@@ -1,6 +1,6 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { IngredientUnitEnum, PurchaseOrderStatusEnum } from 'src/Common/Types';
+import { IngredientUnitEnum, PurchaseOrderStatusEnum, PurchaseOrderSourceEnum } from 'src/Common/Types';
 
 @Schema({ _id: false })
 export class PurchaseOrderItem {
@@ -42,6 +42,13 @@ export class PurchaseOrder {
     default: PurchaseOrderStatusEnum.DRAFT,
   })
   status!: PurchaseOrderStatusEnum;
+
+  @Prop({
+    type: String,
+    enum: Object.values(PurchaseOrderSourceEnum),
+    default: PurchaseOrderSourceEnum.MANUAL,
+  })
+  source?: PurchaseOrderSourceEnum;
 
   @Prop({ type: Date, default: null })
   expectedDeliveryDate?: Date;

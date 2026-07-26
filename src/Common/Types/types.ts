@@ -101,9 +101,20 @@ export enum ProductionPlanSourceEnum {
   FALLBACK_YESTERDAY = 'fallback_yesterday',
 }
 
+export enum PredictionSourceEnum {
+  AI_MODEL = 'ai_model',
+  FALLBACK_NAIVE = 'fallback_naive',
+}
+
+export enum PurchaseOrderSourceEnum {
+  MANUAL = 'manual',
+  AI_FORECAST = 'ai_forecast',
+}
+
 export enum ConfidenceLevelEnum {
   HIGH = 'high',
   MEDIUM = 'medium',
   LOW = 'low',
 }
+
 

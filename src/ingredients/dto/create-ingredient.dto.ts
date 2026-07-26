@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -39,4 +40,8 @@ export class CreateIngredientDto {
   @IsNumber()
   @Min(0)
   safetyStock?: number;
+
+  @IsOptional()
+  @IsMongoId()
+  supplierId?: string;
 }
