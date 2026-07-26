@@ -95,3 +95,15 @@ export enum ImportJobStatusEnum {
   COMPLETED = 'completed',
   FAILED = 'failed',
 }
+
+export enum ProductionPlanSourceEnum {
+  AI_MODEL = 'ai_model',
+  FALLBACK_YESTERDAY = 'fallback_yesterday',
+}
+
+export enum ConfidenceLevelEnum {
+  HIGH = 'high',
+  MEDIUM = 'medium',
+  LOW = 'low',
+}
+

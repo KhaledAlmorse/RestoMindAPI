@@ -18,4 +18,6 @@ export * from './waste-event.repository';
 export * from './supplier.repository';
 export * from './purchase-order.repository';
 export * from './import-job.repository';
+export * from './daily-production-plan.repository';
+
 
