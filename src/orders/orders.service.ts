@@ -804,7 +804,7 @@ export class OrdersService {
       // Restore inventory and update offer metrics
       for (const item of childOrder.items || []) {
         if (!item.offerId) continue;
-        const offerId = (item.offerId as any)._id || item.offerId;
+        const offerId = item.offerId?._id || item.offerId;
         const quantity = item.quantity;
         const lineTotal = item.lineTotal || 0;
 

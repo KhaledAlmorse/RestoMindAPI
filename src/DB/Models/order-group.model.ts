@@ -6,6 +6,8 @@ import {
   Schema as MongooseSchema,
 } from 'mongoose';
 
+import { OrderStatusEnum } from 'src/Common/Types';
+
 @Schema({ timestamps: true })
 export class OrderGroup {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
@@ -73,8 +75,12 @@ export class OrderGroup {
   @Prop({ type: Number, required: true })
   totalQuantity!: number;
 
-  @Prop({ type: String, default: 'Pending' })
-  overallStatus!: string;
+  @Prop({
+    type: String,
+    enum: Object.values(OrderStatusEnum),
+    default: OrderStatusEnum.PENDING,
+  })
+  overallStatus!: OrderStatusEnum;
 }
 
 const OrderGroupSchema = SchemaFactory.createForClass(OrderGroup);

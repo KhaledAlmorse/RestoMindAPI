@@ -134,7 +134,7 @@ export class Order {
     default: OrderStatusEnum.PENDING,
     required: true,
   })
-  status!: string;
+  status!: OrderStatusEnum;
 }
 
 const OrderSchema = SchemaFactory.createForClass(Order);

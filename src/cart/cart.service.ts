@@ -10,7 +10,7 @@ import {
 } from 'src/DB/Repositories';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 import { isValidObjectId, Types } from 'mongoose';
-import { OfferStatusEnum } from 'src/Common/Types';
+import { OfferStatusEnum, OrderStatusEnum } from 'src/Common/Types';
 
 @Injectable()
 export class CartService {
@@ -86,7 +86,7 @@ export class CartService {
       const pastOrders = await this.orderRepository.findMany({
         filters: {
           userId: new Types.ObjectId(userId),
-          status: { $ne: 'Cancelled' },
+          status: { $ne: OrderStatusEnum.CANCELLED },
           'items.offerId': offer._id,
         },
       });
