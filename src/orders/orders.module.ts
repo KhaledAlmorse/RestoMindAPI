@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { OrdersController, OrderGroupsController } from './orders.controller';
+import { OrdersController } from './orders.controller';
 import {
   OrderRepository,
   OrderGroupRepository,
@@ -29,7 +29,7 @@ import { RestaurantModule } from 'src/restaurant/restaurant.module';
     SalesTransactionModel,
     RestaurantModule,
   ],
-  controllers: [OrdersController, OrderGroupsController],
+  controllers: [OrdersController],
   providers: [
     OrdersService,
     OrderRepository,

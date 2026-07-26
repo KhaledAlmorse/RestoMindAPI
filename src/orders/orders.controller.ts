@@ -8,23 +8,20 @@ import {
   Res,
   HttpStatus,
   Query,
-  ForbiddenException,
-  BadRequestException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
-import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { QueryRestaurantOrdersDto } from './dto/query-restaurant-orders.dto';
+import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { QueryOrderListingDto } from './dto/query-order-listing.dto';
-import { QueryMyOrdersDto } from './dto/query-my-orders.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
-import { RolesEnum, type IAuthUser } from 'src/Common/Types';
+import { type IAuthUser } from 'src/Common/Types';
 
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
+  // 1. POST /orders - Create order from user's active cart
   @Post()
   @Auth('customer')
   async createOrder(
@@ -39,130 +36,68 @@ export class OrdersController {
     res.status(HttpStatus.CREATED).json(result);
   }
 
-  @Get('me')
-  @Auth('customer')
-  async getMyOrders(
-    @AuthUser() user: IAuthUser,
-    @Query() query: QueryMyOrdersDto,
-    @Res() res: Response,
-  ) {
-    const result = await this.ordersService.getMyOrders(
-      user.user._id.toString(),
-      query,
-    );
-    res.status(HttpStatus.OK).json(result);
-  }
-
-  @Get('me/:id')
-  @Auth('customer')
-  async getMyOrderDetails(
-    @Param('id') id: string,
-    @AuthUser() user: IAuthUser,
-    @Res() res: Response,
-  ) {
-    const result = await this.ordersService.getMyOrderDetails(
-      user.user._id.toString(),
-      id,
-    );
-    res.status(HttpStatus.OK).json(result);
-  }
-
+  // 2. GET /orders/group/:id - Get order group by group ID (Client, Admin)
   @Get('group/:id')
   @Auth('customer', 'admin')
-  async getGroupOrderDetails(
+  async getGroupOrderById(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.getOrderGroupById(id, user.user);
+    const result = await this.ordersService.getGroupOrderById(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Get()
-  @Auth('admin')
-  async getAllOrders(
-    @Query() query: QueryOrderListingDto,
-    @Res() res: Response,
-  ) {
-    const result = await this.ordersService.getAllOrders(query);
-    res.status(HttpStatus.OK).json(result);
-  }
-
-  @Get('restaurant/:restaurantId')
-  @Auth('admin', 'manager')
-  async getRestaurantOrders(
-    @Param('restaurantId') restaurantId: string,
-    @Query() query: QueryRestaurantOrdersDto,
+  // 2b. PATCH /orders/group/:id/cancel - Cancel order group by client
+  @Patch('group/:id/cancel')
+  @Auth('customer')
+  async cancelOrderGroup(
+    @Param('id') id: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    if (user.user.role === RolesEnum.MANAGER) {
-      if (
-        !user.user.restaurantId ||
-        user.user.restaurantId.toString() !== restaurantId
-      ) {
-        throw new ForbiddenException(
-          'You can only view orders for your own restaurant',
-        );
-      }
-    }
-    const result = await this.ordersService.getRestaurantOrders(
-      restaurantId,
-      query,
-    );
+    const result = await this.ordersService.cancelOrderGroup(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
-  @Patch('status')
-  @Auth('admin', 'manager')
-  async updateOrderStatusByQuery(
-    @Query('groupOrderId') groupOrderId: string,
-    @Body() body: UpdateOrderStatusDto,
+  // 3. GET /orders/:id - Get child order by ID (Client, Manager, Admin)
+  @Get(':id')
+  @Auth('customer', 'manager', 'admin')
+  async getChildOrderById(
+    @Param('id') id: string,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    if (!groupOrderId) {
-      throw new BadRequestException('groupOrderId query parameter is required');
-    }
-    const result = await this.ordersService.updateOrderStatus(
-      groupOrderId,
-      body.status,
-      user.user,
-    );
+    const result = await this.ordersService.getChildOrderById(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 
+  // 4. PATCH /orders/:id/status - Update child order status (Manager, Admin)
   @Patch(':id/status')
   @Auth('admin', 'manager')
   async updateOrderStatus(
     @Param('id') id: string,
-    @Query('groupOrderId') queryGroupOrderId: string,
     @Body() body: UpdateOrderStatusDto,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const targetId = queryGroupOrderId || id;
     const result = await this.ordersService.updateOrderStatus(
-      targetId,
+      id,
       body.status,
       user.user,
     );
     res.status(HttpStatus.OK).json(result);
   }
-}
 
-@Controller('order-groups')
-@Auth('admin')
-export class OrderGroupsController {
-  constructor(private readonly ordersService: OrdersService) {}
-
-  @Get(':id')
-  async getOrderGroup(
-    @Param('id') id: string,
+  // 5. GET /orders - Get all orders role-aware (Client, Manager, Admin)
+  @Get()
+  @Auth('customer', 'manager', 'admin')
+  async getAllOrders(
+    @Query() query: QueryOrderListingDto,
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.ordersService.getOrderGroupById(id, user.user);
+    const result = await this.ordersService.getAllOrders(query, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 }
