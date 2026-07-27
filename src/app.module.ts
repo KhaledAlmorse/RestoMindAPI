@@ -21,6 +21,8 @@ import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { ImportsModule } from './imports/imports.module';
 import { ProductionPlanningModule } from './production-planning/production-planning.module';
 import { WeeklyPredictionModule } from './weekly-prediction/weekly-prediction.module';
+import { WasteReportsModule } from './waste-reports/waste-reports.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 
 @Module({
   imports: [
@@ -44,6 +46,8 @@ import { WeeklyPredictionModule } from './weekly-prediction/weekly-prediction.mo
     ImportsModule,
     ProductionPlanningModule,
     WeeklyPredictionModule,
+    WasteReportsModule,
+    RecommendationsModule,
   ],
 
   controllers: [AppController],
