@@ -308,6 +308,84 @@ describe('OffersService', () => {
       );
       expect((result.data as any).status).toBe(OfferStatusEnum.CANCELLED);
     });
+
+    it('rejects setting status manually to EXPIRED or SOLD_OUT', async () => {
+      offerRepo.findOne.mockResolvedValueOnce(
+        buildOffer({ status: OfferStatusEnum.ACTIVE }),
+      );
+
+      await expect(
+        service.updateOffer(
+          new Types.ObjectId().toString(),
+          { status: OfferStatusEnum.EXPIRED } as any,
+          userId,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      offerRepo.findOne.mockResolvedValueOnce(
+        buildOffer({ status: OfferStatusEnum.ACTIVE }),
+      );
+
+      await expect(
+        service.updateOffer(
+          new Types.ObjectId().toString(),
+          { status: OfferStatusEnum.SOLD_OUT } as any,
+          userId,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects changing a sold-out offer to active without increasing quantity', async () => {
+      offerRepo.findOne.mockResolvedValueOnce(
+        buildOffer({
+          status: OfferStatusEnum.SOLD_OUT,
+          availableQuantity: 10,
+          remainingQuantity: 0,
+        }),
+      );
+
+      await expect(
+        service.updateOffer(
+          new Types.ObjectId().toString(),
+          { status: OfferStatusEnum.ACTIVE } as any,
+          userId,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows changing a sold-out offer to active when quantity is increased', async () => {
+      const soldOutOffer = buildOffer({
+        status: OfferStatusEnum.SOLD_OUT,
+        availableQuantity: 10,
+        remainingQuantity: 0,
+        startDate: new Date('2000-01-01'),
+        endDate: new Date('2999-01-05'),
+      });
+
+      offerRepo.findOne
+        .mockResolvedValueOnce(soldOutOffer) // load offer
+        .mockResolvedValueOnce(null); // assertActiveConflict
+
+      offerRepo.update.mockImplementation(({ body }) =>
+        Promise.resolve({ ...soldOutOffer, ...body }),
+      );
+
+      const result = await service.updateOffer(
+        soldOutOffer._id.toString(),
+        { availableQuantity: 15 } as any,
+        userId,
+      );
+
+      expect(offerRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            availableQuantity: 15,
+            remainingQuantity: 5,
+            status: OfferStatusEnum.ACTIVE,
+          }),
+        }),
+      );
+    });
   });
 
   describe('cancelOffer', () => {
