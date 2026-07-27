@@ -121,3 +121,23 @@ export enum ConfidenceLevelEnum {
   MEDIUM = 'medium',
   LOW = 'low',
 }
+
+export enum RiskLevelEnum {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+}
+
+export enum RecommendationTypeEnum {
+  APPLY_DISCOUNT = 'apply_discount',
+  REDUCE_PURCHASE = 'reduce_purchase',
+  STOP_PRODUCTION = 'stop_production',
+  TRANSFER_STOCK = 'transfer_stock',
+}
+
+export enum RecommendationStatusEnum {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  EDITED = 'edited',
+  DISMISSED = 'dismissed',
+}

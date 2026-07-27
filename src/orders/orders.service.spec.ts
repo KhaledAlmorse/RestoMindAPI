@@ -13,7 +13,7 @@ import {
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { NotFoundException } from '@nestjs/common';
-import { OrderStatusEnum } from 'src/Common/Types';
+import { OrderStatusEnum, RolesEnum } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 
 describe('OrdersService', () => {
@@ -65,9 +65,13 @@ describe('OrdersService', () => {
     service = module.get<OrdersService>(OrdersService);
   });
 
-  describe('getMyOrders', () => {
-    it('should return paginated result with empty data if user has no order groups', async () => {
-      const mockUserId = new Types.ObjectId();
+  describe('getAllOrders (customer role)', () => {
+    it('should return paginated result with empty data if customer has no order groups', async () => {
+      const mockUser = {
+        _id: new Types.ObjectId(),
+        role: RolesEnum.CUSTOMER,
+      } as any;
+
       orderGroupRepo.findManyPaginated.mockResolvedValue({
         items: [],
         total: 0,
@@ -76,7 +80,7 @@ describe('OrdersService', () => {
         totalPages: 0,
       });
 
-      const result = await service.getMyOrders(mockUserId.toString());
+      const result = await service.getAllOrders({}, mockUser);
       expect(result).toEqual({
         data: [],
         totalItems: 0,
@@ -88,8 +92,13 @@ describe('OrdersService', () => {
       });
     });
 
-    it('should return paginated aggregated order groups with correct totals and metadata', async () => {
+    it('should return paginated aggregated order groups for customer', async () => {
       const mockUserId = new Types.ObjectId();
+      const mockUser = {
+        _id: mockUserId,
+        role: RolesEnum.CUSTOMER,
+      } as any;
+
       const group1Id = new Types.ObjectId();
       const order1Id = new Types.ObjectId();
       const rest1Id = new Types.ObjectId();
@@ -127,11 +136,10 @@ describe('OrdersService', () => {
         totalPages: 1,
       });
 
-      const result = await service.getMyOrders(mockUserId.toString(), {
-        page: 1,
-        limit: 10,
-        status: OrderStatusEnum.PENDING,
-      });
+      const result = await service.getAllOrders(
+        { page: 1, limit: 10, status: OrderStatusEnum.PENDING },
+        mockUser,
+      );
       const data = result.data as any;
 
       expect(data).toBeDefined();
@@ -147,22 +155,27 @@ describe('OrdersService', () => {
     });
   });
 
-  describe('getMyOrderDetails', () => {
+  describe('getGroupOrderById', () => {
     it('should throw NotFoundException if order group does not exist', async () => {
       const mockUserId = new Types.ObjectId();
+      const mockUser = {
+        _id: mockUserId,
+        role: RolesEnum.CUSTOMER,
+      } as any;
       const mockGroupId = new Types.ObjectId();
       orderGroupRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.getMyOrderDetails(
-          mockUserId.toString(),
-          mockGroupId.toString(),
-        ),
+        service.getGroupOrderById(mockGroupId.toString(), mockUser),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('should return details for a specific user order group', async () => {
       const mockUserId = new Types.ObjectId();
+      const mockUser = {
+        _id: mockUserId,
+        role: RolesEnum.CUSTOMER,
+      } as any;
       const mockGroupId = new Types.ObjectId();
       const orderId = new Types.ObjectId();
       const restId = new Types.ObjectId();
@@ -192,18 +205,22 @@ describe('OrdersService', () => {
         createdAt: new Date(),
       });
 
-      const result = await service.getMyOrderDetails(
-        mockUserId.toString(),
+      const result = await service.getGroupOrderById(
         mockGroupId.toString(),
+        mockUser,
       );
 
       expect(result.data).toBeDefined();
     });
   });
 
-  describe('getAllOrders', () => {
+  describe('getAllOrders (admin role)', () => {
     it('should return grouped order list for admin with populated user info', async () => {
       const mockUserId = new Types.ObjectId();
+      const mockAdminUser = {
+        _id: new Types.ObjectId(),
+        role: RolesEnum.ADMIN,
+      } as any;
       const mockGroupId = new Types.ObjectId();
       const order1Id = new Types.ObjectId();
       const order2Id = new Types.ObjectId();
@@ -258,17 +275,19 @@ describe('OrdersService', () => {
         totalPages: 1,
       });
 
-      const result = await service.getAllOrders({});
+      const result = await service.getAllOrders({}, mockAdminUser);
       expect(result.data).toBeDefined();
       expect(Array.isArray(result.data)).toBe(true);
       expect(result.data.length).toBe(1);
       const groupDoc = (result.data as any)[0];
       expect(groupDoc.groupOrderId).toBe(mockGroupId.toString());
-      expect(groupDoc.userId._id.toString()).toBe(mockUserId.toString());
-      expect(groupDoc.items.length).toBe(3);
-      expect(groupDoc.items[0].restaurantName).toBe('restaurant_For_Manager1');
-      expect(groupDoc.items[1].restaurantName).toBe('restaurant_For_Manager2');
-      expect(groupDoc.orders).toBeUndefined();
+      expect(groupDoc.orders.length).toBe(2);
+      expect(groupDoc.orders[0].restaurant.name).toBe(
+        'restaurant_For_Manager1',
+      );
+      expect(groupDoc.orders[1].restaurant.name).toBe(
+        'restaurant_For_Manager2',
+      );
       expect(result.totalItems).toBe(1);
     });
   });

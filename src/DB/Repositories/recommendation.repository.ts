@@ -1,9 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BaseService } from '../base.service';
-import {
-  InventoryBatch,
-  InventoryBatchType,
-} from '../Models/inventory-batch.model';
+import { Recommendation, RecommendationType } from '../Models/recommendation.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
@@ -18,12 +15,12 @@ interface PaginatedOptions {
 }
 
 @Injectable()
-export class InventoryBatchRepository extends BaseService<InventoryBatchType> {
+export class RecommendationRepository extends BaseService<RecommendationType> {
   constructor(
-    @InjectModel(InventoryBatch.name)
-    private readonly inventoryBatchModel: Model<InventoryBatchType>,
+    @InjectModel(Recommendation.name)
+    private readonly recommendationModel: Model<RecommendationType>,
   ) {
-    super(inventoryBatchModel);
+    super(recommendationModel);
   }
 
   async findManyPaginated(options: PaginatedOptions) {
@@ -38,7 +35,7 @@ export class InventoryBatchRepository extends BaseService<InventoryBatchType> {
     } = options;
     const sortDirection = order === 'asc' ? 1 : -1;
 
-    const query = this.inventoryBatchModel
+    const query = this.recommendationModel
       .find(filters)
       .select(select)
       .sort({ [sort]: sortDirection })
@@ -51,7 +48,7 @@ export class InventoryBatchRepository extends BaseService<InventoryBatchType> {
 
     const [items, total] = await Promise.all([
       query.exec(),
-      this.inventoryBatchModel.countDocuments(filters).exec(),
+      this.recommendationModel.countDocuments(filters).exec(),
     ]);
 
     return {
@@ -70,7 +67,7 @@ export class InventoryBatchRepository extends BaseService<InventoryBatchType> {
     order?: 'asc' | 'desc';
   }) {
     const { filters = {}, populationArray = [], sort, order } = options;
-    const query = this.inventoryBatchModel.find(filters);
+    const query = this.recommendationModel.find(filters);
     if (sort) {
       const sortDirection = order === 'asc' ? 1 : -1;
       query.sort({ [sort]: sortDirection });

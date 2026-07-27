@@ -20,6 +20,5 @@ export * from './purchase-order.repository';
 export * from './import-job.repository';
 export * from './daily-production-plan.repository';
 export * from './prediction.repository';
-
-
-
+export * from './waste-report.repository';
+export * from './recommendation.repository';

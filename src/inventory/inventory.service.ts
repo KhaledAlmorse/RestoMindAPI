@@ -19,10 +19,7 @@ import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { QueryStockTransactionDto } from './dto/query-stock-transaction.dto';
 import { CreateWasteEventDto } from './dto/create-waste-event.dto';
 import { QueryWasteEventDto } from './dto/query-waste-event.dto';
-import {
-  StockTransactionTypeEnum,
-  WasteReasonEnum,
-} from 'src/Common/Types';
+import { StockTransactionTypeEnum, WasteReasonEnum } from 'src/Common/Types';
 
 @Injectable()
 export class InventoryService {
@@ -135,10 +132,7 @@ export class InventoryService {
 
   // --- Stock Transactions ---
 
-  async createStockTransaction(
-    dto: CreateStockTransactionDto,
-    userId: string,
-  ) {
+  async createStockTransaction(dto: CreateStockTransactionDto, userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(dto.ingredientId);
 
@@ -181,6 +175,18 @@ export class InventoryService {
     } as any);
 
     if (
+      dto.transactionType === StockTransactionTypeEnum.CONSUMPTION ||
+      dto.transactionType === StockTransactionTypeEnum.WASTE
+    ) {
+      await this.deductIngredientStock(
+        restaurantId,
+        new Types.ObjectId(dto.ingredientId),
+        dto.quantity,
+        batchIdObj,
+      );
+    }
+
+    if (
       dto.transactionType === StockTransactionTypeEnum.WASTE &&
       dto.wasteReason
     ) {
@@ -199,10 +205,7 @@ export class InventoryService {
     return { data: transaction };
   }
 
-  async getStockTransactions(
-    query: QueryStockTransactionDto,
-    userId: string,
-  ) {
+  async getStockTransactions(query: QueryStockTransactionDto, userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
     const { page = '1', limit = '10', ingredientId, transactionType } = query;
 
@@ -295,7 +298,64 @@ export class InventoryService {
       date: dto.date ? new Date(dto.date) : new Date(),
     } as any);
 
+    await this.deductIngredientStock(
+      restaurantId,
+      new Types.ObjectId(dto.ingredientId),
+      dto.quantity,
+      batchIdObj,
+    );
+
     return { data: wasteEvent };
+  }
+
+  private async deductIngredientStock(
+    restaurantId: Types.ObjectId,
+    ingredientId: Types.ObjectId,
+    quantityToDeduct: number,
+    explicitBatchId?: Types.ObjectId,
+  ) {
+    if (quantityToDeduct <= 0) return;
+
+    if (explicitBatchId) {
+      const batch = await this.inventoryBatchRepository.findOne({
+        filters: { _id: explicitBatchId, restaurantId, isDeleted: false },
+      });
+      if (batch && batch.quantityRemaining > 0) {
+        const newQty = Math.max(0, batch.quantityRemaining - quantityToDeduct);
+        await this.inventoryBatchRepository.update({
+          filters: { _id: batch._id },
+          body: { quantityRemaining: newQty } as any,
+        });
+      }
+      return;
+    }
+
+    const now = new Date();
+    const activeBatches = await this.inventoryBatchRepository.findMany({
+      filters: {
+        restaurantId,
+        ingredientId,
+        isDeleted: false,
+        quantityRemaining: { $gt: 0 },
+        expiryDate: { $gte: now },
+      },
+      sort: 'expiryDate',
+      order: 'asc',
+    });
+
+    let remainingNeeded = quantityToDeduct;
+    for (const batch of activeBatches || []) {
+      if (remainingNeeded <= 0) break;
+      const currentQty = batch.quantityRemaining || 0;
+      const deductAmount = Math.min(currentQty, remainingNeeded);
+      const newQty = currentQty - deductAmount;
+      remainingNeeded -= deductAmount;
+
+      await this.inventoryBatchRepository.update({
+        filters: { _id: batch._id },
+        body: { quantityRemaining: newQty } as any,
+      });
+    }
   }
 
   async getWasteEvents(query: QueryWasteEventDto, userId: string) {

@@ -20,6 +20,9 @@ export * from './purchase-order.model';
 export * from './import-job.model';
 export * from './daily-production-plan.model';
 export * from './prediction.model';
+export * from './waste-report.model';
+export * from './recommendation.model';
+
 
 
 

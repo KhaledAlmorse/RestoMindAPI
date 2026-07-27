@@ -29,12 +29,6 @@ export class CreateProductDto {
   @Min(0)
   price!: number;
 
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  discountedPrice?: number;
-
   @IsMongoId()
   @IsNotEmpty()
   category!: string;
