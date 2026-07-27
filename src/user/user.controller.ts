@@ -25,7 +25,7 @@ export class UserController {
   // ─── POST /users ─────────────────────────────────────────────────────────────
 
   @Post()
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async createUser(
     @AuthUser() user: IAuthUser,
     @Body() body: CreateUserDto,
@@ -38,7 +38,7 @@ export class UserController {
   // ─── GET /users ───────────────────────────────────────────────────────────────
 
   @Get()
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async findAll(
     @AuthUser() user: IAuthUser,
     @Query() query: QueryUserDto,
@@ -51,7 +51,7 @@ export class UserController {
   // ─── GET /users/:id ──────────────────────────────────────────────────────────
 
   @Get(':id')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async findById(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
@@ -64,7 +64,7 @@ export class UserController {
   // ─── PATCH /users/:id ────────────────────────────────────────────────────────
 
   @Patch(':id')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async updateUser(
     @AuthUser() user: IAuthUser,
     @Param('id') id: string,
@@ -78,7 +78,7 @@ export class UserController {
   // ─── DELETE /users/:id ────────────────────────────────────────────────────────
 
   @Delete(':id')
-  @Auth('admin')
+  @Auth('admin', 'manager')
   async softDeleteUser(
     @AuthUser() user: IAuthUser,
     @Param('id') id: string,

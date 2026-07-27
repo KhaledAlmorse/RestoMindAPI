@@ -10,6 +10,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { OffersService } from './offers.service';
+import { OffersQueryService } from './services/offers-query.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { QueryOfferDto } from './dto/query-offer.dto';
@@ -19,7 +20,10 @@ import type { IAuthUser } from 'src/Common/Types';
 
 @Controller('offers')
 export class OffersController {
-  constructor(private readonly offersService: OffersService) {}
+  constructor(
+    private readonly offersService: OffersService,
+    private readonly offersQueryService: OffersQueryService,
+  ) {}
 
   @Post()
   @Auth('manager')
@@ -37,13 +41,13 @@ export class OffersController {
 
   @Get('active')
   async getActiveOffers(@Query() query: QueryOfferDto, @Res() res: Response) {
-    const result = await this.offersService.getActiveOffers(query);
+    const result = await this.offersQueryService.getActiveOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Get('active/:id')
   async getActiveOfferById(@Param('id') id: string, @Res() res: Response) {
-    const result = await this.offersService.getActiveOfferById(id);
+    const result = await this.offersQueryService.getActiveOfferById(id);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -52,7 +56,7 @@ export class OffersController {
     @Query() query: QueryOfferDto,
     @Res() res: Response,
   ) {
-    const result = await this.offersService.getRecommendedOffers(query);
+    const result = await this.offersQueryService.getRecommendedOffers(query);
     res.status(HttpStatus.OK).json(result);
   }
 
@@ -63,7 +67,7 @@ export class OffersController {
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.offersService.getOffers(
+    const result = await this.offersQueryService.getOffers(
       query,
       authUser.user._id.toString(),
     );
@@ -77,7 +81,7 @@ export class OffersController {
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {
-    const result = await this.offersService.getOfferById(
+    const result = await this.offersQueryService.getOfferById(
       id,
       authUser.user._id.toString(),
     );

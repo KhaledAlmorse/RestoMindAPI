@@ -4,33 +4,34 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { isValidObjectId, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import {
   OfferRepository,
   ProductRepository,
   RestaurantRepository,
-  UserRepository,
 } from 'src/DB/Repositories';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
-import { QueryOfferDto } from './dto/query-offer.dto';
-import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
+import {
+  OfferStatusEnum,
+  OfferSourceEnum,
+  OfferDiscountTypeEnum,
+} from 'src/Common/Types';
+import { OfferAccessService } from './services/offer-access.service';
+import { OfferRulesService } from './services/offer-rules.service';
+import { OfferPricingService } from './services/offer-pricing.service';
 
 @Injectable()
-export class OffersService implements OnModuleInit {
+export class OffersService {
   constructor(
     private readonly offerRepository: OfferRepository,
     private readonly productRepository: ProductRepository,
     private readonly restaurantRepository: RestaurantRepository,
-    private readonly userRepository: UserRepository,
+    private readonly offerAccessService: OfferAccessService,
+    private readonly offerRulesService: OfferRulesService,
+    private readonly offerPricingService: OfferPricingService,
   ) {}
-
-  async onModuleInit() {
-    await this.processStatusTransitions();
-  }
 
   private parseStartDate(dateStr: string): Date {
     const trimmed = dateStr.trim();
@@ -48,61 +49,11 @@ export class OffersService implements OnModuleInit {
     return new Date(trimmed);
   }
 
-  private validateObjectId(id: string) {
-    if (!isValidObjectId(id)) {
-      throw new BadRequestException(`Invalid ObjectId: ${id}`);
-    }
-  }
-
-  private async getManagerRestaurantId(
-    userId: string,
-  ): Promise<Types.ObjectId> {
-    this.validateObjectId(userId);
-    const user = await this.userRepository.findOne({
-      filters: { _id: new Types.ObjectId(userId), isDeleted: false },
-    });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (user.restaurantId) {
-      return new Types.ObjectId(user.restaurantId.toString());
-    }
-
-    const restaurant = await this.restaurantRepository.findOne({
-      filters: { ownerUserId: new Types.ObjectId(userId), isDeleted: false },
-    });
-
-    if (!restaurant) {
-      throw new ForbiddenException(
-        'You are not assigned to a restaurant or do not own one',
-      );
-    }
-
-    return restaurant._id;
-  }
-
-  private async checkOverlap(productId: string, excludeOfferId?: string) {
-    const filters: Record<string, any> = {
-      productId: new Types.ObjectId(productId),
-      status: { $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED] },
-      isDeleted: false,
-    };
-    if (excludeOfferId) {
-      filters._id = { $ne: new Types.ObjectId(excludeOfferId) };
-    }
-    const existing = await this.offerRepository.findOne({ filters });
-    if (existing) {
-      throw new ConflictException(
-        'This product already has an active or scheduled offer',
-      );
-    }
-  }
-
   async createOffer(dto: CreateOfferDto, userId: string) {
-    this.validateObjectId(dto.productId);
+    this.offerAccessService.validateObjectId(dto.productId);
 
-    const managerRestaurantId = await this.getManagerRestaurantId(userId);
+    const managerRestaurantId =
+      await this.offerAccessService.getManagerRestaurantId(userId);
 
     const restaurant = await this.restaurantRepository.findOne({
       filters: { _id: managerRestaurantId, isDeleted: false },
@@ -126,8 +77,6 @@ export class OffersService implements OnModuleInit {
       );
     }
 
-    await this.checkOverlap(dto.productId);
-
     const startDate = this.parseStartDate(dto.startDate);
     const endDate = this.parseEndDate(dto.endDate);
     const now = new Date();
@@ -139,20 +88,59 @@ export class OffersService implements OnModuleInit {
       throw new BadRequestException('endDate must be in the future');
     }
 
+    await this.offerRulesService.assertNoOverlap(
+      dto.productId,
+      startDate,
+      endDate,
+    );
+
+    const pricing = this.offerPricingService.resolvePricing(product.price, {
+      discountType: dto.discountType ?? OfferDiscountTypeEnum.PERCENTAGE,
+      discountPercentage: dto.discountPercentage,
+      offerPrice: dto.offerPrice,
+    });
+
     let status = dto.status;
-    if (!status) {
-      const todayYMD = now.toISOString().split('T')[0];
-      const startYMD = startDate.toISOString().split('T')[0];
-      const isStartingTodayOrPast = startDate <= now || startYMD <= todayYMD;
-      status = isStartingTodayOrPast
-        ? OfferStatusEnum.ACTIVE
-        : OfferStatusEnum.SCHEDULED;
+    if (status) {
+      const creatableStatuses = [
+        OfferStatusEnum.DRAFT,
+        OfferStatusEnum.SCHEDULED,
+        OfferStatusEnum.ACTIVE,
+      ];
+      if (!creatableStatuses.includes(status)) {
+        throw new BadRequestException(
+          `Offers can only be created with status: ${creatableStatuses.join(', ')}`,
+        );
+      }
+      if (status === OfferStatusEnum.ACTIVE) {
+        if (startDate > now) {
+          throw new BadRequestException(
+            'status cannot be active when startDate is in the future',
+          );
+        }
+        const conflict = await this.offerRulesService.assertActiveConflict(
+          dto.productId,
+        );
+        if (conflict) {
+          throw new ConflictException(
+            'This product already has an active offer',
+          );
+        }
+      }
+    } else {
+      status = this.offerRulesService.deriveStatus(startDate, now);
     }
 
-    const originalPrice = product.price;
-    const offerPrice =
-      Math.round(originalPrice * (1 - dto.discountPercentage / 100) * 100) /
-      100;
+    if (
+      (status === OfferStatusEnum.DRAFT ||
+        status === OfferStatusEnum.SCHEDULED) &&
+      startDate < now
+    ) {
+      throw new BadRequestException(
+        'startDate must be in the future for a draft/scheduled offer',
+      );
+    }
+
     const availableQuantity = dto.availableQuantity;
     const remainingQuantity = dto.availableQuantity;
     const maxPerCustomer = dto.maxPerCustomer ?? null;
@@ -160,9 +148,10 @@ export class OffersService implements OnModuleInit {
     const offer = await this.offerRepository.create({
       productId: new Types.ObjectId(dto.productId),
       restaurantId: managerRestaurantId,
-      originalPrice,
-      offerPrice,
-      discountPercentage: dto.discountPercentage,
+      originalPrice: pricing.originalPrice,
+      offerPrice: pricing.offerPrice,
+      discountPercentage: pricing.discountPercentage,
+      discountType: pricing.discountType,
       availableQuantity,
       remainingQuantity,
       maxPerCustomer,
@@ -177,181 +166,10 @@ export class OffersService implements OnModuleInit {
     return { data: offer };
   }
 
-  async getOffers(query: QueryOfferDto, userId: string) {
-    const {
-      status,
-      productId,
-      source,
-      categoryId,
-      restaurantId,
-      search,
-      featured,
-      minPrice,
-      maxPrice,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-      page = '1',
-      limit = '10',
-    } = query;
-
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
-    const skip = (pageNum - 1) * limitNum;
-
-    const managerRestaurantId = await this.getManagerRestaurantId(userId);
-
-    const filters: Record<string, any> = {
-      restaurantId: managerRestaurantId,
-      isDeleted: false,
-    };
-
-    if (status) {
-      filters.status = status;
-    }
-
-    if (productId) {
-      this.validateObjectId(productId);
-      filters.productId = new Types.ObjectId(productId);
-    }
-
-    if (source) {
-      filters.source = source;
-    }
-
-    if (featured !== undefined) {
-      filters.featured = featured === 'true' || (featured as any) === true;
-    }
-
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      filters.offerPrice = {};
-      if (minPrice !== undefined) {
-        filters.offerPrice.$gte = parseFloat(minPrice);
-      }
-      if (maxPrice !== undefined) {
-        filters.offerPrice.$lte = parseFloat(maxPrice);
-      }
-    }
-
-    if (query.startDate) {
-      filters.startDate = { $gte: this.parseStartDate(query.startDate) };
-    }
-
-    if (query.endDate) {
-      filters.endDate = { $lte: this.parseEndDate(query.endDate) };
-    }
-
-    const populationArray: any[] = [
-      { path: 'productId', populate: { path: 'category' } },
-      { path: 'restaurantId' },
-    ];
-
-    let offers =
-      (await this.offerRepository.findMany({
-        filters,
-        populationArray,
-      })) || [];
-
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        return (
-          prod &&
-          (searchRegex.test(prod.title || '') ||
-            searchRegex.test(prod.description || ''))
-        );
-      });
-    }
-
-    if (categoryId) {
-      this.validateObjectId(categoryId);
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        if (!prod || !prod.category) return false;
-        const catId = prod.category._id
-          ? prod.category._id.toString()
-          : prod.category.toString();
-        return catId === categoryId;
-      });
-    }
-
-    const sortMultiplier = sortOrder === 'asc' ? 1 : -1;
-    offers.sort((a: any, b: any) => {
-      let valA = a[sortBy] ?? a.createdAt;
-      let valB = b[sortBy] ?? b.createdAt;
-      if (valA instanceof Date) valA = valA.getTime();
-      if (valB instanceof Date) valB = valB.getTime();
-      if (valA < valB) return -1 * sortMultiplier;
-      if (valA > valB) return 1 * sortMultiplier;
-      return 0;
-    });
-
-    const total = offers.length;
-    const items = offers.slice(skip, skip + limitNum);
-
-    return {
-      items,
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages: Math.ceil(total / limitNum),
-    };
-  }
-
-  async getOfferById(idOrSlug: string, userId: string) {
-    const managerRestaurantId = await this.getManagerRestaurantId(userId);
-    let offer: any = null;
-
-    if (isValidObjectId(idOrSlug)) {
-      offer = await this.offerRepository.findOne({
-        filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
-        populationArray: [
-          { path: 'productId' },
-          { path: 'createdBy', select: 'firstName lastName email' },
-        ],
-      });
-    }
-
-    if (!offer) {
-      let product: any = null;
-      if (isValidObjectId(idOrSlug)) {
-        product = await this.productRepository.findOne({
-          filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
-        });
-      }
-      if (!product) {
-        product = await this.productRepository.findOne({
-          filters: { slug: idOrSlug, isDeleted: false },
-        });
-      }
-
-      if (product) {
-        offer = await this.offerRepository.findOne({
-          filters: { productId: product._id, isDeleted: false },
-          populationArray: [
-            { path: 'productId' },
-            { path: 'createdBy', select: 'firstName lastName email' },
-          ],
-        });
-      }
-    }
-
-    if (!offer) {
-      throw new NotFoundException('Offer not found');
-    }
-
-    if (offer.restaurantId.toString() !== managerRestaurantId.toString()) {
-      throw new ForbiddenException(
-        'You can only access offers belonging to your restaurant',
-      );
-    }
-
-    return { data: offer };
-  }
-
   async updateOffer(id: string, dto: UpdateOfferDto, userId: string) {
-    const managerRestaurantId = await this.getManagerRestaurantId(userId);
-    this.validateObjectId(id);
+    const managerRestaurantId =
+      await this.offerAccessService.getManagerRestaurantId(userId);
+    this.offerAccessService.validateObjectId(id);
 
     const offer = await this.offerRepository.findOne({
       filters: { _id: new Types.ObjectId(id), isDeleted: false },
@@ -367,41 +185,96 @@ export class OffersService implements OnModuleInit {
     }
 
     if (
+      offer.status === OfferStatusEnum.EXPIRED ||
+      offer.status === OfferStatusEnum.CANCELLED
+    ) {
+      throw new BadRequestException(
+        `Cannot edit an offer with status "${offer.status}"`,
+      );
+    }
+
+    if (
+      dto.startDate &&
       offer.status !== OfferStatusEnum.DRAFT &&
       offer.status !== OfferStatusEnum.SCHEDULED
     ) {
       throw new BadRequestException(
-        'Can only edit offers with status: draft or scheduled',
+        'startDate can only be changed while the offer is draft or scheduled',
       );
     }
 
-    const updateBody: Record<string, any> = { ...dto };
-    if (dto.productId) {
-      this.validateObjectId(dto.productId);
+    const now = new Date();
+    const updateBody: Record<string, any> = {};
+    let effectiveStartDate: Date | undefined;
+
+    // Pricing (percentage OR fixed offerPrice)
+    if (
+      dto.discountType !== undefined ||
+      dto.discountPercentage !== undefined ||
+      dto.offerPrice !== undefined
+    ) {
       const product = await this.productRepository.findOne({
-        filters: { _id: new Types.ObjectId(dto.productId), isDeleted: false },
+        filters: { _id: offer.productId, isDeleted: false },
       });
       if (!product) {
         throw new NotFoundException('Product not found');
       }
-      if (product.restaurantId.toString() !== managerRestaurantId.toString()) {
-        throw new ForbiddenException(
-          'Product does not belong to your restaurant',
-        );
-      }
-      await this.checkOverlap(dto.productId, id);
-      updateBody.productId = new Types.ObjectId(dto.productId);
-      updateBody.restaurantId = product.restaurantId;
+      const pricing = this.offerPricingService.resolvePricing(product.price, {
+        discountType: dto.discountType ?? offer.discountType,
+        discountPercentage: dto.discountPercentage,
+        offerPrice: dto.offerPrice,
+      });
+      updateBody.originalPrice = pricing.originalPrice;
+      updateBody.offerPrice = pricing.offerPrice;
+      updateBody.discountPercentage = pricing.discountPercentage;
+      updateBody.discountType = pricing.discountType;
     }
 
+    // Quantity
+    if (dto.availableQuantity !== undefined) {
+      const sold = offer.availableQuantity - offer.remainingQuantity;
+      if (dto.availableQuantity < sold) {
+        throw new BadRequestException(
+          `availableQuantity cannot be less than the ${sold} unit(s) already sold`,
+        );
+      }
+      const delta = dto.availableQuantity - offer.availableQuantity;
+      const newRemaining = offer.remainingQuantity + delta;
+      updateBody.availableQuantity = dto.availableQuantity;
+      updateBody.remainingQuantity = newRemaining;
+
+      if (
+        offer.status === OfferStatusEnum.SOLD_OUT &&
+        newRemaining > 0 &&
+        now >= offer.startDate &&
+        now <= offer.endDate
+      ) {
+        const conflict = await this.offerRulesService.assertActiveConflict(
+          offer.productId.toString(),
+          id,
+        );
+        if (!conflict) {
+          updateBody.status = OfferStatusEnum.ACTIVE;
+        }
+      }
+    }
+
+    if (dto.maxPerCustomer !== undefined) {
+      updateBody.maxPerCustomer = dto.maxPerCustomer;
+    }
+
+    if (dto.featured !== undefined) {
+      updateBody.featured = dto.featured;
+    }
+
+    // Dates — re-run the create-time validations plus overlap check
     if (dto.startDate || dto.endDate) {
-      const effectiveStartDate = dto.startDate
+      effectiveStartDate = dto.startDate
         ? this.parseStartDate(dto.startDate)
         : new Date(offer.startDate);
       const effectiveEndDate = dto.endDate
         ? this.parseEndDate(dto.endDate)
         : new Date(offer.endDate);
-      const now = new Date();
 
       if (effectiveStartDate >= effectiveEndDate) {
         throw new BadRequestException('startDate must be before endDate');
@@ -410,15 +283,65 @@ export class OffersService implements OnModuleInit {
         throw new BadRequestException('endDate must be in the future');
       }
 
+      await this.offerRulesService.assertNoOverlap(
+        offer.productId.toString(),
+        effectiveStartDate,
+        effectiveEndDate,
+        id,
+      );
+
       if (dto.startDate) updateBody.startDate = effectiveStartDate;
       if (dto.endDate) updateBody.endDate = effectiveEndDate;
 
-      const todayYMD = now.toISOString().split('T')[0];
-      const startYMD = effectiveStartDate.toISOString().split('T')[0];
-      if (effectiveStartDate <= now || startYMD <= todayYMD) {
-        updateBody.status = OfferStatusEnum.ACTIVE;
-      } else {
-        updateBody.status = OfferStatusEnum.SCHEDULED;
+      if (
+        offer.status === OfferStatusEnum.DRAFT ||
+        offer.status === OfferStatusEnum.SCHEDULED
+      ) {
+        const derived = this.offerRulesService.deriveStatus(
+          effectiveStartDate,
+          now,
+        );
+
+        if (derived === OfferStatusEnum.ACTIVE) {
+          const conflict = await this.offerRulesService.assertActiveConflict(
+            offer.productId.toString(),
+            id,
+          );
+          updateBody.status = conflict
+            ? OfferStatusEnum.SCHEDULED
+            : OfferStatusEnum.ACTIVE;
+        } else {
+          updateBody.status = OfferStatusEnum.SCHEDULED;
+        }
+      }
+    }
+
+    // Explicit status change — wins over any status implied above
+    if (dto.status !== undefined) {
+      this.offerRulesService.assertStatusTransition(offer.status, dto.status);
+      if (dto.status === OfferStatusEnum.ACTIVE) {
+        const conflict = await this.offerRulesService.assertActiveConflict(
+          offer.productId.toString(),
+          id,
+        );
+        if (conflict) {
+          throw new ConflictException(
+            'This product already has an active offer',
+          );
+        }
+      }
+      updateBody.status = dto.status;
+    }
+
+    if (effectiveStartDate && effectiveStartDate < now) {
+      const finalStatus = updateBody.status ?? offer.status;
+      if (
+        finalStatus === OfferStatusEnum.DRAFT ||
+        finalStatus === OfferStatusEnum.SCHEDULED
+      ) {
+        throw new BadRequestException(
+          'startDate must be in the future for a draft/scheduled offer',
+        );
       }
     }
 
@@ -431,8 +354,9 @@ export class OffersService implements OnModuleInit {
   }
 
   async cancelOffer(id: string, userId: string) {
-    const managerRestaurantId = await this.getManagerRestaurantId(userId);
-    this.validateObjectId(id);
+    const managerRestaurantId =
+      await this.offerAccessService.getManagerRestaurantId(userId);
+    this.offerAccessService.validateObjectId(id);
 
     const offer = await this.offerRepository.findOne({
       filters: { _id: new Types.ObjectId(id), isDeleted: false },
@@ -453,6 +377,11 @@ export class OffersService implements OnModuleInit {
     if (offer.status === OfferStatusEnum.EXPIRED) {
       throw new BadRequestException('Cannot cancel an expired offer');
     }
+    if (offer.endDate <= new Date()) {
+      throw new BadRequestException(
+        'Cannot cancel an offer whose end date has passed',
+      );
+    }
 
     await this.offerRepository.update({
       filters: { _id: new Types.ObjectId(id) },
@@ -465,407 +394,57 @@ export class OffersService implements OnModuleInit {
     return { data: updated };
   }
 
-  async getActiveOffers(query: QueryOfferDto) {
-    const {
-      productId,
-      restaurantId,
-      categoryId,
-      source,
-      search,
-      featured,
-      minPrice,
-      maxPrice,
-      sortBy = 'createdAt',
-      sortOrder = 'desc',
-      page = '1',
-      limit = '10',
-    } = query;
+  /**
+   * Restores units from a cancelled order item and reactivates a sold-out
+   * offer when the restock lands back inside its live window with no
+   * conflicting active offer for the same product.
+   */
+  async restockFromCancelledOrderItem(
+    offerId: Types.ObjectId | string,
+    quantity: number,
+    lineTotal = 0,
+  ) {
+    const id =
+      typeof offerId === 'string' ? new Types.ObjectId(offerId) : offerId;
 
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
-    const skip = (pageNum - 1) * limitNum;
-
-    const now = new Date();
-    const filters: Record<string, any> = {
-      status: OfferStatusEnum.ACTIVE,
-      isDeleted: false,
-      startDate: { $lte: now },
-      endDate: { $gte: now },
-    };
-
-    if (query.startDate) {
-      filters.startDate = {
-        $gte: this.parseStartDate(query.startDate),
-        $lte: now,
-      };
-    }
-
-    if (query.endDate) {
-      filters.endDate = {
-        $lte: this.parseEndDate(query.endDate),
-        $gte: now,
-      };
-    }
-
-    if (productId) {
-      this.validateObjectId(productId);
-      filters.productId = new Types.ObjectId(productId);
-    }
-
-    if (restaurantId) {
-      this.validateObjectId(restaurantId);
-      filters.restaurantId = new Types.ObjectId(restaurantId);
-    }
-
-    if (source) {
-      filters.source = source;
-    }
-
-    if (featured !== undefined) {
-      filters.featured = featured === 'true' || (featured as any) === true;
-    }
-
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      filters.offerPrice = {};
-      if (minPrice !== undefined) {
-        filters.offerPrice.$gte = parseFloat(minPrice);
-      }
-      if (maxPrice !== undefined) {
-        filters.offerPrice.$lte = parseFloat(maxPrice);
-      }
-    }
-
-    const populationArray: any[] = [
-      {
-        path: 'productId',
-        populate: { path: 'category' },
-        select: 'title description price image category slug isAvailable',
-      },
-      {
-        path: 'restaurantId',
-        select: 'name description phone address isActive isDeleted',
-      },
-    ];
-
-    let offers =
-      (await this.offerRepository.findMany({
-        filters,
-        populationArray,
-      })) || [];
-
-    // Filter out offers whose restaurant is inactive or soft deleted
-    offers = offers.filter(
-      (off: any) =>
-        off.restaurantId &&
-        off.restaurantId.isActive !== false &&
-        !off.restaurantId.isDeleted,
-    );
-
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        return (
-          prod &&
-          (searchRegex.test(prod.title || '') ||
-            searchRegex.test(prod.description || ''))
-        );
-      });
-    }
-
-    if (categoryId) {
-      this.validateObjectId(categoryId);
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        if (!prod || !prod.category) return false;
-        const catId = prod.category._id
-          ? prod.category._id.toString()
-          : prod.category.toString();
-        return catId === categoryId;
-      });
-    }
-
-    const sortMultiplier = sortOrder === 'asc' ? 1 : -1;
-    offers.sort((a: any, b: any) => {
-      let valA = a[sortBy] ?? a.createdAt;
-      let valB = b[sortBy] ?? b.createdAt;
-      if (valA instanceof Date) valA = valA.getTime();
-      if (valB instanceof Date) valB = valB.getTime();
-      if (valA < valB) return -1 * sortMultiplier;
-      if (valA > valB) return 1 * sortMultiplier;
-      return 0;
+    await this.offerRepository.update({
+      filters: { _id: id },
+      body: { $inc: { remainingQuantity: quantity } } as any,
     });
 
-    const total = offers.length;
-    const items = offers.slice(skip, skip + limitNum);
-
-    if (items.length === 0) {
-      throw new NotFoundException('No active offers found');
-    }
-
-    return {
-      items,
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages: Math.ceil(total / limitNum),
-    };
-  }
-
-  async getRecommendedOffers(query: QueryOfferDto) {
-    const {
-      categoryId,
-      restaurantId,
-      search,
-      minPrice,
-      maxPrice,
-      page = '1',
-      limit = '10',
-    } = query;
-
-    const pageNum = Math.max(1, parseInt(page, 10));
-    const limitNum = Math.max(1, parseInt(limit, 10));
-    const skip = (pageNum - 1) * limitNum;
-
-    const now = new Date();
-
-    const filters: Record<string, any> = {
-      status: OfferStatusEnum.ACTIVE,
-      isDeleted: false,
-      startDate: { $lte: now },
-      endDate: { $gte: now },
-      remainingQuantity: { $gt: 0 },
-    };
-
-    if (restaurantId) {
-      this.validateObjectId(restaurantId);
-      filters.restaurantId = new Types.ObjectId(restaurantId);
-    }
-
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      filters.offerPrice = {};
-      if (minPrice !== undefined) {
-        filters.offerPrice.$gte = parseFloat(minPrice);
-      }
-      if (maxPrice !== undefined) {
-        filters.offerPrice.$lte = parseFloat(maxPrice);
-      }
-    }
-
-    // Recommendation sort pushed to MongoDB
-    const sort: Record<string, 1 | -1> = {
-      featured: -1,
-      discountPercentage: -1,
-      endDate: 1,
-      availableQuantity: -1,
-      createdAt: -1,
-    };
-
-    // Same population as getActiveOffers for identical response shape
-    const populationArray: any[] = [
-      {
-        path: 'productId',
-        populate: { path: 'category' },
-        select: 'title description price image category slug isAvailable',
-      },
-      {
-        path: 'restaurantId',
-        select: 'name description phone address isActive isDeleted',
-      },
-    ];
-
-    const needsInMemoryFilter = true;
-
-    if (!needsInMemoryFilter) {
-      // Fast path: MongoDB handles sort + pagination + count
-      const { items, total } = await this.offerRepository.findManySorted({
-        filters,
-        sort,
-        skip,
-        limit: limitNum,
-        populationArray,
-      });
-
-      return {
-        items,
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum),
-      };
-    }
-
-    // Slow path: search/categoryId depend on populated Product fields,
-    // so we let MongoDB sort but must filter + paginate in memory.
-    const { items: allSorted } = await this.offerRepository.findManySorted({
-      filters,
-      sort,
-      skip: 0,
-      limit: 0, // 0 = no limit in Mongoose, returns all matching docs
-      populationArray,
+    const updatedOffer = await this.offerRepository.findOne({
+      filters: { _id: id },
     });
+    if (!updatedOffer) return;
 
-    let offers = allSorted || [];
-
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        return (
-          prod &&
-          (searchRegex.test(prod.title || '') ||
-            searchRegex.test(prod.description || ''))
-        );
-      });
-    }
-
-    if (categoryId) {
-      this.validateObjectId(categoryId);
-      offers = offers.filter((off: any) => {
-        const prod = off.productId;
-        if (!prod || !prod.category) return false;
-        const catId = prod.category._id
-          ? prod.category._id.toString()
-          : prod.category.toString();
-        return catId === categoryId;
-      });
-    }
-
-    // Filter out offers whose restaurant is inactive or soft deleted
-    offers = offers.filter(
-      (off: any) =>
-        off.restaurantId &&
-        off.restaurantId.isActive !== false &&
-        !off.restaurantId.isDeleted,
-    );
-
-    const total = offers.length;
-    const items = offers.slice(skip, skip + limitNum);
-
-    return {
-      items,
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages: Math.ceil(total / limitNum),
-    };
-  }
-
-  async getActiveOfferById(idOrSlug: string) {
     const now = new Date();
-    let offer: any = null;
-
-    const populationArray: any[] = [
-      {
-        path: 'productId',
-        select: 'title description price image category slug isAvailable',
-      },
-      {
-        path: 'restaurantId',
-        select: 'name description phone address isActive isDeleted',
-      },
-    ];
-
-    if (isValidObjectId(idOrSlug)) {
-      offer = await this.offerRepository.findOne({
-        filters: {
-          _id: new Types.ObjectId(idOrSlug),
-          status: OfferStatusEnum.ACTIVE,
-          isDeleted: false,
-          startDate: { $lte: now },
-          endDate: { $gte: now },
-        },
-        select: '-createdBy -isDeleted -updatedAt -__v',
-        populationArray,
-      });
-    }
-
-    if (!offer) {
-      let product: any = null;
-      if (isValidObjectId(idOrSlug)) {
-        product = await this.productRepository.findOne({
-          filters: { _id: new Types.ObjectId(idOrSlug), isDeleted: false },
-        });
-      }
-      if (!product) {
-        product = await this.productRepository.findOne({
-          filters: { slug: idOrSlug, isDeleted: false },
-        });
-      }
-
-      if (product) {
-        offer = await this.offerRepository.findOne({
-          filters: {
-            productId: product._id,
-            status: OfferStatusEnum.ACTIVE,
-            isDeleted: false,
-            startDate: { $lte: now },
-            endDate: { $gte: now },
-          },
-          select: '-createdBy -isDeleted -updatedAt -__v',
-          populationArray,
-        });
-      }
-    }
-
     if (
-      !offer ||
-      !offer.restaurantId ||
-      offer.restaurantId.isActive === false ||
-      offer.restaurantId.isDeleted
+      updatedOffer.status === OfferStatusEnum.SOLD_OUT &&
+      updatedOffer.remainingQuantity > 0 &&
+      now >= updatedOffer.startDate &&
+      now <= updatedOffer.endDate
     ) {
-      throw new NotFoundException('Active offer not found');
+      const conflict = await this.offerRulesService.assertActiveConflict(
+        updatedOffer.productId.toString(),
+        updatedOffer._id.toString(),
+      );
+      if (!conflict) {
+        await this.offerRepository.update({
+          filters: { _id: id },
+          body: { status: OfferStatusEnum.ACTIVE } as any,
+        });
+      }
     }
 
-    return { data: offer };
-  }
-
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async processStatusTransitions() {
-    const now = new Date();
-
-    const scheduledToActives = await this.offerRepository.findMany({
-      filters: {
-        status: OfferStatusEnum.SCHEDULED,
-        startDate: { $lte: now },
-        isDeleted: false,
-      },
-    });
-
-    for (const offer of scheduledToActives) {
+    if (updatedOffer.recommendationId) {
       await this.offerRepository.update({
-        filters: { _id: offer._id },
-        body: { status: OfferStatusEnum.ACTIVE } as any,
-      });
-    }
-
-    const activeToExpireds = await this.offerRepository.findMany({
-      filters: {
-        status: OfferStatusEnum.ACTIVE,
-        endDate: { $lte: now },
-        isDeleted: false,
-      },
-    });
-
-    for (const offer of activeToExpireds) {
-      await this.offerRepository.update({
-        filters: { _id: offer._id },
-        body: { status: OfferStatusEnum.EXPIRED } as any,
-      });
-    }
-
-    const activeToScheduleds = await this.offerRepository.findMany({
-      filters: {
-        status: OfferStatusEnum.ACTIVE,
-        startDate: { $gt: now },
-        isDeleted: false,
-      },
-    });
-
-    for (const offer of activeToScheduleds) {
-      await this.offerRepository.update({
-        filters: { _id: offer._id },
-        body: { status: OfferStatusEnum.SCHEDULED } as any,
+        filters: { _id: id },
+        body: {
+          $inc: {
+            actualUnitsSold: -quantity,
+            actualRevenueRecovered: -lineTotal,
+          },
+        } as any,
       });
     }
   }

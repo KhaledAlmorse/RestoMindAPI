@@ -1,5 +1,4 @@
 import {
-  IsMongoId,
   IsNumber,
   IsDateString,
   IsOptional,
@@ -8,18 +7,25 @@ import {
   Max,
   IsEnum,
 } from 'class-validator';
-import { OfferStatusEnum } from 'src/Common/Types';
+import { OfferStatusEnum, OfferDiscountTypeEnum } from 'src/Common/Types';
 
 export class UpdateOfferDto {
   @IsOptional()
-  @IsMongoId()
-  productId?: string;
+  @IsEnum(OfferDiscountTypeEnum, {
+    message: 'discountType must be a valid OfferDiscountTypeEnum',
+  })
+  discountType?: OfferDiscountTypeEnum;
 
   @IsOptional()
   @IsNumber()
   @Min(1)
   @Max(100)
   discountPercentage?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  offerPrice?: number;
 
   @IsOptional()
   @IsDateString(
@@ -34,6 +40,16 @@ export class UpdateOfferDto {
     { message: 'endDate must be a valid date (YYYY-MM-DD or ISO string)' },
   )
   endDate?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1, { message: 'availableQuantity must be greater than zero' })
+  availableQuantity?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  maxPerCustomer?: number;
 
   @IsOptional()
   @IsBoolean()
