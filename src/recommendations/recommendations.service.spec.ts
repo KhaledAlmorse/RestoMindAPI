@@ -264,7 +264,10 @@ describe('RecommendationsService', () => {
 
       const result = await service.scanSurplus(mockUserId);
 
-      expect(result).toHaveProperty('message', 'No products with recipes found for surplus scan');
+      expect(result).toHaveProperty(
+        'message',
+        'No products with recipes found for surplus scan',
+      );
       expect(result).toHaveProperty('scannedCount', 0);
     });
 
@@ -526,7 +529,9 @@ describe('RecommendationsService', () => {
 
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
-      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
       mockRecommendationRepo.findOne.mockResolvedValue(null);
       mockRecommendationRepo.create.mockResolvedValue(mockRecommendation);
 

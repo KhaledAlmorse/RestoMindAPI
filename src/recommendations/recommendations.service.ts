@@ -197,11 +197,13 @@ export class RecommendationsService {
         const predictedOrders = prediction?.predictedOrders ?? 0;
         const quantityPerPortion = recipeIngredient.quantityPerPortion;
         const expectedConsumption = predictedOrders * quantityPerPortion;
-        const expectedSurplus = Math.max(0, usableAvailableStock - expectedConsumption);
+        const expectedSurplus = Math.max(
+          0,
+          usableAvailableStock - expectedConsumption,
+        );
 
-        const surplusRatio = usableAvailableStock > 0
-          ? expectedSurplus / usableAvailableStock
-          : 0;
+        const surplusRatio =
+          usableAvailableStock > 0 ? expectedSurplus / usableAvailableStock : 0;
 
         let riskLevel = RiskLevelEnum.LOW;
         if (surplusRatio >= 0.7) {
@@ -228,9 +230,12 @@ export class RecommendationsService {
       if (prediction?.predictedOrders) {
         if (prediction.dailyBreakdown?.length) {
           const totalPredicted = prediction.dailyBreakdown.reduce(
-            (sum, d) => sum + d.predictedQuantity, 0,
+            (sum, d) => sum + d.predictedQuantity,
+            0,
           );
-          avgDailySales = Math.round(totalPredicted / prediction.dailyBreakdown.length);
+          avgDailySales = Math.round(
+            totalPredicted / prediction.dailyBreakdown.length,
+          );
         } else {
           avgDailySales = Math.round(prediction.predictedOrders / 7);
         }
@@ -248,7 +253,10 @@ export class RecommendationsService {
         });
 
         if (sales?.length) {
-          const totalSold = sales.reduce((sum, s) => sum + (s.quantitySold || 0), 0);
+          const totalSold = sales.reduce(
+            (sum, s) => sum + (s.quantitySold || 0),
+            0,
+          );
           avgDailySales = Math.round(totalSold / 14);
         }
       }

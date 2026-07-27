@@ -166,7 +166,7 @@ export class OrdersService {
           productId: pId,
           title: title,
           price: origPrice,
-          offerPrice: offPrice,
+          discountedPrice: offPrice,
           quantity: qty,
           lineTotal: lineTot,
         };

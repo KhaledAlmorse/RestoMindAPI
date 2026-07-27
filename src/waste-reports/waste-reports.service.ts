@@ -94,7 +94,12 @@ export class WasteReportsService {
     const restaurantId = await this.getManagerRestaurantId(userId);
 
     const pipeline = [
-      { $match: { restaurantId: new Types.ObjectId(restaurantId.toString()), isDeleted: false } },
+      {
+        $match: {
+          restaurantId: new Types.ObjectId(restaurantId.toString()),
+          isDeleted: false,
+        },
+      },
       {
         $group: {
           _id: '$ingredientId',
@@ -133,7 +138,11 @@ export class WasteReportsService {
       {
         $project: {
           _id: 0,
-          ingredient: { name: '$ingredient.name', unit: '$ingredient.unit', costPerUnit: '$ingredient.costPerUnit' },
+          ingredient: {
+            name: '$ingredient.name',
+            unit: '$ingredient.unit',
+            costPerUnit: '$ingredient.costPerUnit',
+          },
           totalExpectedConsumption: 1,
           totalUsableStock: 1,
           totalExpectedSurplus: 1,
@@ -142,7 +151,8 @@ export class WasteReportsService {
       },
     ];
 
-    const aggregatedReports = await this.wasteReportRepository.aggregate(pipeline);
+    const aggregatedReports =
+      await this.wasteReportRepository.aggregate(pipeline);
 
     const totalSurplusQuantity = aggregatedReports.reduce(
       (sum, r) => sum + r.totalExpectedSurplus,
@@ -150,7 +160,8 @@ export class WasteReportsService {
     );
 
     const totalEstimatedWasteCost = aggregatedReports.reduce(
-      (sum, r) => sum + (r.totalExpectedSurplus || 0) * ((r.ingredient?.costPerUnit) || 0),
+      (sum, r) =>
+        sum + (r.totalExpectedSurplus || 0) * (r.ingredient?.costPerUnit || 0),
       0,
     );
 

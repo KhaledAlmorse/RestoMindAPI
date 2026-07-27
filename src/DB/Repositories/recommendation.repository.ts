@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { BaseService } from '../base.service';
-import { Recommendation, RecommendationType } from '../Models/recommendation.model';
+import {
+  Recommendation,
+  RecommendationType,
+} from '../Models/recommendation.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 
