@@ -30,14 +30,9 @@ export class OfferRulesService {
       OfferStatusEnum.ACTIVE,
       OfferStatusEnum.CANCELLED,
     ],
-    [OfferStatusEnum.ACTIVE]: [
-      OfferStatusEnum.SOLD_OUT,
-      OfferStatusEnum.EXPIRED,
-      OfferStatusEnum.CANCELLED,
-    ],
+    [OfferStatusEnum.ACTIVE]: [OfferStatusEnum.CANCELLED],
     [OfferStatusEnum.SOLD_OUT]: [
       OfferStatusEnum.ACTIVE,
-      OfferStatusEnum.EXPIRED,
       OfferStatusEnum.CANCELLED,
     ],
     [OfferStatusEnum.EXPIRED]: [],
@@ -94,6 +89,11 @@ export class OfferRulesService {
   }
 
   assertStatusTransition(from: OfferStatusEnum, to: OfferStatusEnum) {
+    if (to === OfferStatusEnum.EXPIRED || to === OfferStatusEnum.SOLD_OUT) {
+      throw new BadRequestException(
+        `Status cannot be manually changed to "${to}"`,
+      );
+    }
     if (from === to) return;
     const allowed = this.STATUS_TRANSITIONS[from] || [];
     if (!allowed.includes(to)) {

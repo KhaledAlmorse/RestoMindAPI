@@ -243,18 +243,17 @@ export class OffersService {
       updateBody.availableQuantity = dto.availableQuantity;
       updateBody.remainingQuantity = newRemaining;
 
-      if (
-        offer.status === OfferStatusEnum.SOLD_OUT &&
-        newRemaining > 0 &&
-        now >= offer.startDate &&
-        now <= offer.endDate
-      ) {
-        const conflict = await this.offerRulesService.assertActiveConflict(
-          offer.productId.toString(),
-          id,
-        );
-        if (!conflict) {
-          updateBody.status = OfferStatusEnum.ACTIVE;
+      if (offer.status === OfferStatusEnum.SOLD_OUT && newRemaining > 0) {
+        if (now < offer.startDate) {
+          updateBody.status = OfferStatusEnum.SCHEDULED;
+        } else if (now <= offer.endDate) {
+          const conflict = await this.offerRulesService.assertActiveConflict(
+            offer.productId.toString(),
+            id,
+          );
+          if (!conflict) {
+            updateBody.status = OfferStatusEnum.ACTIVE;
+          }
         }
       }
     }
@@ -320,6 +319,21 @@ export class OffersService {
     if (dto.status !== undefined) {
       this.offerRulesService.assertStatusTransition(offer.status, dto.status);
       if (dto.status === OfferStatusEnum.ACTIVE) {
+        const effectiveRemaining =
+          updateBody.remainingQuantity !== undefined
+            ? updateBody.remainingQuantity
+            : offer.remainingQuantity;
+        if (effectiveRemaining <= 0) {
+          throw new BadRequestException(
+            'Cannot change status of a sold-out offer to active without increasing quantity',
+          );
+        }
+        const effectiveStartDateVal = updateBody.startDate ?? offer.startDate;
+        if (new Date(effectiveStartDateVal) > now) {
+          throw new BadRequestException(
+            'status cannot be active when startDate is in the future',
+          );
+        }
         const conflict = await this.offerRulesService.assertActiveConflict(
           offer.productId.toString(),
           id,
