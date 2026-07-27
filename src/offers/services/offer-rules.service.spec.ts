@@ -96,7 +96,22 @@ describe('OfferRulesService', () => {
       ).toThrow(BadRequestException);
     });
 
-    it('treats a same-status transition as a no-op', () => {
+    it('rejects manual transitions to EXPIRED or SOLD_OUT', () => {
+      expect(() =>
+        service.assertStatusTransition(
+          OfferStatusEnum.ACTIVE,
+          OfferStatusEnum.EXPIRED,
+        ),
+      ).toThrow(BadRequestException);
+      expect(() =>
+        service.assertStatusTransition(
+          OfferStatusEnum.ACTIVE,
+          OfferStatusEnum.SOLD_OUT,
+        ),
+      ).toThrow(BadRequestException);
+    });
+
+    it('treats a same-status transition as a no-op (except EXPIRED or SOLD_OUT)', () => {
       expect(() =>
         service.assertStatusTransition(
           OfferStatusEnum.ACTIVE,
