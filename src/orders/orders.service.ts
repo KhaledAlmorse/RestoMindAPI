@@ -154,7 +154,7 @@ export class OrdersService {
           : item.offerId?.toString() || item.offerId || '';
         const title = item.productTitle || item.title || '';
         const origPrice = item.originalPrice ?? item.price ?? 0;
-        const offPrice = item.offerPrice ?? item.discountedPrice ?? 0;
+        const offPrice = item.offerPrice ?? origPrice;
         const qty = item.quantity ?? 1;
         const lineTot = item.lineTotal ?? offPrice * qty;
         const discPct = item.discountPercentage ?? 0;
@@ -164,7 +164,7 @@ export class OrdersService {
           productId: pId,
           title: title,
           price: origPrice,
-          discountedPrice: offPrice,
+          offerPrice: offPrice,
           quantity: qty,
           lineTotal: lineTot,
         };
@@ -267,7 +267,7 @@ export class OrdersService {
           : item.restaurantId?.toString() || restaurantObj._id,
         restaurantName: item.restaurantName || restaurantObj.name,
         originalPrice: item.originalPrice ?? item.price ?? 0,
-        offerPrice: item.offerPrice ?? item.discountedPrice ?? 0,
+        offerPrice: item.offerPrice ?? item.originalPrice ?? item.price ?? 0,
         discountPercentage: item.discountPercentage ?? 0,
         quantity: item.quantity ?? 1,
         lineTotal:

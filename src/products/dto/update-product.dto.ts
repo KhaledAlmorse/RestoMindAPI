@@ -29,12 +29,6 @@ export class UpdateProductDto {
   @IsOptional()
   price?: number;
 
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  discountedPrice?: number;
-
   @IsMongoId()
   @IsOptional()
   category?: string;

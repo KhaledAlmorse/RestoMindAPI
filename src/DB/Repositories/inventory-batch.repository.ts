@@ -66,9 +66,15 @@ export class InventoryBatchRepository extends BaseService<InventoryBatchType> {
   async findMany(options: {
     filters?: Record<string, any>;
     populationArray?: any[];
+    sort?: string;
+    order?: 'asc' | 'desc';
   }) {
-    const { filters = {}, populationArray = [] } = options;
+    const { filters = {}, populationArray = [], sort, order } = options;
     const query = this.inventoryBatchModel.find(filters);
+    if (sort) {
+      const sortDirection = order === 'asc' ? 1 : -1;
+      query.sort({ [sort]: sortDirection });
+    }
     for (const pop of populationArray) {
       query.populate(pop);
     }

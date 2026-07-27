@@ -176,7 +176,9 @@ export class PurchaseOrdersService {
     }
 
     if (po.status === PurchaseOrderStatusEnum.CANCELLED) {
-      throw new BadRequestException('Cannot receive a cancelled purchase order');
+      throw new BadRequestException(
+        'Cannot receive a cancelled purchase order',
+      );
     }
 
     const createdBatches: any[] = [];
@@ -230,6 +232,53 @@ export class PurchaseOrdersService {
       message: 'Purchase order received successfully',
       data: updatedPo,
       createdBatches,
+    };
+  }
+
+  async updatePurchaseOrderStatus(
+    id: string,
+    newStatus: PurchaseOrderStatusEnum,
+    userId: string,
+  ) {
+    const restaurantId = await this.getManagerRestaurantId(userId);
+    this.validateObjectId(id);
+
+    const po = await this.purchaseOrderRepository.findOne({
+      filters: {
+        _id: new Types.ObjectId(id),
+        restaurantId,
+        isDeleted: false,
+      },
+    });
+
+    if (!po) {
+      throw new NotFoundException('Purchase order not found');
+    }
+
+    if (po.status === PurchaseOrderStatusEnum.RECEIVED) {
+      throw new BadRequestException(
+        'Cannot update status of a received purchase order',
+      );
+    }
+
+    if (po.status === PurchaseOrderStatusEnum.CANCELLED) {
+      throw new BadRequestException(
+        'Cannot update status of a cancelled purchase order',
+      );
+    }
+
+    if (newStatus === PurchaseOrderStatusEnum.RECEIVED) {
+      return this.receivePurchaseOrder(id, userId);
+    }
+
+    const updatedPo = await this.purchaseOrderRepository.update({
+      filters: { _id: po._id },
+      body: { status: newStatus } as any,
+    });
+
+    return {
+      message: `Purchase order status updated to ${newStatus}`,
+      data: updatedPo,
     };
   }
 }

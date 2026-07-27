@@ -12,6 +12,7 @@ import {
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { QueryPurchaseOrderDto } from './dto/query-purchase-order.dto';
+import { UpdatePurchaseOrderStatusDto } from './dto/update-purchase-order-status.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import type { IAuthUser } from 'src/Common/Types';
@@ -57,6 +58,22 @@ export class PurchaseOrdersController {
   ) {
     const result = await this.purchaseOrdersService.receivePurchaseOrder(
       id,
+      authUser.user._id.toString(),
+    );
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  @Patch(':id/status')
+  @Auth('manager')
+  async updatePurchaseOrderStatus(
+    @Param('id') id: string,
+    @Body() body: UpdatePurchaseOrderStatusDto,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const result = await this.purchaseOrdersService.updatePurchaseOrderStatus(
+      id,
+      body.status,
       authUser.user._id.toString(),
     );
     res.status(HttpStatus.OK).json(result);

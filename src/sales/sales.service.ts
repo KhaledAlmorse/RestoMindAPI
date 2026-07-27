@@ -86,7 +86,7 @@ export class SalesService {
       order: query.order || 'desc',
       populationArray: [
         { path: 'restaurantId', select: 'name title address' },
-        { path: 'productId', select: 'title category price discountedPrice' },
+        { path: 'productId', select: 'title category price' },
       ],
     });
 

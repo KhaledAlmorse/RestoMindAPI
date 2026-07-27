@@ -107,13 +107,6 @@ export class ProductsService {
     }
 
     const price = body.price;
-    const discountedPrice =
-      body.discountedPrice !== undefined ? body.discountedPrice : price;
-    if (discountedPrice > price) {
-      throw new BadRequestException(
-        'Discounted price cannot be greater than the original price',
-      );
-    }
 
     this.validateObjectId(body.category);
     const category = await this.categoryRepository.findOne({
@@ -158,7 +151,6 @@ export class ProductsService {
     const newProduct = await this.productRepository.create({
       ...body,
       _id: productId,
-      discountedPrice,
       slug,
       category: new Types.ObjectId(body.category),
       restaurantId: targetRestaurantId,
