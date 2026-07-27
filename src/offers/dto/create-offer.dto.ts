@@ -8,16 +8,28 @@ import {
   Min,
   Max,
 } from 'class-validator';
-import { OfferStatusEnum } from 'src/Common/Types';
+import { OfferStatusEnum, OfferDiscountTypeEnum } from 'src/Common/Types';
 
 export class CreateOfferDto {
   @IsMongoId()
   productId!: string;
 
+  @IsOptional()
+  @IsEnum(OfferDiscountTypeEnum, {
+    message: 'discountType must be a valid OfferDiscountTypeEnum',
+  })
+  discountType?: OfferDiscountTypeEnum;
+
+  @IsOptional()
   @IsNumber()
   @Min(1)
   @Max(100)
-  discountPercentage!: number;
+  discountPercentage?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  offerPrice?: number;
 
   @IsDateString(
     {},

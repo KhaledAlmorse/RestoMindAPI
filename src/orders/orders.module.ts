@@ -18,6 +18,7 @@ import {
   SalesTransactionModel,
 } from 'src/DB/Models';
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
+import { OffersModule } from 'src/offers/offers.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { RestaurantModule } from 'src/restaurant/restaurant.module';
     OfferModel,
     SalesTransactionModel,
     RestaurantModule,
+    OffersModule,
   ],
   controllers: [OrdersController],
   providers: [

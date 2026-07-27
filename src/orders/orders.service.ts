@@ -27,6 +27,7 @@ import {
   SalesSourceEnum,
 } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
+import { OffersService } from 'src/offers/offers.service';
 
 @Injectable()
 export class OrdersService {
@@ -41,6 +42,7 @@ export class OrdersService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly offerRepository: OfferRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
+    private readonly offersService: OffersService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -791,7 +793,6 @@ export class OrdersService {
     }
 
     // Perform cancellation for all active child orders in group
-    const now = new Date();
     for (const childOrder of childOrders) {
       if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
 
@@ -805,42 +806,11 @@ export class OrdersService {
       for (const item of childOrder.items || []) {
         if (!item.offerId) continue;
         const offerId = item.offerId?._id || item.offerId;
-        const quantity = item.quantity;
-        const lineTotal = item.lineTotal || 0;
-
-        await this.offerRepository.update({
-          filters: { _id: offerId },
-          body: { $inc: { remainingQuantity: quantity } } as any,
-        });
-
-        const updatedOffer = await this.offerRepository.findOne({
-          filters: { _id: offerId },
-        });
-
-        if (
-          updatedOffer &&
-          updatedOffer.status === OfferStatusEnum.SOLD_OUT &&
-          updatedOffer.remainingQuantity > 0 &&
-          now >= updatedOffer.startDate &&
-          now <= updatedOffer.endDate
-        ) {
-          await this.offerRepository.update({
-            filters: { _id: offerId },
-            body: { status: OfferStatusEnum.ACTIVE } as any,
-          });
-        }
-
-        if (updatedOffer && updatedOffer.recommendationId) {
-          await this.offerRepository.update({
-            filters: { _id: offerId },
-            body: {
-              $inc: {
-                actualUnitsSold: -quantity,
-                actualRevenueRecovered: -lineTotal,
-              },
-            } as any,
-          });
-        }
+        await this.offersService.restockFromCancelledOrderItem(
+          offerId,
+          item.quantity,
+          item.lineTotal || 0,
+        );
       }
     }
 
@@ -1040,46 +1010,14 @@ export class OrdersService {
 
     // Handle CANCELLED logic
     if (status === OrderStatusEnum.CANCELLED) {
-      const now = new Date();
       for (const item of order.items || []) {
         if (!item.offerId) continue;
         const offerId = (item.offerId as any)._id || item.offerId;
-        const quantity = item.quantity;
-        const lineTotal = item.lineTotal || 0;
-
-        await this.offerRepository.update({
-          filters: { _id: offerId },
-          body: { $inc: { remainingQuantity: quantity } } as any,
-        });
-
-        const updatedOffer = await this.offerRepository.findOne({
-          filters: { _id: offerId },
-        });
-
-        if (
-          updatedOffer &&
-          updatedOffer.status === OfferStatusEnum.SOLD_OUT &&
-          updatedOffer.remainingQuantity > 0 &&
-          now >= updatedOffer.startDate &&
-          now <= updatedOffer.endDate
-        ) {
-          await this.offerRepository.update({
-            filters: { _id: offerId },
-            body: { status: OfferStatusEnum.ACTIVE } as any,
-          });
-        }
-
-        if (updatedOffer && updatedOffer.recommendationId) {
-          await this.offerRepository.update({
-            filters: { _id: offerId },
-            body: {
-              $inc: {
-                actualUnitsSold: -quantity,
-                actualRevenueRecovered: -lineTotal,
-              },
-            } as any,
-          });
-        }
+        await this.offersService.restockFromCancelledOrderItem(
+          offerId,
+          item.quantity,
+          item.lineTotal || 0,
+        );
       }
     }
 

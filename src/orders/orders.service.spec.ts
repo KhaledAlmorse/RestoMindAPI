@@ -14,6 +14,7 @@ import { getConnectionToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { NotFoundException } from '@nestjs/common';
 import { OrderStatusEnum } from 'src/Common/Types';
+import { OffersService } from 'src/offers/offers.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -46,6 +47,10 @@ describe('OrdersService', () => {
         { provide: RestaurantRepository, useValue: {} },
         { provide: OfferRepository, useValue: {} },
         { provide: SalesTransactionRepository, useValue: {} },
+        {
+          provide: OffersService,
+          useValue: { restockFromCancelledOrderItem: jest.fn() },
+        },
         {
           provide: getConnectionToken(),
           useValue: {

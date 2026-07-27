@@ -61,6 +61,11 @@ export enum StockTransactionTypeEnum {
   RETURN_TO_SUPPLIER = 'return_to_supplier',
 }
 
+export enum OfferDiscountTypeEnum {
+  PERCENTAGE = 'percentage',
+  FIXED = 'fixed',
+}
+
 export enum WasteReasonEnum {
   EXPIRED = 'expired',
   OVERPRODUCTION = 'overproduction',
@@ -116,5 +121,3 @@ export enum ConfidenceLevelEnum {
   MEDIUM = 'medium',
   LOW = 'low',
 }
-
-

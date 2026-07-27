@@ -1,6 +1,10 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
+import {
+  OfferStatusEnum,
+  OfferSourceEnum,
+  OfferDiscountTypeEnum,
+} from 'src/Common/Types';
 
 @Schema({ timestamps: true })
 export class Offer {
@@ -18,6 +22,13 @@ export class Offer {
 
   @Prop({ type: Number, required: true, min: 1, max: 100 })
   discountPercentage!: number;
+
+  @Prop({
+    type: String,
+    enum: Object.values(OfferDiscountTypeEnum),
+    default: OfferDiscountTypeEnum.PERCENTAGE,
+  })
+  discountType!: OfferDiscountTypeEnum;
 
   @Prop({ type: Number, required: true, min: 1 })
   availableQuantity!: number;
@@ -75,6 +86,7 @@ export class Offer {
 
 const OfferSchema = SchemaFactory.createForClass(Offer);
 OfferSchema.index({ productId: 1, status: 1 });
+OfferSchema.index({ productId: 1, status: 1, startDate: 1, endDate: 1 });
 OfferSchema.index({ restaurantId: 1, status: 1 });
 OfferSchema.index({ status: 1, startDate: 1 });
 OfferSchema.index({ status: 1, endDate: 1 });
