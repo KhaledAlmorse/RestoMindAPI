@@ -263,25 +263,46 @@ export class WeeklyPredictionService {
       featuresUsed = aiResponse.featuresUsed || featuresUsed;
       factors = aiResponse.factors || [];
 
-      if (
-        aiResponse.dailyBreakdown &&
-        Array.isArray(aiResponse.dailyBreakdown) &&
-        aiResponse.dailyBreakdown.length > 0
-      ) {
-        dailyBreakdown = aiResponse.dailyBreakdown.map(
-          (item: any, idx: number) => {
-            const qty =
-              item?.predictedQuantity ??
-              item?.predictedOrders ??
-              item?.quantity ??
-              item?.predictedQty ??
-              Math.round(predictedOrders / 7);
-            return {
-              date: item?.date || dailyDates[idx] || targetWeekStr,
-              predictedQuantity: Number.isNaN(Number(qty)) ? 0 : Number(qty),
-            };
-          },
+      const rawBreakdown = Array.isArray(aiResponse.dailyBreakdown)
+        ? aiResponse.dailyBreakdown
+        : [];
+
+      if (rawBreakdown.length > 0) {
+        // `predictedQuantity` is the contract. The `qty` fallback is a
+        // transitional alias for older builds of the AI service; when it is the
+        // only key present we log, because it means the two sides have drifted.
+        let usedLegacyKey = false;
+        dailyBreakdown = rawBreakdown.map((item: any, idx: number) => {
+          let raw = item?.predictedQuantity;
+          if (raw === undefined || raw === null) {
+            raw = item?.qty;
+            if (raw !== undefined && raw !== null) usedLegacyKey = true;
+          }
+          const parsed = Number(raw);
+          return {
+            date: item?.date || dailyDates[idx] || targetWeekStr,
+            predictedQuantity: Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0,
+          };
+        });
+
+        if (usedLegacyKey) {
+          this.logger.warn(
+            `AI dailyBreakdown used the deprecated 'qty' key for product ${productId.toString()}. Upgrade the AI service.`,
+          );
+        }
+
+        // The weekly total is authoritative only if it reconciles with the days.
+        // The bridge sums rounded dailies, so a mismatch means a real drift.
+        const breakdownSum = dailyBreakdown.reduce(
+          (acc, d) => acc + d.predictedQuantity,
+          0,
         );
+        if (breakdownSum !== predictedOrders) {
+          this.logger.warn(
+            `dailyBreakdown sum (${breakdownSum}) != predictedOrders (${predictedOrders}) for product ${productId.toString()}; trusting the daily rows.`,
+          );
+          predictedOrders = breakdownSum;
+        }
       } else {
         const perDay = Math.round(predictedOrders / 7);
         dailyBreakdown = dailyDates.map((d) => ({

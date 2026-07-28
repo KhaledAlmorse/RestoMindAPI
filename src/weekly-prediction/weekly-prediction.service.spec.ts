@@ -206,4 +206,55 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.avgDailySales).toBeCloseTo(0.43, 2);
   });
+
+  it('persists the model daily curve instead of flattening it', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 140 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const aiBody = {
+      modelVersionId: 'restomind-bridge/rule_based-v0.1',
+      predictedOrders: 140,
+      confidence: 'low',
+      featuresUsed: {},
+      factors: [],
+      dailyBreakdown: [
+        { date: '2026-07-27', predictedQuantity: 10, qty: 10 },
+        { date: '2026-07-28', predictedQuantity: 12, qty: 12 },
+        { date: '2026-07-29', predictedQuantity: 18, qty: 18 },
+        { date: '2026-07-30', predictedQuantity: 20, qty: 20 },
+        { date: '2026-07-31', predictedQuantity: 30, qty: 30 },
+        { date: '2026-08-01', predictedQuantity: 28, qty: 28 },
+        { date: '2026-08-02', predictedQuantity: 22, qty: 22 },
+      ],
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => aiBody,
+    }) as any;
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(result.dailyBreakdown.map((d: any) => d.predictedQuantity)).toEqual([
+      10, 12, 18, 20, 30, 28, 22,
+    ]);
+    const sum = result.dailyBreakdown.reduce(
+      (a: number, d: any) => a + d.predictedQuantity,
+      0,
+    );
+    expect(sum).toBe(result.predictedOrders);
+  });
 });
