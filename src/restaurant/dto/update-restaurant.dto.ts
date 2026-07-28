@@ -5,7 +5,7 @@ import {
   ValidateNested,
   IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { RestaurantAddressDto } from './create-restaurant.dto';
 
 export class UpdateRestaurantDto {
@@ -30,6 +30,10 @@ export class UpdateRestaurantDto {
   @Type(() => RestaurantAddressDto)
   address?: RestaurantAddressDto;
 
+  @Transform(
+    ({ value }) =>
+      value === 'true' || value === true || value === 1 || value === '1',
+  )
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;

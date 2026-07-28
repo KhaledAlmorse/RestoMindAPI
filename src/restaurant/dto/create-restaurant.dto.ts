@@ -4,8 +4,9 @@ import {
   IsMongoId,
   IsOptional,
   ValidateNested,
+  IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class RestaurantAddressDto {
   @IsString()
@@ -42,4 +43,12 @@ export class CreateRestaurantDto {
   @ValidateNested()
   @Type(() => RestaurantAddressDto)
   address?: RestaurantAddressDto;
+
+  @Transform(
+    ({ value }) =>
+      value === 'true' || value === true || value === 1 || value === '1',
+  )
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 }
