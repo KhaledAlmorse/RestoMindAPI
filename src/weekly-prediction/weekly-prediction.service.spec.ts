@@ -179,4 +179,31 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       expect(filters).not.toHaveProperty('transactionDate');
     }
   });
+
+  it('sends a fractional avgDailySales instead of rounding it to zero', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Slow Seller',
+      category: { name: 'Bread' },
+    });
+    // 6 units over the 14-day window -> 0.43/day, which must not round to 0.
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 6 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const fetchMock = jest.fn().mockRejectedValue(new Error('down'));
+    global.fetch = fetchMock as any;
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.avgDailySales).toBeCloseTo(0.43, 2);
+  });
 });

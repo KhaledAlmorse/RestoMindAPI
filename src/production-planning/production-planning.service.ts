@@ -248,9 +248,8 @@ export class ProductionPlanningService {
     const preparedProducts = products.map((prod: any) => {
       const pIdStr = prod._id.toString();
       const totalSold = salesMap.get(pIdStr) || 0;
-      const avgDailySales = Math.round(
-        totalSold / AVG_DAILY_SALES_LOOKBACK_DAYS,
-      );
+      const avgDailySales =
+        Math.round((totalSold / AVG_DAILY_SALES_LOOKBACK_DAYS) * 100) / 100;
       const categoryName =
         prod.category && typeof prod.category === 'object' && prod.category.name
           ? prod.category.name

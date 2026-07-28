@@ -163,9 +163,11 @@ export class WeeklyPredictionService {
       (sum, s) => sum + (s.quantitySold || 0),
       0,
     );
-    const avgDailySales = Math.round(
-      totalQtySold / AVG_DAILY_SALES_LOOKBACK_DAYS,
-    );
+    // Keep two decimals: rounding to an integer collapses low-volume products
+    // to 0, which the model then treats as "no estimate" and replaces with its
+    // DEFAULT_DAILY_LEVEL of 40.
+    const avgDailySales =
+      Math.round((totalQtySold / AVG_DAILY_SALES_LOOKBACK_DAYS) * 100) / 100;
 
     // 2. Check promotionActive from Offer collection (Requirement 7)
     const promotionActive = await this.checkPromotionActive(
@@ -313,7 +315,9 @@ export class WeeklyPredictionService {
       );
 
       predictedOrders =
-        totalLastWeekQty > 0 ? totalLastWeekQty : avgDailySales * 7;
+        totalLastWeekQty > 0
+          ? totalLastWeekQty
+          : Math.round(avgDailySales * 7);
 
       modelVersionId = 'fallback-naive-v1';
       confidence = ConfidenceLevelEnum.LOW;
