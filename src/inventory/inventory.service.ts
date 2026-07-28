@@ -13,7 +13,7 @@ import {
   UserRepository,
   WasteEventRepository,
 } from 'src/DB/Repositories';
-import { CreateBatchDto } from './dto/create-batch.dto';
+import { CreateBatchDto, CreateBatchesDto } from './dto/create-batch.dto';
 import { QueryBatchDto } from './dto/query-batch.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { QueryStockTransactionDto } from './dto/query-stock-transaction.dto';
@@ -68,33 +68,66 @@ export class InventoryService {
 
   // --- Batches ---
 
-  async createBatch(dto: CreateBatchDto, userId: string) {
+  async createBatch(
+    dto: CreateBatchDto | CreateBatchesDto | CreateBatchDto[],
+    userId: string,
+  ) {
     const restaurantId = await this.getManagerRestaurantId(userId);
-    this.validateObjectId(dto.ingredientId);
 
-    const ingredient = await this.ingredientRepository.findOne({
-      filters: {
-        _id: new Types.ObjectId(dto.ingredientId),
-        restaurantId,
-        isDeleted: false,
-      },
-    });
+    let batchItems: CreateBatchDto[] = [];
+    let isSingleInput = false;
 
-    if (!ingredient) {
-      throw new NotFoundException('Ingredient not found in your restaurant');
+    if (Array.isArray(dto)) {
+      batchItems = dto;
+    } else if ('batches' in dto && Array.isArray((dto as CreateBatchesDto).batches)) {
+      batchItems = (dto as CreateBatchesDto).batches;
+    } else {
+      batchItems = [dto as CreateBatchDto];
+      isSingleInput = true;
     }
 
-    const batch = await this.inventoryBatchRepository.create({
-      restaurantId,
-      ingredientId: new Types.ObjectId(dto.ingredientId),
-      batchNumber: dto.batchNumber.trim(),
-      quantityRemaining: dto.quantityRemaining,
-      unitCost: dto.unitCost,
-      expiryDate: new Date(dto.expiryDate),
-      receivedDate: dto.receivedDate ? new Date(dto.receivedDate) : new Date(),
-    } as any);
+    if (batchItems.length === 0) {
+      throw new BadRequestException('At least one batch item must be provided');
+    }
 
-    return { data: batch };
+    const createdBatches: any[] = [];
+    for (const item of batchItems) {
+      this.validateObjectId(item.ingredientId);
+
+      const ingredient = await this.ingredientRepository.findOne({
+        filters: {
+          _id: new Types.ObjectId(item.ingredientId),
+          restaurantId,
+          isDeleted: false,
+        },
+      });
+
+      if (!ingredient) {
+        throw new NotFoundException(
+          `Ingredient ${item.ingredientId} not found in your restaurant`,
+        );
+      }
+
+      const batch = await this.inventoryBatchRepository.create({
+        restaurantId,
+        ingredientId: new Types.ObjectId(item.ingredientId),
+        batchNumber: item.batchNumber.trim(),
+        quantityRemaining: item.quantityRemaining,
+        unitCost: item.unitCost,
+        expiryDate: new Date(item.expiryDate),
+        receivedDate: item.receivedDate
+          ? new Date(item.receivedDate)
+          : new Date(),
+      } as any);
+
+      createdBatches.push(batch);
+    }
+
+    if (isSingleInput) {
+      return { data: createdBatches[0] };
+    }
+
+    return { data: createdBatches, count: createdBatches.length };
   }
 
   async getBatches(query: QueryBatchDto, userId: string) {

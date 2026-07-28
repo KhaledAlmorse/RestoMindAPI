@@ -8,7 +8,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
-import { CreateBatchDto } from './dto/create-batch.dto';
+import { CreateBatchDto, CreateBatchesDto } from './dto/create-batch.dto';
 import { QueryBatchDto } from './dto/query-batch.dto';
 import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { QueryStockTransactionDto } from './dto/query-stock-transaction.dto';
@@ -27,7 +27,7 @@ export class InventoryController {
   @Post('batches')
   @Auth('manager')
   async createBatch(
-    @Body() body: CreateBatchDto,
+    @Body() body: CreateBatchDto | CreateBatchesDto | CreateBatchDto[],
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {

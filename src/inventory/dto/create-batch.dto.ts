@@ -1,4 +1,7 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
+  IsArray,
   IsDateString,
   IsMongoId,
   IsNotEmpty,
@@ -6,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 export class CreateBatchDto {
@@ -32,4 +36,12 @@ export class CreateBatchDto {
   @IsDateString()
   @IsOptional()
   receivedDate?: string;
+}
+
+export class CreateBatchesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CreateBatchDto)
+  batches!: CreateBatchDto[];
 }
