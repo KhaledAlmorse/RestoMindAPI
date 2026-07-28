@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { DailyProductionPlanModel } from '../DB/Models/daily-production-plan.model';
 import { ProductModel } from '../DB/Models/product.model';
 import { RestaurantModel } from '../DB/Models/restaurant.model';
@@ -16,7 +15,6 @@ import { ProductionPlanningService } from './production-planning.service';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     DailyProductionPlanModel,
     RestaurantModel,
     UserModel,

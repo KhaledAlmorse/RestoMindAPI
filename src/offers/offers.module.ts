@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { OffersService } from './offers.service';
 import { OffersController } from './offers.controller';
 import { OfferPricingService } from './services/offer-pricing.service';
@@ -22,7 +21,6 @@ import {
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     OfferModel,
     ProductModel,
     RestaurantModel,
