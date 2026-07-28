@@ -124,7 +124,9 @@ export class WeeklyPredictionService {
           $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED],
         },
         isDeleted: false,
-        startDate: { $lte: targetWeekEnd },
+        // Half-open window [start, start+7): an offer beginning on day 8 is
+        // next week's promotion, not this one's.
+        startDate: { $lt: targetWeekEnd },
         endDate: { $gte: targetWeekStart },
       },
     });

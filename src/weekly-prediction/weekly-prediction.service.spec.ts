@@ -382,4 +382,23 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     const [y, m, d] = resolved.split('-').map(Number);
     expect(new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()).toBe(0);
   });
+
+  it('uses a half-open week window so day 8 does not count as active', async () => {
+    mockOfferRepo.findOne.mockResolvedValue(null);
+
+    await service.checkPromotionActive(
+      mockRestaurantId,
+      mockProductId,
+      '2026-07-27',
+    );
+
+    const filters = mockOfferRepo.findOne.mock.calls[0][0].filters;
+    // The week is [2026-07-27T00:00Z, 2026-08-03T00:00Z).
+    expect(filters.startDate).toEqual({
+      $lt: new Date('2026-08-03T00:00:00.000Z'),
+    });
+    expect(filters.endDate).toEqual({
+      $gte: new Date('2026-07-27T00:00:00.000Z'),
+    });
+  });
 });
