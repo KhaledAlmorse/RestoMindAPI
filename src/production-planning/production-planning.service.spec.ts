@@ -11,6 +11,7 @@ import { UserRepository } from '../DB/Repositories/user.repository';
 import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { ProductionPlanningService } from './production-planning.service';
+import { AiClientService } from '../Common/Services/ai-client.service';
 
 describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', () => {
   let service: ProductionPlanningService;
@@ -62,6 +63,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductionPlanningService,
+        AiClientService,
         { provide: DailyProductionPlanRepository, useValue: mockPlanRepo },
         { provide: ProductRepository, useValue: mockProductRepo },
         { provide: SalesTransactionRepository, useValue: mockSalesRepo },

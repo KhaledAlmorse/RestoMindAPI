@@ -28,6 +28,7 @@ import {
   WasteReportRepository,
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 describe('RecommendationsService', () => {
   let service: RecommendationsService;
@@ -156,6 +157,7 @@ describe('RecommendationsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RecommendationsService,
+        AiClientService,
         { provide: RecommendationRepository, useValue: mockRecommendationRepo },
         { provide: WasteReportRepository, useValue: mockWasteReportRepo },
         { provide: ProductRepository, useValue: mockProductRepo },
@@ -264,14 +266,15 @@ describe('RecommendationsService', () => {
 
       const result = await service.scanSurplus(mockUserId);
 
-      expect(result).toHaveProperty(
+      expect(result.data).toHaveProperty(
         'message',
         'No products with recipes found for surplus scan',
       );
-      expect(result).toHaveProperty('scannedCount', 0);
+      expect(result.data).toHaveProperty('scannedCount', 0);
+      expect(result.degraded).toBe(false);
     });
 
-    it('should throw ServiceUnavailableException when surplus scan AI service is unreachable', async () => {
+    it('should return a degraded response (not throw) when surplus scan AI service is unreachable', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
@@ -279,9 +282,10 @@ describe('RecommendationsService', () => {
 
       global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
 
-      await expect(service.scanSurplus(mockUserId)).rejects.toThrow(
-        ServiceUnavailableException,
-      );
+      const result = await service.scanSurplus(mockUserId);
+
+      expect(result.degraded).toBe(true);
+      expect(result.degradedReason).toContain('Network error');
     });
 
     it('should send closeHour as integer 22 to AI service during scanSurplus', async () => {
@@ -561,6 +565,34 @@ describe('RecommendationsService', () => {
           planned_quantity: 50,
         }),
       ).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('returns a degraded response instead of throwing when the AI is down', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Baklava', price: 50, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 2 },
+        ],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({ predictedOrders: 100 });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 500 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+
+      const result = await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      expect(result.degraded).toBe(true);
+      expect(result.degradedReason).toContain('ECONNREFUSED');
+      // The waste reports it already wrote must still be reported, not discarded.
+      expect(mockWasteReportRepo.create).toHaveBeenCalled();
     });
   });
 });

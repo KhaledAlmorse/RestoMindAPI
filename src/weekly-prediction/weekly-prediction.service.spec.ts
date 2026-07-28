@@ -11,6 +11,7 @@ import { UserRepository } from 'src/DB/Repositories/user.repository';
 import { RestaurantRepository } from 'src/DB/Repositories/restaurant.repository';
 import { Prediction } from 'src/DB/Models/prediction.model';
 import { ConfidenceLevelEnum, PredictionSourceEnum } from 'src/Common/Types';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', () => {
   let service: WeeklyPredictionService;
@@ -65,6 +66,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WeeklyPredictionService,
+        AiClientService,
         { provide: PredictionRepository, useValue: mockPredictionRepo },
         { provide: ProductRepository, useValue: mockProductRepo },
         { provide: SalesTransactionRepository, useValue: mockSalesRepo },

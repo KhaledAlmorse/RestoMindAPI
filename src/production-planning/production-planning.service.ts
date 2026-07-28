@@ -24,6 +24,7 @@ import { UserRepository } from '../DB/Repositories/user.repository';
 import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
+import { AiClientService } from '../Common/Services/ai-client.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -43,6 +44,7 @@ export class ProductionPlanningService {
   private readonly logger = new Logger(ProductionPlanningService.name);
 
   constructor(
+    private readonly aiClient: AiClientService,
     private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
     private readonly productRepository: ProductRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
@@ -268,56 +270,17 @@ export class ProductionPlanningService {
       };
     });
 
-    // 4. Try AI microservice with 3 retries
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/integration/restomind/production-plan`;
+    // 4. Call the AI microservice through the shared client.
+    const aiResult = await this.aiClient.post<any>(
+      '/integration/restomind/production-plan',
+      {
+        restaurantId: restaurantId.toString(),
+        date: dateStr,
+        products: preparedProducts,
+      },
+    );
 
-    let aiResponse: any = null;
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-        const response = await fetch(aiEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            restaurantId: restaurantId.toString(),
-            date: dateStr,
-            products: preparedProducts,
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const bodyData = await response.json();
-          if (bodyData && bodyData.items) {
-            aiResponse = bodyData;
-            break;
-          }
-        } else {
-          this.logger.warn(
-            `AI production plan attempt ${attempts}/${maxAttempts} returned HTTP ${response.status}`,
-          );
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `AI production plan attempt ${attempts}/${maxAttempts} failed: ${err?.message || err}`,
-        );
-      }
-
-      if (attempts < maxAttempts) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)),
-        );
-      }
-    }
+    const aiResponse = aiResult.ok && aiResult.data?.items ? aiResult.data : null;
 
     let planItems: any[] = [];
     let totalRecommendedQty = 0;
@@ -341,7 +304,9 @@ export class ProductionPlanningService {
     } else {
       // AI failure -> Fallback handling
       this.logger.error(
-        `[CRITICAL ALERT] AI Production Plan generation failed after ${maxAttempts} retries for restaurant ${restaurantId} on date ${dateStr}. Triggering fallback policy.`,
+        `[CRITICAL ALERT] AI Production Plan generation failed${
+          aiResult.ok ? '' : `: ${aiResult.message}`
+        } for restaurant ${restaurantId} on date ${dateStr}. Triggering fallback policy.`,
       );
 
       const yesterdayStr = this.getYesterdayDateString(dateStr);

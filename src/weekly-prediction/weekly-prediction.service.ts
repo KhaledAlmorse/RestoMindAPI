@@ -28,6 +28,7 @@ import { UserRepository } from 'src/DB/Repositories/user.repository';
 import { RestaurantRepository } from 'src/DB/Repositories/restaurant.repository';
 import { SupplierAutoDraftService } from './services/supplier-auto-draft.service';
 import { QueryPredictionsDto } from './dto/query-predictions.dto';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -36,6 +37,7 @@ export class WeeklyPredictionService {
   private readonly logger = new Logger(WeeklyPredictionService.name);
 
   constructor(
+    private readonly aiClient: AiClientService,
     private readonly predictionRepository: PredictionRepository,
     private readonly productRepository: ProductRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
@@ -206,60 +208,24 @@ export class WeeklyPredictionService {
         ? (product.category as any).name
         : 'General';
 
-    // 3. Try AI microservice call with 3 retries & exponential backoff
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/integration/restomind/predict`;
+    // 3. Call the AI microservice through the shared client.
+    const aiResult = await this.aiClient.post<any>(
+      '/integration/restomind/predict',
+      {
+        restaurantId: restaurantId.toString(),
+        productId: productId.toString(),
+        title: product.title,
+        category: categoryName,
+        targetWeek: targetWeekStr,
+        avgDailySales,
+        promotionActive,
+      },
+    );
 
-    let aiResponse: any = null;
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-        const response = await fetch(aiEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            restaurantId: restaurantId.toString(),
-            productId: productId.toString(),
-            title: product.title,
-            category: categoryName,
-            targetWeek: targetWeekStr,
-            avgDailySales,
-            promotionActive,
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const bodyData = await response.json();
-          if (bodyData && bodyData.predictedOrders !== undefined) {
-            aiResponse = bodyData;
-            break;
-          }
-        } else {
-          this.logger.warn(
-            `AI predict attempt ${attempts}/${maxAttempts} returned HTTP ${response.status}`,
-          );
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `AI predict attempt ${attempts}/${maxAttempts} failed: ${err?.message || err}`,
-        );
-      }
-
-      if (attempts < maxAttempts) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)),
-        );
-      }
-    }
+    const aiResponse =
+      aiResult.ok && aiResult.data?.predictedOrders !== undefined
+        ? aiResult.data
+        : null;
 
     const dailyDates = this.generateDailyDates(targetWeekStr);
 
@@ -338,7 +304,9 @@ export class WeeklyPredictionService {
     } else {
       // REQUIREMENT 6: AI failure fallback path
       this.logger.error(
-        `[FALLBACK PREDICTION] AI prediction call failed after ${maxAttempts} retries for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
+        `[FALLBACK PREDICTION] AI prediction call failed${
+          aiResult.ok ? '' : `: ${aiResult.message}`
+        } for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
       );
 
       // Fallback: equivalent period from last week (7 days prior)

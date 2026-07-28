@@ -8,6 +8,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { getBusinessDateString } from 'src/Common/Utils/date.util';
 import {
   OfferSourceEnum,
   OfferStatusEnum,
@@ -39,6 +41,7 @@ export class RecommendationsService {
   private readonly logger = new Logger(RecommendationsService.name);
 
   constructor(
+    private readonly aiClient: AiClientService,
     private readonly recommendationRepository: RecommendationRepository,
     private readonly wasteReportRepository: WasteReportRepository,
     private readonly productRepository: ProductRepository,
@@ -138,9 +141,13 @@ export class RecommendationsService {
 
     if (!products || products.length === 0) {
       return {
-        message: 'No products found for surplus scan',
-        scannedCount: 0,
-        itemsAtRisk: [],
+        data: {
+          message: 'No products found for surplus scan',
+          scannedCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+        },
+        degraded: false,
       };
     }
 
@@ -274,9 +281,13 @@ export class RecommendationsService {
 
     if (stockItems.length === 0) {
       return {
-        message: 'No products with recipes found for surplus scan',
-        scannedCount: 0,
-        itemsAtRisk: [],
+        data: {
+          message: 'No products with recipes found for surplus scan',
+          scannedCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+        },
+        degraded: false,
       };
     }
 
@@ -328,47 +339,40 @@ export class RecommendationsService {
       }
     }
 
-    // 4. Call AI Microservice for recommendation suggestions
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/integration/restomind/surplus-offers`;
+    // 4. Ask the AI for discount suggestions. A failure here does NOT invalidate
+    // the waste reports we just wrote — report them as degraded instead of
+    // throwing on top of a committed write.
+    const aiResult = await this.aiClient.post<any>(
+      '/integration/restomind/surplus-offers',
+      {
+        restaurantId: restaurantId.toString(),
+        timestamp: new Date().toISOString(),
+        closeHour: 22,
+        stock: stockItems,
+      },
+      { retries: 2, timeoutMs: 8000 },
+    );
 
-    let aiData: any = null;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      const response = await fetch(aiEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          restaurantId: restaurantId.toString(),
-          timestamp: new Date().toISOString(),
-          closeHour: 22,
-          stock: stockItems,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        aiData = await response.json();
-      } else {
-        this.logger.warn(
-          `AI surplus-offers endpoint returned status ${response.status}`,
-        );
-      }
-    } catch (err: any) {
-      this.logger.warn(
-        `AI surplus-offers request failed: ${err?.message || err}`,
-      );
+    if (!aiResult.ok || !aiResult.data?.itemsAtRisk) {
+      const reason = aiResult.ok
+        ? 'AI service returned no itemsAtRisk'
+        : aiResult.message;
+      this.logger.warn(`Surplus scan degraded: ${reason}`);
+      return {
+        data: {
+          message: 'Surplus scan completed without AI recommendations',
+          checkedAt: new Date().toISOString(),
+          itemsAtRiskCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+          wasteReportsWritten: wasteReportData.length,
+        },
+        degraded: true,
+        degradedReason: reason,
+      };
     }
 
-    if (!aiData || !aiData.itemsAtRisk) {
-      throw new ServiceUnavailableException(
-        'AI service temporarily unavailable — showing last computed report',
-      );
-    }
+    const aiData = aiResult.data;
 
     // 5. Create/update Recommendations using AI suggestions
     const createdRecommendations: any[] = [];
@@ -412,11 +416,15 @@ export class RecommendationsService {
     }
 
     return {
-      message: 'Surplus scan completed',
-      checkedAt: aiData.checkedAt || new Date().toISOString(),
-      itemsAtRiskCount: aiData.itemsAtRisk.length,
-      itemsAtRisk: aiData.itemsAtRisk,
-      recommendations: createdRecommendations,
+      data: {
+        message: 'Surplus scan completed',
+        checkedAt: aiData.checkedAt || new Date().toISOString(),
+        itemsAtRiskCount: aiData.itemsAtRisk.length,
+        itemsAtRisk: aiData.itemsAtRisk,
+        recommendations: createdRecommendations,
+        wasteReportsWritten: wasteReportData.length,
+      },
+      degraded: false,
     };
   }
 
@@ -584,37 +592,31 @@ export class RecommendationsService {
   async validatePlan(userId: string, dto: ValidatePlanDto) {
     await this.getManagerRestaurantId(userId);
 
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/alerts/waste-prevention`;
+    const result = await this.aiClient.post<any>(
+      '/alerts/waste-prevention',
+      {
+        sku: dto.sku,
+        date: dto.date || getBusinessDateString(),
+        planned_quantity: dto.planned_quantity,
+      },
+      { retries: 2, timeoutMs: 8000 },
+    );
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+    if (result.ok) {
+      return { data: result.data, degraded: false };
+    }
 
-      const response = await fetch(aiEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sku: dto.sku,
-          date: dto.date || new Date().toISOString().split('T')[0],
-          planned_quantity: dto.planned_quantity,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (err: any) {
-      this.logger.warn(
-        `AI waste-prevention request failed: ${err?.message || err}`,
+    // A 4xx means the SKU is unknown — the service returns the valid list in
+    // `hint`. Surfacing that as a 503 outage hid a usable error message.
+    if (result.kind === 'client_error') {
+      const hint = (result.body as any)?.hint;
+      throw new BadRequestException(
+        hint ? `${result.message}. ${hint}` : result.message,
       );
     }
 
     throw new ServiceUnavailableException(
-      'AI service temporarily unavailable for plan validation',
+      `AI service unavailable for plan validation: ${result.message}`,
     );
   }
 }
