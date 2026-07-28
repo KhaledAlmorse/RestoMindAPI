@@ -11,6 +11,8 @@ import {
   HttpStatus,
   ForbiddenException,
   BadRequestException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { RestaurantService } from './restaurant.service';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
@@ -19,6 +21,8 @@ import { QueryRestaurantDto } from './dto/query-restaurant.dto';
 import { type Response } from 'express';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { RolesEnum, type IAuthUser } from 'src/Common/Types';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { uploadFileOptions } from 'src/Common/Utils/multer.utils';
 
 @Controller('restaurants')
 export class RestaurantController {
@@ -26,11 +30,13 @@ export class RestaurantController {
 
   @Post()
   @Auth('admin')
+  @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async createRestaurant(
     @Body() body: CreateRestaurantDto,
+    @UploadedFile() file: Express.Multer.File,
     @Res() res: Response,
   ) {
-    const result = await this.restaurantService.createRestaurant(body);
+    const result = await this.restaurantService.createRestaurant(body, file);
     res.status(HttpStatus.CREATED).json(result);
   }
 
@@ -67,10 +73,12 @@ export class RestaurantController {
 
   @Patch(':id')
   @Auth('admin', 'manager')
+  @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateRestaurant(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
     @Body() body: UpdateRestaurantDto,
+    @UploadedFile() file: Express.Multer.File,
     @Res() res: Response,
   ) {
     if (user.user.role === RolesEnum.MANAGER) {
@@ -78,7 +86,11 @@ export class RestaurantController {
         throw new ForbiddenException('You can only update your own restaurant');
       }
     }
-    const result = await this.restaurantService.updateRestaurant(id, body);
+    const result = await this.restaurantService.updateRestaurant(
+      id,
+      body,
+      file,
+    );
     res.status(HttpStatus.OK).json(result);
   }
 

@@ -18,6 +18,7 @@ import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { QueryRestaurantDto } from './dto/query-restaurant.dto';
 import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
+import { UploadCloudFileService } from 'src/Common/Services';
 import slugify from 'slugify';
 
 @Injectable()
@@ -29,6 +30,7 @@ export class RestaurantService {
     private readonly offerRepository: OfferRepository,
     private readonly ingredientRepository: IngredientRepository,
     private readonly recipeRepository: RecipeRepository,
+    private readonly uploadCloudFileService: UploadCloudFileService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -38,7 +40,10 @@ export class RestaurantService {
     }
   }
 
-  async createRestaurant(body: CreateRestaurantDto) {
+  async createRestaurant(
+    body: CreateRestaurantDto,
+    file?: Express.Multer.File,
+  ) {
     const { name, ownerUserId } = body;
 
     this.validateObjectId(ownerUserId);
@@ -73,6 +78,15 @@ export class RestaurantService {
       throw new ConflictException('Restaurant with this name already exists');
     }
 
+    const restaurantId = new Types.ObjectId();
+
+    let imageResult: { public_id: string; secure_url: string } | undefined;
+    if (file) {
+      imageResult = await this.uploadCloudFileService.uploadFile(file.path, {
+        folder: `${process.env.CLOUD_FOLDER_NAME}/restaurants/${restaurantId.toString()}`,
+      });
+    }
+
     let session: any = null;
     try {
       session = await this.connection.startSession();
@@ -80,7 +94,9 @@ export class RestaurantService {
 
       const newRestaurant = await this.restaurantRepository.create({
         ...body,
+        _id: restaurantId,
         ownerUserId: new Types.ObjectId(ownerUserId),
+        ...(imageResult && { image: imageResult }),
       } as any);
 
       await this.userRepository.update({
@@ -91,6 +107,12 @@ export class RestaurantService {
       await session.commitTransaction();
       return { data: newRestaurant };
     } catch (error: any) {
+      if (imageResult) {
+        await this.uploadCloudFileService
+          .DeleteFileByPublicId(imageResult.public_id)
+          .catch(() => {});
+      }
+
       if (session) {
         try {
           await session.abortTransaction();
@@ -106,7 +128,9 @@ export class RestaurantService {
       ) {
         const newRestaurant = await this.restaurantRepository.create({
           ...body,
+          _id: restaurantId,
           ownerUserId: new Types.ObjectId(ownerUserId),
+          ...(imageResult && { image: imageResult }),
         } as any);
 
         try {
@@ -206,7 +230,11 @@ export class RestaurantService {
     return { data: restaurant };
   }
 
-  async updateRestaurant(id: string, body: UpdateRestaurantDto) {
+  async updateRestaurant(
+    id: string,
+    body: UpdateRestaurantDto,
+    file?: Express.Multer.File,
+  ) {
     this.validateObjectId(id);
     const restaurant = await this.restaurantRepository.findOne({
       filters: { _id: id, isDeleted: false },
@@ -255,6 +283,21 @@ export class RestaurantService {
     const updateData: any = { ...body };
     if (body.ownerUserId) {
       updateData.ownerUserId = new Types.ObjectId(body.ownerUserId);
+    }
+
+    if (file) {
+      if (restaurant.image && restaurant.image.public_id) {
+        await this.uploadCloudFileService.DeleteFileByPublicId(
+          restaurant.image.public_id,
+        );
+      }
+      const uploadResult = await this.uploadCloudFileService.uploadFile(
+        file.path,
+        {
+          folder: `${process.env.CLOUD_FOLDER_NAME}/restaurants/${id}`,
+        },
+      );
+      updateData.image = uploadResult;
     }
 
     const updated = await this.restaurantRepository.update({
@@ -311,6 +354,12 @@ export class RestaurantService {
     });
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
+    }
+
+    if (restaurant.image && restaurant.image.public_id) {
+      await this.uploadCloudFileService.DeleteFileByPublicId(
+        restaurant.image.public_id,
+      );
     }
 
     await this.restaurantRepository.update({

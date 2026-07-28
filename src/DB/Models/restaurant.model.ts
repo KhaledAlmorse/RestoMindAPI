@@ -12,8 +12,18 @@ export class Restaurant {
   @Prop({ type: String, required: false })
   description?: string;
 
-  @Prop({ type: String, required: false })
-  logoUrl?: string;
+  @Prop({
+    type: {
+      public_id: { type: String, required: true },
+      secure_url: { type: String, required: true },
+    },
+    _id: false,
+    required: false,
+  })
+  image?: {
+    public_id: string;
+    secure_url: string;
+  };
 
   @Prop({ type: String, required: false })
   phone?: string;

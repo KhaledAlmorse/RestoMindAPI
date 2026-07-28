@@ -30,6 +30,7 @@ export class CartService {
     offerId: string,
     requestedQuantity: number,
     userId: string,
+    currentCartQuantity: number = 0,
   ) {
     // 1. Offer exists check
     const offer = await this.offerRepository.findOne({
@@ -71,7 +72,10 @@ export class CartService {
       throw new BadRequestException('Offer is not currently active');
     }
 
-    // 4. Remaining quantity check
+    // 4. Remaining quantity check (validate against the additional amount being requested)
+    if (requestedQuantity <= 0) {
+      return offer;
+    }
     if (offer.remainingQuantity <= 0) {
       throw new BadRequestException('Offer is sold out');
     }
@@ -81,7 +85,7 @@ export class CartService {
       );
     }
 
-    // 5. Max per customer check
+    // 5. Max per customer check (validate against total after operation)
     if (offer.maxPerCustomer && offer.maxPerCustomer > 0) {
       const pastOrders = await this.orderRepository.findMany({
         filters: {
@@ -100,7 +104,9 @@ export class CartService {
         }
       }
 
-      if (pastQuantity + requestedQuantity > offer.maxPerCustomer) {
+      const totalAfterOperation =
+        pastQuantity + currentCartQuantity + requestedQuantity;
+      if (totalAfterOperation > offer.maxPerCustomer) {
         throw new BadRequestException(
           "You've reached the purchase limit for this offer",
         );
@@ -228,9 +234,13 @@ export class CartService {
 
     const currentQtyInCart =
       itemIndex > -1 ? cart.items[itemIndex].quantity : 0;
-    const requestedTotalQty = currentQtyInCart + quantity;
 
-    await this.validateOfferForCart(offerId, requestedTotalQty, userId);
+    await this.validateOfferForCart(
+      offerId,
+      quantity,
+      userId,
+      currentQtyInCart,
+    );
 
     if (itemIndex > -1) {
       cart.items[itemIndex].quantity += quantity;
@@ -275,7 +285,17 @@ export class CartService {
       throw new NotFoundException('Item not found in cart');
     }
 
-    await this.validateOfferForCart(offerId, quantity, userId);
+    const oldQuantity = cart.items[itemIndex].quantity;
+    const quantityDifference = quantity - oldQuantity;
+
+    if (quantityDifference > 0) {
+      await this.validateOfferForCart(
+        offerId,
+        quantityDifference,
+        userId,
+        oldQuantity,
+      );
+    }
 
     cart.items[itemIndex].quantity = quantity;
     await this.cartRepository.save(cart);
