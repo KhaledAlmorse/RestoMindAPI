@@ -257,4 +257,112 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     );
     expect(sum).toBe(result.predictedOrders);
   });
+
+  it('falls back to the deprecated qty key and preserves the curve, logging a warning', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 140 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const warn = jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation(() => {});
+
+    // Real-world shape from an AI service that hasn't upgraded yet: only
+    // `qty` is present, no `predictedQuantity` key at all.
+    const aiBody = {
+      modelVersionId: 'restomind-bridge/rule_based-v0.1',
+      predictedOrders: 140,
+      confidence: 'low',
+      featuresUsed: {},
+      factors: [],
+      dailyBreakdown: [
+        { date: '2026-07-27', qty: 10 },
+        { date: '2026-07-28', qty: 12 },
+        { date: '2026-07-29', qty: 18 },
+        { date: '2026-07-30', qty: 20 },
+        { date: '2026-07-31', qty: 30 },
+        { date: '2026-08-01', qty: 28 },
+        { date: '2026-08-02', qty: 22 },
+      ],
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => aiBody,
+    }) as any;
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(result.dailyBreakdown.map((d: any) => d.predictedQuantity)).toEqual([
+      10, 12, 18, 20, 30, 28, 22,
+    ]);
+    expect(
+      warn.mock.calls.some((call) => /deprecated 'qty'/.test(String(call[0]))),
+    ).toBe(true);
+  });
+
+  it('trusts the daily rows and overwrites predictedOrders when the sum disagrees', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 140 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const warn = jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation(() => {});
+
+    const aiBody = {
+      modelVersionId: 'restomind-bridge/rule_based-v0.1',
+      predictedOrders: 140,
+      confidence: 'low',
+      featuresUsed: {},
+      factors: [],
+      dailyBreakdown: [
+        { date: '2026-07-27', predictedQuantity: 10 },
+        { date: '2026-07-28', predictedQuantity: 12 },
+        { date: '2026-07-29', predictedQuantity: 18 },
+        { date: '2026-07-30', predictedQuantity: 15 },
+        { date: '2026-07-31', predictedQuantity: 15 },
+        { date: '2026-08-01', predictedQuantity: 15 },
+        { date: '2026-08-02', predictedQuantity: 15 },
+      ],
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => aiBody,
+    }) as any;
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(result.predictedOrders).toBe(100);
+    expect(
+      warn.mock.calls.some((call) =>
+        /dailyBreakdown sum \(100\) != predictedOrders \(140\)/.test(String(call[0])),
+      ),
+    ).toBe(true);
+  });
 });
