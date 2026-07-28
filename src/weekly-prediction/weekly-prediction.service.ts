@@ -155,7 +155,7 @@ export class WeeklyPredictionService {
         restaurantId,
         productId,
         isDeleted: false,
-        transactionDate: { $gte: startDate, $lte: endDate },
+        date: { $gte: startDate, $lte: endDate },
       },
     });
 
@@ -303,7 +303,7 @@ export class WeeklyPredictionService {
           restaurantId,
           productId,
           isDeleted: false,
-          transactionDate: { $gte: lastWeekStart, $lt: lastWeekEnd },
+          date: { $gte: lastWeekStart, $lt: lastWeekEnd },
         },
       });
 

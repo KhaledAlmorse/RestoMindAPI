@@ -149,4 +149,34 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       }),
     );
   });
+
+  it('queries sales history on the `date` field, not `transactionDate`', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Baklava',
+      category: { name: 'Dessert' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    // global.fetch is mocked to reject in beforeEach, so the fallback path runs
+    // and BOTH sales lookups fire. Assert the count first — without it an empty
+    // mock.calls array would make the loop below pass vacuously.
+    expect(mockSalesRepo.findMany).toHaveBeenCalledTimes(2);
+    for (const call of mockSalesRepo.findMany.mock.calls) {
+      const filters = call[0].filters;
+      expect(filters).toHaveProperty('date');
+      expect(filters).not.toHaveProperty('transactionDate');
+    }
+  });
 });
