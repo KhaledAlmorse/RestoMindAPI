@@ -104,6 +104,23 @@ export class WeeklyPredictionService {
   }
 
   /**
+   * Distribute a weekly total evenly across the given dates so the daily rows
+   * always sum EXACTLY to the total (the remainder goes to the first days,
+   * rather than letting Math.round(total/7)*7 drift from total).
+   */
+  private distributeAcrossWeek(
+    total: number,
+    dates: string[],
+  ): Array<{ date: string; predictedQuantity: number }> {
+    const base = Math.floor(total / dates.length);
+    const remainder = total - base * dates.length;
+    return dates.map((d, i) => ({
+      date: d,
+      predictedQuantity: base + (i < remainder ? 1 : 0),
+    }));
+  }
+
+  /**
    * Resolve if a promotion is active for product during targetWeek from Offer collection.
    * Requirement 7: Never use Product.discountedPrice.
    */
@@ -273,7 +290,13 @@ export class WeeklyPredictionService {
         ? aiResponse.dailyBreakdown
         : [];
 
-      if (rawBreakdown.length > 0) {
+      if (rawBreakdown.length > 0 && rawBreakdown.length !== 7) {
+        this.logger.warn(
+          `AI dailyBreakdown had ${rawBreakdown.length} rows (expected 7) for product ${productId.toString()}; treating as unusable and falling back to even distribution.`,
+        );
+      }
+
+      if (rawBreakdown.length === 7) {
         // `predictedQuantity` is the contract. The `qty` fallback is a
         // transitional alias for older builds of the AI service; when it is the
         // only key present we log, because it means the two sides have drifted.
@@ -310,11 +333,7 @@ export class WeeklyPredictionService {
           predictedOrders = breakdownSum;
         }
       } else {
-        const perDay = Math.round(predictedOrders / 7);
-        dailyBreakdown = dailyDates.map((d) => ({
-          date: d,
-          predictedQuantity: perDay,
-        }));
+        dailyBreakdown = this.distributeAcrossWeek(predictedOrders, dailyDates);
       }
     } else {
       // REQUIREMENT 6: AI failure fallback path
@@ -355,11 +374,7 @@ export class WeeklyPredictionService {
         avgDailySales,
       };
 
-      const perDay = Math.round(predictedOrders / 7);
-      dailyBreakdown = dailyDates.map((d) => ({
-        date: d,
-        predictedQuantity: perDay,
-      }));
+      dailyBreakdown = this.distributeAcrossWeek(predictedOrders, dailyDates);
     }
 
     // Upsert into prediction collection (Requirement 8: Idempotency)

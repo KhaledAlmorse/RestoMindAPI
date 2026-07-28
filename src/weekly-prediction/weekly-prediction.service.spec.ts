@@ -383,6 +383,91 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()).toBe(0);
   });
 
+  it('distributes the fallback total exactly across 7 days when not divisible by 7', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Baklava',
+      category: { name: 'Dessert' },
+    });
+
+    mockSalesRepo.findMany
+      .mockResolvedValueOnce([{ quantitySold: 70 }]) // 14-day rolling window
+      .mockResolvedValueOnce([{ quantitySold: 100 }]); // Last week equivalent period, not divisible by 7
+
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(result.predictedOrders).toBe(100);
+    const sum = result.dailyBreakdown.reduce(
+      (a: number, d: any) => a + d.predictedQuantity,
+      0,
+    );
+    expect(sum).toBe(100);
+  });
+
+  it('treats a short (non-7-row) AI breakdown as unusable and falls through to even distribution', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 140 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const warn = jest
+      .spyOn((service as any).logger, 'warn')
+      .mockImplementation(() => {});
+
+    const aiBody = {
+      modelVersionId: 'restomind-bridge/rule_based-v0.1',
+      predictedOrders: 100,
+      confidence: 'low',
+      featuresUsed: {},
+      factors: [],
+      dailyBreakdown: [
+        { date: '2026-07-27', predictedQuantity: 30 },
+        { date: '2026-07-28', predictedQuantity: 30 },
+        { date: '2026-07-29', predictedQuantity: 40 },
+      ],
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => aiBody,
+    }) as any;
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(result.dailyBreakdown).toHaveLength(7);
+    const sum = result.dailyBreakdown.reduce(
+      (a: number, d: any) => a + d.predictedQuantity,
+      0,
+    );
+    expect(sum).toBe(result.predictedOrders);
+    expect(
+      warn.mock.calls.some((call) =>
+        /dailyBreakdown had 3 rows/.test(String(call[0])),
+      ),
+    ).toBe(true);
+  });
+
   it('uses a half-open week window so day 8 does not count as active', async () => {
     mockOfferRepo.findOne.mockResolvedValue(null);
 

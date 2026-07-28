@@ -40,7 +40,14 @@ export function getBusinessDateString(now: Date = new Date()): string {
 
 /** Day of week in Cairo: 0 = Sunday … 6 = Saturday. */
 export function getBusinessDayOfWeek(now: Date = new Date()): number {
-  return WEEKDAY_INDEX[WEEKDAY_FORMATTER.format(now)];
+  const weekday = WEEKDAY_FORMATTER.format(now);
+  const index = WEEKDAY_INDEX[weekday];
+  if (index === undefined) {
+    throw new Error(
+      `getBusinessDayOfWeek: unexpected ICU short-weekday value "${weekday}"`,
+    );
+  }
+  return index;
 }
 
 /**
