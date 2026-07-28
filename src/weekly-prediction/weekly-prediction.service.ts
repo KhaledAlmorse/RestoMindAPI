@@ -12,6 +12,13 @@ import {
   OfferStatusEnum,
   PredictionSourceEnum,
 } from 'src/Common/Types';
+import {
+  BUSINESS_TIMEZONE,
+  addDaysToDateString,
+  getBusinessDateString,
+  getBusinessDayOfWeek,
+  isValidDateString,
+} from 'src/Common/Utils/date.util';
 import { Prediction, PredictionType } from 'src/DB/Models/prediction.model';
 import { PredictionRepository } from 'src/DB/Repositories/prediction.repository';
 import { ProductRepository } from 'src/DB/Repositories/product.repository';
@@ -74,15 +81,15 @@ export class WeeklyPredictionService {
    * Helper to get next Sunday date string (YYYY-MM-DD) or validate supplied targetWeek
    */
   resolveTargetWeek(targetWeek?: string): string {
-    if (targetWeek && /^\d{4}-\d{2}-\d{2}$/.test(targetWeek)) {
+    if (targetWeek && isValidDateString(targetWeek)) {
       return targetWeek;
     }
-    const today = new Date();
-    const dayOfWeek = today.getDay();
+    // Next Sunday, evaluated in Cairo. If today is Sunday we deliberately roll
+    // forward a full week: the current week's plan is already in flight.
+    const today = getBusinessDateString();
+    const dayOfWeek = getBusinessDayOfWeek();
     const daysUntilNextSunday = (7 - dayOfWeek) % 7 || 7;
-    const nextSunday = new Date(today);
-    nextSunday.setDate(today.getDate() + daysUntilNextSunday);
-    return nextSunday.toISOString().split('T')[0];
+    return addDaysToDateString(today, daysUntilNextSunday);
   }
 
   /**
@@ -90,11 +97,8 @@ export class WeeklyPredictionService {
    */
   generateDailyDates(targetWeekStr: string): string[] {
     const dates: string[] = [];
-    const startDate = new Date(`${targetWeekStr}T00:00:00.000Z`);
     for (let i = 0; i < 7; i++) {
-      const d = new Date(startDate);
-      d.setUTCDate(startDate.getUTCDate() + i);
-      dates.push(d.toISOString().split('T')[0]);
+      dates.push(addDaysToDateString(targetWeekStr, i));
     }
     return dates;
   }
@@ -565,7 +569,7 @@ export class WeeklyPredictionService {
   /**
    * Automated Sunday 12:00 AM Cron Job for all active restaurants
    */
-  @Cron('0 0 * * 0')
+  @Cron('0 0 * * 0', { timeZone: BUSINESS_TIMEZONE })
   async handleWeeklyPredictionCron() {
     this.logger.log('Starting automated Weekly Demand Prediction Cron Job...');
 

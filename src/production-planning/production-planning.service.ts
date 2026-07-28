@@ -9,6 +9,11 @@ import { Model, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from '../Common/Types';
 import {
+  BUSINESS_TIMEZONE,
+  addDaysToDateString,
+  getBusinessDateString,
+} from '../Common/Utils/date.util';
+import {
   DailyProductionPlan,
   DailyProductionPlanType,
 } from '../DB/Models/daily-production-plan.model';
@@ -82,16 +87,14 @@ export class ProductionPlanningService {
    * Helper to get today's date in YYYY-MM-DD format
    */
   getTodayDateString(): string {
-    return new Date().toISOString().split('T')[0];
+    return getBusinessDateString();
   }
 
   /**
    * Helper to get previous date string for YYYY-MM-DD
    */
   getYesterdayDateString(dateStr: string): string {
-    const current = new Date(`${dateStr}T00:00:00.000Z`);
-    current.setUTCDate(current.getUTCDate() - 1);
-    return current.toISOString().split('T')[0];
+    return addDaysToDateString(dateStr, -1);
   }
 
   /**
@@ -406,7 +409,7 @@ export class ProductionPlanningService {
   /**
    * Cron Job 1: Midnight Daily Production Plan Generation (12:00 AM)
    */
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { timeZone: BUSINESS_TIMEZONE })
   async handleDailyPlanGeneration() {
     this.logger.log(
       'Executing midnight daily production plan generation cron...',
@@ -436,7 +439,7 @@ export class ProductionPlanningService {
    * Cron Job 2: Nightly AI Learning Sync (2:00 AM)
    * Reuses Phase 4 AiIngestService directly!
    */
-  @Cron('0 2 * * *')
+  @Cron('0 2 * * *', { timeZone: BUSINESS_TIMEZONE })
   async handleNightlyAiSync() {
     this.logger.log('Executing 2:00 AM nightly AI learning sync cron...');
     const todayStr = this.getTodayDateString();

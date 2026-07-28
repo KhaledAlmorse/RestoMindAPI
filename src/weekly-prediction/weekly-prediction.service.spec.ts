@@ -365,4 +365,21 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       ),
     ).toBe(true);
   });
+
+  it('rejects a well-formed but impossible targetWeek', () => {
+    expect(service.resolveTargetWeek('2025-13-45')).not.toBe('2025-13-45');
+    expect(service.resolveTargetWeek('2026-02-30')).not.toBe('2026-02-30');
+  });
+
+  it('accepts a real targetWeek unchanged', () => {
+    expect(service.resolveTargetWeek('2026-08-02')).toBe('2026-08-02');
+  });
+
+  it('resolves the next Sunday as a Cairo calendar date', () => {
+    const resolved = service.resolveTargetWeek();
+    expect(resolved).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Interpreted at UTC noon so the check cannot straddle a day boundary.
+    const [y, m, d] = resolved.split('-').map(Number);
+    expect(new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()).toBe(0);
+  });
 });
