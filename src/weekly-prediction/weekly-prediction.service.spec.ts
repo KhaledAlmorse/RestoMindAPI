@@ -683,6 +683,115 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(peakInFlight).toBeLessThanOrEqual(5);
   });
 
+  it('sends the owner estimate when there is no sales history', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Brand New Item',
+      category: { name: 'Pastry' },
+      expectedDailySales: 25,
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]); // no history at all
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    const fetchMock = jest.fn().mockRejectedValue(new Error('down'));
+    global.fetch = fetchMock as any;
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).avgDailySales).toBe(25);
+  });
+
+  it('sends null when there is neither history nor an owner estimate', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Unknown Item',
+      category: { name: 'Pastry' },
+      expectedDailySales: null,
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    const fetchMock = jest.fn().mockRejectedValue(new Error('down'));
+    global.fetch = fetchMock as any;
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    // null, NOT 0 — the bridge distinguishes "no estimate" from "sells nothing".
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).avgDailySales).toBeNull();
+  });
+
+  it('prefers measured history over the owner estimate once sales exist', async () => {
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Established Item',
+      category: { name: 'Pastry' },
+      expectedDailySales: 25,
+    });
+    mockSalesRepo.findMany.mockResolvedValue([{ quantitySold: 140 }]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    const fetchMock = jest.fn().mockRejectedValue(new Error('down'));
+    global.fetch = fetchMock as any;
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).avgDailySales).toBe(10);
+  });
+
+  it('does not discard the owner estimate on the naive fallback path when AI is down', async () => {
+    // Cold-start product (no sales history) but WITH an owner estimate. If AI
+    // is down and the naive fallback collapses a null avgDailySales to 0
+    // before checking for the owner's estimate, this would silently zero out
+    // predictedOrders — the exact bug this task exists to fix, one layer down.
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Brand New Item',
+      category: { name: 'Pastry' },
+      expectedDailySales: 25,
+    });
+    // No 14-day history AND no last-week sales either (genuinely brand new).
+    mockSalesRepo.findMany
+      .mockResolvedValueOnce([]) // 14-day rolling window
+      .mockResolvedValueOnce([]); // last week equivalent period
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    global.fetch = jest.fn().mockRejectedValue(new Error('down')) as any;
+
+    const result = await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      targetWeek,
+    );
+
+    // 25/day * 7 days = 175, not 0.
+    expect(result.predictedOrders).toBe(175);
+    expect(result.source).toBe(PredictionSourceEnum.FALLBACK_NAIVE);
+  });
+
   it('keeps the full 3-attempt retry budget for a single recalculation but caps the batch worker at 2', async () => {
     mockUserRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(),

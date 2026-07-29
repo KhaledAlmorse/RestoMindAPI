@@ -186,6 +186,46 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
   });
 
   // ==========================================
+  // Owner cold-start estimate must survive the local naive fallback too.
+  // ==========================================
+  it('does not discard the owner estimate on the naive fallback path when AI is down and there is no yesterday plan', async () => {
+    const prodId = new Types.ObjectId();
+    const todayStr = service.getTodayDateString();
+
+    // No plan exists for today OR yesterday (both calls to findOne resolve
+    // null), so the fallback cannot borrow yesterday's recommendedQty.
+    mockPlanRepo.findOne.mockResolvedValue(null);
+    mockProductRepo.findMany.mockResolvedValue([
+      {
+        _id: prodId,
+        title: 'Brand New Item',
+        price: 18,
+        category: { name: 'Pastry' },
+        expectedDailySales: 25,
+      },
+    ]);
+    // No sales history at all for this cold-start product.
+    mockSalesRepo.findMany.mockResolvedValue([]);
+
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('AI down'));
+
+    mockPlanRepo.create.mockImplementation((data: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...data }),
+    );
+
+    const result = await service.generateProductionPlan(
+      mockRestaurantId,
+      todayStr,
+    );
+
+    expect(result.items[0].source).toBe(
+      ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+    );
+    // Must use the owner's estimate (25), not 0.
+    expect(result.items[0].recommendedQty).toBe(25);
+  });
+
+  // ==========================================
   // CASE 3: Generate the same restaurant/date twice -> Unique Index / Prevents Duplicate Plans
   // ==========================================
   it('Case 3: Generate the same restaurant/date twice -> returns existing plan, compound index prevents duplicates', async () => {

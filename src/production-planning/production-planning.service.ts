@@ -14,6 +14,7 @@ import {
   getBusinessDateString,
   getBusinessDayRange,
 } from '../Common/Utils/date.util';
+import { resolveAvgDailySales } from '../Common/Utils/sales-estimate.util';
 import {
   DailyProductionPlan,
   DailyProductionPlanType,
@@ -268,21 +269,29 @@ export class ProductionPlanningService {
         },
       })) || [];
 
-    // Sum sales per product
+    // Sum sales per product, and separately track how many sales rows each
+    // product has — resolveAvgDailySales needs the row count (not just the
+    // total) to tell "measured zero" apart from "no history at all".
     const salesMap = new Map<string, number>();
+    const salesRowCountMap = new Map<string, number>();
     for (const sale of salesList) {
       const pId = sale.productId ? sale.productId.toString() : '';
       if (pId) {
         const currentSum = salesMap.get(pId) || 0;
         salesMap.set(pId, currentSum + (sale.quantitySold || 0));
+        salesRowCountMap.set(pId, (salesRowCountMap.get(pId) || 0) + 1);
       }
     }
 
     const preparedProducts = products.map((prod: any) => {
       const pIdStr = prod._id.toString();
       const totalSold = salesMap.get(pIdStr) || 0;
-      const avgDailySales =
-        Math.round((totalSold / AVG_DAILY_SALES_LOOKBACK_DAYS) * 100) / 100;
+      const salesRowCount = salesRowCountMap.get(pIdStr) || 0;
+      // Precedence: measured 14-day history > owner's expectedDailySales
+      // estimate > null (cold start, no signal at all). Sending 0 for a
+      // brand-new product with no history would forecast zero and make
+      // supplier-auto-draft skip it entirely.
+      const avgDailySales = resolveAvgDailySales(totalSold, salesRowCount, prod);
       const categoryName =
         prod.category && typeof prod.category === 'object' && prod.category.name
           ? prod.category.name
@@ -358,7 +367,12 @@ export class ProductionPlanningService {
           recQty = yesterdayMap.get(prepProd.productId) || 0;
           factor = 'fallback_yesterday_plan';
         } else {
-          recQty = prepProd.avgDailySales;
+          // prepProd.avgDailySales is null only when there is truly no
+          // signal — no measured history AND no owner estimate — in which
+          // case 0 is the honest local answer; resolveAvgDailySales already
+          // surfaced the owner's expectedDailySales above whenever one was
+          // set, so this `?? 0` never discards a real estimate.
+          recQty = prepProd.avgDailySales ?? 0;
           factor = 'fallback_14day_avg_daily_sales';
         }
 

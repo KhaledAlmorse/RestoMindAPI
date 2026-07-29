@@ -21,6 +21,7 @@ import {
   getBusinessDayRange,
   isValidDateString,
 } from 'src/Common/Utils/date.util';
+import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
 import { Prediction, PredictionType } from 'src/DB/Models/prediction.model';
 import { PredictionRepository } from 'src/DB/Repositories/prediction.repository';
 import { ProductRepository } from 'src/DB/Repositories/product.repository';
@@ -205,11 +206,15 @@ export class WeeklyPredictionService {
       (sum, s) => sum + (s.quantitySold || 0),
       0,
     );
-    // Keep two decimals: rounding to an integer collapses low-volume products
-    // to 0, which the model then treats as "no estimate" and replaces with its
-    // DEFAULT_DAILY_LEVEL of 40.
-    const avgDailySales =
-      Math.round((totalQtySold / AVG_DAILY_SALES_LOOKBACK_DAYS) * 100) / 100;
+    // Precedence: measured 14-day history > owner's expectedDailySales estimate
+    // > null (cold start, no signal at all — let the bridge's category default
+    // decide). Sending 0 here for a brand-new product with no history would
+    // forecast zero all week and make supplier-auto-draft skip it entirely.
+    const avgDailySales = resolveAvgDailySales(
+      totalQtySold,
+      (recentSales || []).length,
+      product,
+    );
 
     // 2. Check promotionActive from Offer collection (Requirement 7)
     const promotionActive = await this.checkPromotionActive(
@@ -346,10 +351,17 @@ export class WeeklyPredictionService {
         0,
       );
 
+      // avgDailySales is null only when there is truly no signal anywhere —
+      // no measured history AND no owner estimate. In that specific case 0 is
+      // the honest naive-fallback answer (there is nothing else to go on
+      // locally); it is not the bug this task fixes, because that bug was 0
+      // being sent even when an owner estimate DID exist. As long as
+      // resolveAvgDailySales already surfaced the owner's estimate above, this
+      // `?? 0` only ever fires on the genuinely-uninformed path.
       predictedOrders =
         totalLastWeekQty > 0
           ? totalLastWeekQty
-          : Math.round(avgDailySales * 7);
+          : Math.round((avgDailySales ?? 0) * 7);
 
       modelVersionId = 'fallback-naive-v1';
       confidence = ConfidenceLevelEnum.LOW;
