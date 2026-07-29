@@ -178,6 +178,7 @@ export class RecommendationsService {
       expectedConsumption: number;
       expectedSurplus: number;
       riskLevel: RiskLevelEnum;
+      predictionId: Types.ObjectId | null;
     }> = [];
 
     const stockItems: Array<{
@@ -253,6 +254,7 @@ export class RecommendationsService {
           expectedConsumption,
           expectedSurplus,
           riskLevel,
+          predictionId: (prediction as any)?._id ?? null,
         });
 
         productTotalStock += usableAvailableStock;
@@ -348,6 +350,7 @@ export class RecommendationsService {
         wasteReport = await this.wasteReportRepository.update({
           filters: { _id: wasteReport._id },
           body: {
+            predictionId: data.predictionId,
             expectedConsumption: data.expectedConsumption,
             usableAvailableStock: data.usableAvailableStock,
             expectedSurplus: data.expectedSurplus,
@@ -357,6 +360,7 @@ export class RecommendationsService {
       } else {
         wasteReport = await this.wasteReportRepository.create({
           restaurantId,
+          predictionId: data.predictionId,
           ingredientId: data.ingredientId,
           expectedConsumption: data.expectedConsumption,
           usableAvailableStock: data.usableAvailableStock,

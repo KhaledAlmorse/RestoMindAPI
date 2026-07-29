@@ -635,5 +635,39 @@ describe('RecommendationsService', () => {
       const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
       expect(body.stock[0].category).toBe('معجنات');
     });
+
+    it('links each waste report back to the prediction that drove it', async () => {
+      const predictionId = new Types.ObjectId();
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        _id: predictionId,
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      expect(mockWasteReportRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ predictionId }),
+      );
+    });
   });
 });

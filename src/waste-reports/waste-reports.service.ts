@@ -85,19 +85,29 @@ export class WasteReportsService {
       order: 'desc',
       populationArray: [
         { path: 'ingredientId', select: 'name unit costPerUnit' },
-        { path: 'predictionId', select: 'targetDate predictionSource' },
+        // Prediction has `targetWeek` and `source`. The old names matched no
+        // field, so this populate always returned bare _ids.
+        {
+          path: 'predictionId',
+          select: 'targetWeek source predictedOrders confidence modelVersionId',
+        },
       ],
     });
   }
 
-  async getSummary(userId: string) {
+  async getSummary(userId: string, days = 30) {
     const restaurantId = await this.getManagerRestaurantId(userId);
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - Math.abs(days));
 
     const pipeline = [
       {
         $match: {
           restaurantId: new Types.ObjectId(restaurantId.toString()),
           isDeleted: false,
+          // scanSurplus writes one report per ingredient per day, so an
+          // unbounded aggregation degrades linearly forever.
+          createdAt: { $gte: since },
         },
       },
       {
@@ -159,11 +169,15 @@ export class WasteReportsService {
       0,
     );
 
-    const totalEstimatedWasteCost = aggregatedReports.reduce(
-      (sum, r) =>
-        sum + (r.totalExpectedSurplus || 0) * (r.ingredient?.costPerUnit || 0),
-      0,
-    );
+    const totalEstimatedWasteCost =
+      Math.round(
+        aggregatedReports.reduce(
+          (sum, r) =>
+            sum +
+            (r.totalExpectedSurplus || 0) * (r.ingredient?.costPerUnit || 0),
+          0,
+        ) * 100,
+      ) / 100;
 
     const highRiskCount = aggregatedReports.filter(
       (r) => r.highestRiskLevel === RiskLevelEnum.HIGH,
@@ -177,6 +191,7 @@ export class WasteReportsService {
 
     return {
       restaurantId,
+      windowDays: days,
       totalReports: aggregatedReports.length,
       totalSurplusQuantity,
       totalEstimatedWasteCost,

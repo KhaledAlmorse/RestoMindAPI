@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsEnum, IsInt, IsMongoId, IsOptional, Max, Min } from 'class-validator';
 import { RiskLevelEnum } from 'src/Common/Types';
 
 export class QueryWasteReportDto {
@@ -13,6 +13,7 @@ export class QueryWasteReportDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100)
   limit?: number = 10;
 
   @IsOptional()
@@ -20,6 +21,6 @@ export class QueryWasteReportDto {
   riskLevel?: RiskLevelEnum;
 
   @IsOptional()
-  @IsString()
+  @IsMongoId()
   ingredientId?: string;
 }

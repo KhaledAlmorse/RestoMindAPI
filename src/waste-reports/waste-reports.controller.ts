@@ -23,9 +23,16 @@ export class WasteReportsController {
 
   @Get('summary')
   @Auth('manager')
-  async getSummary(@AuthUser() authUser: IAuthUser, @Res() res: Response) {
+  async getSummary(
+    @Query('days') days: string | undefined,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
     const userId = authUser.user._id.toString();
-    const result = await this.wasteReportsService.getSummary(userId);
+    const parsed = Number(days);
+    const window =
+      Number.isFinite(parsed) && parsed > 0 && parsed <= 365 ? parsed : 30;
+    const result = await this.wasteReportsService.getSummary(userId, window);
     res.status(HttpStatus.OK).json(result);
   }
 }
