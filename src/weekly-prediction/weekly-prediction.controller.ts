@@ -80,4 +80,20 @@ export class WeeklyPredictionController {
     const result = await this.weeklyPredictionService.getLearnedStatus(userId);
     res.status(HttpStatus.OK).json(result);
   }
+
+  @Post('ai-backfill')
+  @HttpCode(HttpStatus.OK)
+  @Auth('manager')
+  async backfill(
+    @Body() body: { days?: number },
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const userId = authUser.user._id.toString();
+    const result = await this.weeklyPredictionService.backfillAiHistory(
+      userId,
+      body?.days,
+    );
+    res.status(HttpStatus.OK).json({ data: result });
+  }
 }

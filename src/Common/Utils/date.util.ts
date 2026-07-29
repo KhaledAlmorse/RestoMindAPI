@@ -64,6 +64,67 @@ export function addDaysToDateString(dateStr: string, days: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+/**
+ * Offset (in ms) such that `local time = instant + offset`, for the given
+ * timezone at the given instant. Computed by re-formatting the instant in
+ * that timezone and diffing against its raw UTC value, rather than assuming
+ * a fixed offset — Africa/Cairo is UTC+3 in summer and UTC+2 in winter.
+ */
+function getTimeZoneOffsetMs(instant: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const parts = formatter
+    .formatToParts(instant)
+    .reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== 'literal') acc[p.type] = p.value;
+      return acc;
+    }, {});
+  const asUTC = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return asUTC - instant.getTime();
+}
+
+/** UTC instant of local midnight for `dateStr` in the given timezone. */
+function startOfBusinessDay(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // A candidate instant labelled with the target date at UTC midnight. Its
+  // Cairo offset (probed via Intl) tells us how far that candidate actually
+  // sits from true Cairo midnight, so we can correct it.
+  const candidate = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  const offsetMs = getTimeZoneOffsetMs(candidate, BUSINESS_TIMEZONE);
+  return new Date(candidate.getTime() - offsetMs);
+}
+
+/**
+ * The UTC instants bounding the Cairo calendar day `dateStr`, as a half-open
+ * `[start, end)` range. Used to build query windows that actually match the
+ * Cairo day they claim to, instead of a UTC-aligned span mislabelled with a
+ * Cairo date string.
+ */
+export function getBusinessDayRange(dateStr: string): {
+  start: Date;
+  end: Date;
+} {
+  return {
+    start: startOfBusinessDay(dateStr),
+    end: startOfBusinessDay(addDaysToDateString(dateStr, 1)),
+  };
+}
+
 /** True only for a well-formed AND real calendar date. */
 export function isValidDateString(dateStr: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;

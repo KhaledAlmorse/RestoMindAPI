@@ -3,6 +3,7 @@ import {
   addDaysToDateString,
   getBusinessDateString,
   getBusinessDayOfWeek,
+  getBusinessDayRange,
   isValidDateString,
 } from './date.util';
 
@@ -56,5 +57,19 @@ describe('date.util', () => {
     expect(isValidDateString('2025-13-45')).toBe(false);
     expect(isValidDateString('2026-02-30')).toBe(false);
     expect(isValidDateString('not-a-date')).toBe(false);
+  });
+
+  describe('getBusinessDayRange', () => {
+    it('bounds a summer (UTC+3) Cairo calendar day', () => {
+      const { start, end } = getBusinessDayRange('2026-07-15');
+      expect(start.toISOString()).toBe('2026-07-14T21:00:00.000Z');
+      expect(end.toISOString()).toBe('2026-07-15T21:00:00.000Z');
+    });
+
+    it('bounds a winter (UTC+2) Cairo calendar day', () => {
+      const { start, end } = getBusinessDayRange('2026-01-15');
+      expect(start.toISOString()).toBe('2026-01-14T22:00:00.000Z');
+      expect(end.toISOString()).toBe('2026-01-15T22:00:00.000Z');
+    });
   });
 });

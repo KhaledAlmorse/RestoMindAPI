@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -548,6 +549,91 @@ export class WeeklyPredictionService {
       restaurantId,
       totalProducts: statusList.length,
       items: statusList,
+    };
+  }
+
+  /**
+   * Ship the restaurant's recent sales history to the AI in one call so learned
+   * demand levels bootstrap immediately.
+   *
+   * Without this, the only feed is the nightly one-day sync, and the model needs
+   * ~14 quiet weekdays before a product promotes off the owner's estimate — so a
+   * restaurant with two years of history would still wait a month. The bridge
+   * de-duplicates on (date, productId), so this is safe to re-run.
+   */
+  async backfillAiHistory(userId: string, days = 120) {
+    const restaurantId = await this.getManagerRestaurantId(userId);
+    const today = getBusinessDateString();
+    const fromDateStr = addDaysToDateString(today, -Math.abs(days));
+    const fromDate = new Date(`${fromDateStr}T00:00:00.000Z`);
+
+    const products =
+      (await this.productRepository.findMany({
+        filters: { restaurantId, isDeleted: false },
+        populationArray: [{ path: 'category' }],
+      })) || [];
+
+    const sales =
+      (await this.salesTransactionRepository.findMany({
+        filters: {
+          restaurantId,
+          isDeleted: false,
+          date: { $gte: fromDate },
+        },
+      })) || [];
+
+    if (sales.length === 0) {
+      return {
+        restaurantId: restaurantId.toString(),
+        daysRequested: days,
+        rowsSent: 0,
+        productsSent: 0,
+        learnedLevels: {},
+      };
+    }
+
+    const records = sales.map((s: any) => ({
+      date: new Date(s.date).toISOString().split('T')[0],
+      productId: s.productId.toString(),
+      salesQty: s.quantitySold || 0,
+    }));
+
+    const productPayload = products.map((p: any) => ({
+      productId: p._id.toString(),
+      title: p.title || 'Product',
+      category:
+        p.category && typeof p.category === 'object' && p.category.name
+          ? p.category.name
+          : null,
+      price: p.price || 0,
+      freshnessWindow: p.freshnessWindow ?? null,
+    }));
+
+    const result = await this.aiClient.post<any>(
+      '/integration/restomind/ingest',
+      {
+        restaurantId: restaurantId.toString(),
+        records,
+        products: productPayload,
+      },
+      { timeoutMs: 60_000 },
+    );
+
+    if (!result.ok) {
+      this.logger.error(
+        `AI backfill failed for restaurant ${restaurantId.toString()}: ${result.message}`,
+      );
+      throw new ServiceUnavailableException(
+        `AI backfill failed: ${result.message}`,
+      );
+    }
+
+    return {
+      restaurantId: restaurantId.toString(),
+      daysRequested: days,
+      rowsSent: records.length,
+      productsSent: productPayload.length,
+      learnedLevels: result.data?.learnedLevels ?? {},
     };
   }
 

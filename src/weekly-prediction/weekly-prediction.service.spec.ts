@@ -488,4 +488,41 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       $gte: new Date('2026-07-27T00:00:00.000Z'),
     });
   });
+
+  it('backfills sales history to the AI with product metadata attached', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'معجنات' } },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([
+      { productId: mockProductId, date: new Date('2026-06-01T10:00:00Z'), quantitySold: 12 },
+      { productId: mockProductId, date: new Date('2026-06-02T10:00:00Z'), quantitySold: 15 },
+    ]);
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ learnedLevels: { [mockProductId.toString()]: 13.5 } }),
+    }) as any;
+
+    const result = await service.backfillAiHistory('507f1f77bcf86cd799439011', 90);
+
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.records).toHaveLength(2);
+    expect(body.records[0]).toEqual({
+      date: '2026-06-01',
+      productId: mockProductId.toString(),
+      salesQty: 12,
+    });
+    // Category must ride along, or the model falls back to neutral priors.
+    expect(body.products[0]).toMatchObject({
+      productId: mockProductId.toString(),
+      title: 'Croissant',
+      category: 'معجنات',
+    });
+    expect(result.rowsSent).toBe(2);
+  });
 });

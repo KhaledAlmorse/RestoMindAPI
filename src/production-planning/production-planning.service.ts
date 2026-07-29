@@ -12,6 +12,7 @@ import {
   BUSINESS_TIMEZONE,
   addDaysToDateString,
   getBusinessDateString,
+  getBusinessDayRange,
 } from '../Common/Utils/date.util';
 import {
   DailyProductionPlan,
@@ -410,8 +411,12 @@ export class ProductionPlanningService {
     const todayStr = this.getTodayDateString();
     const yesterdayStr = this.getYesterdayDateString(todayStr);
 
-    const yesterdayStart = new Date(`${yesterdayStr}T00:00:00.000Z`);
-    const yesterdayEnd = new Date(`${todayStr}T00:00:00.000Z`);
+    // `yesterdayStr` is a Cairo calendar date. Bound the query window with the
+    // actual UTC instants of that Cairo day — interpolating it into a
+    // `T00:00:00.000Z` boundary would make the window UTC-aligned but
+    // Cairo-labelled, with a tail reaching into the current hour.
+    const { start: yesterdayStart, end: yesterdayEnd } =
+      getBusinessDayRange(yesterdayStr);
 
     const restaurants =
       (await this.restaurantRepository.findMany({
@@ -435,17 +440,34 @@ export class ProductionPlanningService {
         }
 
         const records = sales.map((s: any) => ({
-          date: s.date
-            ? new Date(s.date).toISOString().split('T')[0]
-            : yesterdayStr,
+          // Derive the key from the Cairo day the sale actually happened on —
+          // `toISOString().split('T')[0]` would attribute a sale near Cairo
+          // midnight to the previous UTC day.
+          date: s.date ? getBusinessDateString(new Date(s.date)) : yesterdayStr,
           productId: s.productId ? s.productId.toString() : '',
           salesQty: s.quantitySold || 0,
         }));
 
+        // Sending `products: []` made the registry auto-register each product
+        // with title=productId and category=None, so every product resolved to
+        // neutral calendar priors. Send the real metadata.
+        const products =
+          (await this.productRepository.findMany({
+            filters: { restaurantId: restId, isDeleted: false },
+            populationArray: [{ path: 'category' }],
+          })) || [];
+
         await this.aiIngestService.ingest({
           restaurantId: restId.toString(),
           records,
-          products: [],
+          products: products.map((p: any) => ({
+            productId: p._id.toString(),
+            title: p.title || 'Product',
+            category:
+              p.category && typeof p.category === 'object' && p.category.name
+                ? p.category.name
+                : undefined,
+          })),
         });
       } catch (err: any) {
         this.logger.error(

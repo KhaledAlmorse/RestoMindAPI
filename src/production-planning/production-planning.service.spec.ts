@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from '../Common/Types';
+import { getBusinessDayRange } from '../Common/Utils/date.util';
 import { DailyProductionPlan } from '../DB/Models/daily-production-plan.model';
 import { DailyProductionPlanRepository } from '../DB/Repositories/daily-production-plan.repository';
 import { ProductRepository } from '../DB/Repositories/product.repository';
@@ -428,6 +429,9 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     const yesterdayStr = service.getYesterdayDateString(todayStr);
     const prodId = new Types.ObjectId();
 
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: prodId, title: 'Baklava', category: { name: 'Dessert' } },
+    ]);
     mockSalesRepo.findMany.mockResolvedValue([
       {
         date: new Date(`${yesterdayStr}T12:00:00.000Z`),
@@ -448,7 +452,55 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
           salesQty: 50,
         },
       ],
-      products: [],
+      products: [
+        {
+          productId: prodId.toString(),
+          title: 'Baklava',
+          category: 'Dessert',
+        },
+      ],
     });
+  });
+
+  it('Case 7: nightly sync builds the query window from Cairo day boundaries, not UTC-labelled ones', async () => {
+    const todayStr = service.getTodayDateString();
+    const yesterdayStr = service.getYesterdayDateString(todayStr);
+
+    mockProductRepo.findMany.mockResolvedValue([]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+
+    await service.handleNightlyAiSync();
+
+    const { start, end } = getBusinessDayRange(yesterdayStr);
+    const filters = mockSalesRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.date).toEqual({ $gte: start, $lt: end });
+  });
+
+  it('Case 8: nightly sync attributes a sale to the Cairo day it happened on, not the UTC date', async () => {
+    const prodId = new Types.ObjectId();
+    mockProductRepo.findMany.mockResolvedValue([]);
+    // 2026-01-15T22:30:00.000Z is 2026-01-16 00:30 in Cairo (winter, UTC+2) —
+    // a UTC .toISOString() split would mislabel this as the 15th.
+    mockSalesRepo.findMany.mockResolvedValue([
+      {
+        date: new Date('2026-01-15T22:30:00.000Z'),
+        productId: prodId,
+        quantitySold: 5,
+      },
+    ]);
+
+    await service.handleNightlyAiSync();
+
+    expect(mockAiIngestService.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        records: [
+          {
+            date: '2026-01-16',
+            productId: prodId.toString(),
+            salesQty: 5,
+          },
+        ],
+      }),
+    );
   });
 });
