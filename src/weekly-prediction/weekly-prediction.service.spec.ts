@@ -977,6 +977,149 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.source).toBe(PredictionSourceEnum.FALLBACK_NAIVE);
   });
 
+  it('recalculateSingle surfaces a 401 as a client_error degradation, not a silent HTTP 200', async () => {
+    // F1's whole point, on the endpoint that was missed: under a 401 storm
+    // POST /predictions/recalculate answered 200 with a fallback_naive row and
+    // told the caller nothing. The kind must reach the response body.
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Invalid X-RestoMind-Key' }),
+    });
+    global.fetch = fetchMock as any;
+
+    const result: any = await service.recalculateSingle(
+      '507f1f77bcf86cd799439011',
+      mockProductId.toString(),
+      targetWeek,
+    );
+
+    // The row is still returned — but it is labelled.
+    expect(result.data.source).toBe(PredictionSourceEnum.FALLBACK_NAIVE);
+    expect(result.degraded).toBe(true);
+    expect(result.degradedKind).toBe('client_error');
+    expect(result.degradedStatus).toBe(401);
+    expect(result.degradedReason).toBe('Invalid X-RestoMind-Key');
+    // A 4xx is never retried: retrying cannot fix a bad shared secret.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('recalculateSingle reports no degradation on the happy path', async () => {
+    // Guards the test above from over-correcting into "always degraded".
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        modelVersionId: 'restomind-bridge/rule_based-v0.1',
+        predictedOrders: 70,
+        confidence: 'medium',
+        featuresUsed: {},
+        factors: [],
+        dailyBreakdown: [],
+      }),
+    }) as any;
+
+    const result: any = await service.recalculateSingle(
+      '507f1f77bcf86cd799439011',
+      mockProductId.toString(),
+      targetWeek,
+    );
+
+    expect(result.data.source).toBe(PredictionSourceEnum.AI_MODEL);
+    expect(result.degraded).toBe(false);
+    expect(result.degradedKind).toBeUndefined();
+  });
+
+  it('batchRecalculate reports client_error even when another product only timed out', async () => {
+    // A stray timeout on one product must not mask a configuration fault on
+    // another: `client_error` is the more actionable diagnosis and wins the
+    // firstDegradation slot regardless of which failure landed first.
+    const unavailableProduct = new Types.ObjectId();
+    const clientErrorProduct = new Types.ObjectId();
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: unavailableProduct, title: 'A', category: { name: 'Pastry' } },
+      { _id: clientErrorProduct, title: 'B', category: { name: 'Pastry' } },
+    ]);
+    mockProductRepo.findOne.mockImplementation(({ filters }: any) =>
+      Promise.resolve({
+        _id: filters._id,
+        title: 'X',
+        category: { name: 'Pastry' },
+      }),
+    );
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    // Keyed on the request body, not call order, so the assertion does not
+    // depend on how the two concurrent workers interleave. The `unavailable`
+    // product is listed FIRST, so it is also the first to fail.
+    jest
+      .spyOn((service as any).aiClient, 'post')
+      .mockImplementation(async (_path: any, body: any) =>
+        body.productId === clientErrorProduct.toString()
+          ? {
+              ok: false,
+              kind: 'client_error',
+              status: 401,
+              message: 'Invalid X-RestoMind-Key',
+              body: { detail: 'Invalid X-RestoMind-Key' },
+            }
+          : { ok: false, kind: 'unavailable', message: 'timed out after 10000ms' },
+      );
+
+    const result: any = await service.batchRecalculate(
+      '507f1f77bcf86cd799439011',
+      targetWeek,
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.degradedKind).toBe('client_error');
+    expect(result.degradedStatus).toBe(401);
+    expect(result.degradedProductIds.sort()).toEqual(
+      [unavailableProduct.toString(), clientErrorProduct.toString()].sort(),
+    );
+  });
+
   it('keeps the full 3-attempt retry budget for a single recalculation but caps the batch worker at 2', async () => {
     mockUserRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(),

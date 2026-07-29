@@ -475,6 +475,95 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     });
   });
 
+  it('builds the 14-day avgDailySales lookback from Cairo day boundaries', async () => {
+    // `new Date(`${dateStr}T00:00:00.000Z`)` was a UTC-midnight literal built
+    // from a Cairo date string, so the whole window sat 2-3h off the Cairo days
+    // it claimed to cover. July: Cairo is on DST (UTC+3) across the entire
+    // window, so the UTC-midnight version is a genuinely different instant.
+    const dateStr = '2026-07-29';
+
+    mockPlanRepo.findOne.mockResolvedValue(null);
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: new Types.ObjectId(), title: 'Croissant', price: 18 },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('AI down'));
+    mockPlanRepo.create.mockImplementation((data: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...data }),
+    );
+
+    await service.generateProductionPlan(mockRestaurantId, dateStr);
+
+    const expectedEnd = getBusinessDayRange(dateStr).start;
+    const expectedStart = getBusinessDayRange('2026-07-15').start; // 14 days back
+    const filters = mockSalesRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.date).toEqual({ $gte: expectedStart, $lt: expectedEnd });
+
+    // Exactly 14 Cairo days wide, and NOT the UTC-midnight pair.
+    expect(expectedEnd.getTime() - expectedStart.getTime()).toBe(
+      14 * 24 * 60 * 60 * 1000,
+    );
+    expect(filters.date.$lt).not.toEqual(new Date(`${dateStr}T00:00:00.000Z`));
+    expect(filters.date.$lt.toISOString()).toBe('2026-07-28T21:00:00.000Z');
+    expect(filters.date.$gte.toISOString()).toBe('2026-07-14T21:00:00.000Z');
+  });
+
+  it('reports a cached fallback plan as degraded, not as a healthy forecast', async () => {
+    // The cached branch: the plan is read straight from the DB, so no live AI
+    // failure occurred this request — but its rows were produced by the local
+    // fallback policy, and a caller must be able to tell.
+    const todayStr = service.getTodayDateString();
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(mockUserId),
+      restaurantId: mockRestaurantId,
+    });
+    mockPlanRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      date: todayStr,
+      items: [
+        {
+          productId: new Types.ObjectId(),
+          recommendedQty: 20,
+          source: ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+        },
+      ],
+    });
+
+    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+
+    expect(result.success).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.degradedReason).toMatch(/local fallback policy/i);
+  });
+
+  it('does not flag a cached AI-produced plan as degraded', async () => {
+    // Guards the test above from over-correcting into "every cached plan is
+    // degraded", which would make the flag meaningless.
+    const todayStr = service.getTodayDateString();
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(mockUserId),
+      restaurantId: mockRestaurantId,
+    });
+    mockPlanRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      date: todayStr,
+      items: [
+        {
+          productId: new Types.ObjectId(),
+          recommendedQty: 90,
+          source: ProductionPlanSourceEnum.AI_MODEL,
+        },
+      ],
+    });
+
+    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+
+    expect(result.degraded).toBe(false);
+    expect(result.degradedReason).toBeUndefined();
+  });
+
   // ==========================================
   // CASE 5: GET yesterday date without existing plan -> Returns 404
   // ==========================================

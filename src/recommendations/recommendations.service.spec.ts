@@ -29,6 +29,10 @@ import {
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import {
+  getBusinessDateString,
+  getBusinessDayRange,
+} from 'src/Common/Utils/date.util';
 
 describe('RecommendationsService', () => {
   let service: RecommendationsService;
@@ -729,6 +733,62 @@ describe('RecommendationsService', () => {
       expect(mockWasteReportRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ predictionId }),
       );
+    });
+
+    it('dedups waste reports over one CAIRO day, not the server local day', async () => {
+      // F6. `setHours(0,0,0,0)` / `setHours(23,59,59,999)` on a server-local
+      // Date meant that on a UTC container a scan at Cairo 01:00 and one at
+      // Cairo 10:00 the same Cairo day fell in different windows and wrote two
+      // reports per ingredient — double-counting getSummary's $sum on
+      // totalEstimatedWasteCost. Same assertion shape as the reconciliation
+      // window test in weekly-prediction.service.spec.ts.
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 1 },
+        ],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([
+        { quantityRemaining: 200 },
+      ]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      const { start, end } = getBusinessDayRange(getBusinessDateString());
+      const filters = mockWasteReportRepo.findOne.mock.calls[0][0].filters;
+      expect(filters.createdAt).toEqual({ $gte: start, $lt: end });
+
+      // Half-open and exactly one Cairo day wide. The old code used an
+      // inclusive `$lte ...23:59:59.999` upper bound; this pins the shape too.
+      expect(Object.keys(filters.createdAt).sort()).toEqual(['$gte', '$lt']);
+      expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000);
+
+      // And explicitly not the server's local midnight, which is what
+      // `new Date().setHours(0,0,0,0)` produced.
+      const localMidnight = new Date();
+      localMidnight.setHours(0, 0, 0, 0);
+      if (localMidnight.getTime() !== start.getTime()) {
+        expect(filters.createdAt.$gte).not.toEqual(localMidnight);
+      }
     });
   });
 });

@@ -282,12 +282,16 @@ export class ProductionPlanningService {
       return emptyPlan as DailyProductionPlanType;
     }
 
-    // 3. Compute 14-day avgDailySales per product
-    const cutoffDate = new Date(`${dateStr}T00:00:00.000Z`);
-    const startDate = new Date(cutoffDate);
-    startDate.setUTCDate(
-      startDate.getUTCDate() - AVG_DAILY_SALES_LOOKBACK_DAYS,
-    );
+    // 3. Compute 14-day avgDailySales per product.
+    // `new Date(`${dateStr}T00:00:00.000Z`)` was a UTC-midnight literal built
+    // from a *Cairo* date string, so the whole lookback sat 2–3h off the Cairo
+    // days it claimed to cover — crediting the small hours of the plan day to
+    // the window and dropping the same slice 14 days back. Same defect class as
+    // the reconciliation window; use the Cairo day helper.
+    const cutoffDate = getBusinessDayRange(dateStr).start;
+    const startDate = getBusinessDayRange(
+      addDaysToDateString(dateStr, -AVG_DAILY_SALES_LOOKBACK_DAYS),
+    ).start;
 
     const salesList =
       (await this.salesTransactionRepository.findMany({

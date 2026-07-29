@@ -459,13 +459,23 @@ export class WeeklyPredictionService {
     const productId = new Types.ObjectId(productIdStr);
     const targetWeek = this.resolveTargetWeek(targetWeekInput);
 
+    // Same reasoning as batchRecalculate: without this, a 401 storm answers
+    // HTTP 200 with a fallback_naive row and tells the caller nothing. The
+    // degradation must ride out on the response, not just the server log.
+    let degradation: AiDegradation | null = null;
+
     const prediction = await this.recalculateProductPrediction(
       restaurantId,
       productId,
       targetWeek,
+      // Full 3-attempt budget: exactly one AI call per request here.
+      3,
+      (d) => {
+        degradation = d;
+      },
     );
 
-    return { data: prediction };
+    return { data: prediction, ...degradationFields(degradation) };
   }
 
   /**
