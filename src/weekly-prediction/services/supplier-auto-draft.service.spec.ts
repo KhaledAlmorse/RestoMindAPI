@@ -48,6 +48,7 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       findMany: jest.fn(),
       findOne: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     };
     mockSupplierRepo = {
       findMany: jest.fn(),
@@ -175,5 +176,46 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
     expect(result.unassignedShortfalls).toHaveLength(1);
     expect(result.unassignedShortfalls[0].ingredientCode).toBe('ING999');
     expect(result.unassignedShortfalls[0].shortfall).toBe(50);
+  });
+
+  it('updates an existing AI draft instead of creating a duplicate', async () => {
+    const supplierId = new Types.ObjectId();
+    const ingredientId = new Types.ObjectId();
+    const existingPoId = new Types.ObjectId();
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      { productId: new Types.ObjectId(), predictedOrders: 100 },
+    ]);
+    mockRecipeRepo.findOne.mockResolvedValue({
+      ingredients: [{ ingredientId, quantityPerPortion: 2, yieldPercentage: 100 }],
+    });
+    mockIngredientRepo.findOne.mockResolvedValue({
+      _id: ingredientId,
+      name: 'Flour',
+      ingredientCode: 'FLR',
+      unit: 'kg',
+      supplierId,
+    });
+    mockInventoryBatchRepo.findMany.mockResolvedValue([]);
+    mockPurchaseOrderRepo.findMany.mockResolvedValue([]);
+    // An AI draft for this supplier/week already exists.
+    mockPurchaseOrderRepo.findOne.mockResolvedValue({
+      _id: existingPoId,
+      supplierId,
+      items: [],
+    });
+    mockPurchaseOrderRepo.update.mockResolvedValue({ _id: existingPoId, items: [] });
+
+    const result = await service.generateAutoDrafts(
+      mockRestaurantId,
+      '2026-07-27',
+      new Types.ObjectId(),
+    );
+
+    expect(mockPurchaseOrderRepo.create).not.toHaveBeenCalled();
+    expect(mockPurchaseOrderRepo.update).toHaveBeenCalledWith(
+      expect.objectContaining({ filters: { _id: existingPoId } }),
+    );
+    expect(result.reusedExistingDrafts).toBe(1);
   });
 });
