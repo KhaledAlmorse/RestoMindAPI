@@ -65,7 +65,12 @@ export class AiClientService {
       try {
         const response = await fetch(url, {
           method,
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.AI_SHARED_SECRET
+              ? { 'X-RestoMind-Key': process.env.AI_SHARED_SECRET }
+              : {}),
+          },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: controller.signal,
         });

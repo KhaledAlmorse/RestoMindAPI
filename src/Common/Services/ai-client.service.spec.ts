@@ -87,4 +87,17 @@ describe('AiClientService', () => {
     );
     delete process.env.AI_SERVICE_URL;
   });
+
+  it('attaches the shared secret header when configured', async () => {
+    process.env.AI_SHARED_SECRET = 's3cret';
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }) as any;
+
+    await service.post('/integration/restomind/predict', {});
+
+    const init = (global.fetch as jest.Mock).mock.calls[0][1];
+    expect(init.headers['X-RestoMind-Key']).toBe('s3cret');
+    delete process.env.AI_SHARED_SECRET;
+  });
 });
