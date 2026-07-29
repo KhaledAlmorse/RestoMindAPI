@@ -13,7 +13,16 @@ import {
   addDaysToDateString,
   getBusinessDateString,
   getBusinessDayOfWeek,
+  getBusinessDayRange,
 } from 'src/Common/Utils/date.util';
+import {
+  AVG_DAILY_SALES_LOOKBACK_DAYS,
+  resolveAvgDailySales,
+} from 'src/Common/Utils/sales-estimate.util';
+import {
+  degradationFields,
+  reportAiFailure,
+} from 'src/Common/Utils/ai-degradation.util';
 import {
   OfferSourceEnum,
   OfferStatusEnum,
@@ -188,7 +197,13 @@ export class RecommendationsService {
       price: number;
       freshnessWindow: number;
       currentStock: number;
-      avgDailySales: number;
+      // `null`, NOT 0. The bridge reads 0 as "this product sells nothing" and
+      // scores it as pure surplus risk; it reads null as "no estimate given"
+      // and applies its category default. Typing this as `number` and seeding
+      // it to 0 collapsed the two, and the Python side's truthy
+      // `s.avg_daily_sales or DEFAULT_DAILY_LEVEL` then turned an honest 0
+      // into 40/day, so dead-slow stock was never flagged or discounted.
+      avgDailySales: number | null;
     }> = [];
 
     for (const product of products) {
@@ -260,40 +275,51 @@ export class RecommendationsService {
         productTotalStock += usableAvailableStock;
       }
 
-      // Calculate avgDailySales from prediction or sales history
-      let avgDailySales = 0;
-      if (prediction?.predictedOrders) {
-        if (prediction.dailyBreakdown?.length) {
-          const totalPredicted = prediction.dailyBreakdown.reduce(
-            (sum, d) => sum + d.predictedQuantity,
-            0,
-          );
-          avgDailySales = Math.round(
-            totalPredicted / prediction.dailyBreakdown.length,
-          );
-        } else {
-          avgDailySales = Math.round(prediction.predictedOrders / 7);
-        }
+      // Calculate avgDailySales from this week's forecast, else from history.
+      //
+      // Two defects lived here. (1) `Math.round(...)` to a whole unit meant any
+      // product forecast under 4 units/week became a flat 0 — an ordinary
+      // outcome, not a cold-start edge case. (2) the initial `0` and the
+      // `number` type meant "no signal at all" was sent as 0, which the bridge
+      // reads as a real zero-demand answer. Both now go through the same
+      // measured > owner estimate > null precedence the other two AI-feeding
+      // paths use.
+      let avgDailySales: number | null;
+      const predictedOrders = prediction?.predictedOrders;
+
+      if (predictedOrders !== undefined && predictedOrders !== null) {
+        const breakdown = prediction?.dailyBreakdown;
+        const days = breakdown?.length || 7;
+        const total = breakdown?.length
+          ? breakdown.reduce((sum, d) => sum + d.predictedQuantity, 0)
+          : predictedOrders;
+        // Two decimals, matching resolveAvgDailySales — never rounded to 0.
+        avgDailySales = Math.round((total / days) * 100) / 100;
       } else {
-        const fourteenDaysAgo = new Date();
-        fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+        const lookbackStart = new Date();
+        lookbackStart.setDate(
+          lookbackStart.getDate() - AVG_DAILY_SALES_LOOKBACK_DAYS,
+        );
 
-        const sales = await this.salesTransactionRepository.findMany({
-          filters: {
-            restaurantId,
-            productId: product._id,
-            isDeleted: false,
-            date: { $gte: fourteenDaysAgo },
-          },
-        });
+        const sales =
+          (await this.salesTransactionRepository.findMany({
+            filters: {
+              restaurantId,
+              productId: product._id,
+              isDeleted: false,
+              date: { $gte: lookbackStart },
+            },
+          })) || [];
 
-        if (sales?.length) {
-          const totalSold = sales.reduce(
-            (sum, s) => sum + (s.quantitySold || 0),
-            0,
-          );
-          avgDailySales = Math.round(totalSold / 14);
-        }
+        const totalSold = sales.reduce(
+          (sum, s) => sum + (s.quantitySold || 0),
+          0,
+        );
+        avgDailySales = resolveAvgDailySales(
+          totalSold,
+          sales.length,
+          product as any,
+        );
       }
 
       const categoryName =
@@ -328,21 +354,24 @@ export class RecommendationsService {
       };
     }
 
-    // 3. Upsert WasteReports with locally calculated values
+    // 3. Upsert WasteReports with locally calculated values.
+    // The dedup window is one CAIRO day. `setHours(0,0,0,0)` used the server's
+    // local day, so on a UTC-timezone container a scan at Cairo 01:00 and one
+    // at Cairo 10:00 on the same Cairo day landed in different windows and
+    // wrote two reports per ingredient — double-counting getSummary's
+    // `$sum` on totalEstimatedWasteCost. Computed once, outside the loop.
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(
+      getBusinessDateString(),
+    );
     const wasteReportsByProduct = new Map<string, Types.ObjectId>();
 
     for (const data of wasteReportData) {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
-
       let wasteReport = await this.wasteReportRepository.findOne({
         filters: {
           restaurantId,
           ingredientId: data.ingredientId,
           isDeleted: false,
-          createdAt: { $gte: todayStart, $lte: todayEnd },
+          createdAt: { $gte: todayStart, $lt: todayEnd },
         },
       });
 
@@ -393,10 +422,25 @@ export class RecommendationsService {
     );
 
     if (!aiResult.ok || !aiResult.data?.itemsAtRisk) {
-      const reason = aiResult.ok
-        ? 'AI service returned no itemsAtRisk'
-        : aiResult.message;
-      this.logger.warn(`Surplus scan degraded: ${reason}`);
+      // Branching on `ok` alone logged a never-retried 401 at WARN with the
+      // same wording as a real outage. Classify by KIND so a configuration
+      // fault is loud, and carry the kind into the response.
+      const degradation = aiResult.ok
+        ? {
+            kind: 'unavailable' as const,
+            reason: 'AI service returned no itemsAtRisk',
+          }
+        : reportAiFailure(
+            this.logger,
+            '/integration/restomind/surplus-offers',
+            aiResult,
+            `restaurant ${restaurantId.toString()}`,
+          );
+
+      if (aiResult.ok) {
+        this.logger.warn(`Surplus scan degraded: ${degradation.reason}`);
+      }
+
       return {
         data: {
           message: 'Surplus scan completed without AI recommendations',
@@ -406,8 +450,7 @@ export class RecommendationsService {
           recommendations: [],
           wasteReportsWritten: wasteReportData.length,
         },
-        degraded: true,
-        degradedReason: reason,
+        ...degradationFields(degradation),
       };
     }
 

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from '../Common/Types';
 import {
   BUSINESS_TIMEZONE,
@@ -15,6 +15,11 @@ import {
   getBusinessDayRange,
 } from '../Common/Utils/date.util';
 import { resolveAvgDailySales } from '../Common/Utils/sales-estimate.util';
+import {
+  degradationFields,
+  reportAiFailure,
+} from '../Common/Utils/ai-degradation.util';
+import type { AiDegradation } from '../Common/Types/ai.types';
 import {
   DailyProductionPlan,
   DailyProductionPlanType,
@@ -109,6 +114,7 @@ export class ProductionPlanningService {
     const restaurantId = await this.getManagerRestaurantId(userId);
     const todayStr = this.getTodayDateString();
     const dateStr = requestedDate || todayStr;
+    let degradation: AiDegradation | null = null;
 
     // Browsing to an arbitrary future date would generate AND persist a plan,
     // hammering the AI once per page view.
@@ -134,7 +140,9 @@ export class ProductionPlanningService {
       }
 
       // If date is today or future -> generate on-demand
-      await this.generateProductionPlan(restaurantId, dateStr);
+      await this.generateProductionPlan(restaurantId, dateStr, (d) => {
+        degradation = d;
+      });
 
       // Re-fetch populated plan
       plan = await this.dailyProductionPlanRepository.findOne({
@@ -143,7 +151,24 @@ export class ProductionPlanningService {
       });
     }
 
-    return { success: true, data: plan };
+    // A plan read straight from the DB carries no live failure, but its rows
+    // still remember whether the AI produced them — so a cached fallback plan
+    // is reported as degraded too, rather than reading as a healthy forecast.
+    const fellBack = (plan?.items || []).some(
+      (i: any) => i.source === ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+    );
+
+    if (!degradation && fellBack) {
+      return {
+        success: true,
+        data: plan,
+        degraded: true,
+        degradedReason:
+          'Plan was produced by the local fallback policy, not the forecasting model',
+      };
+    }
+
+    return { success: true, data: plan, ...degradationFields(degradation) };
   }
 
   /**
@@ -227,6 +252,10 @@ export class ProductionPlanningService {
   async generateProductionPlan(
     restaurantId: Types.ObjectId,
     dateStr: string,
+    // Optional sink so the HTTP caller can report WHY the plan it just got is
+    // a fallback. A callback rather than a changed return type, so the cron
+    // and every existing caller stay untouched.
+    onAiFailure?: (degradation: AiDegradation) => void,
   ): Promise<DailyProductionPlanType> {
     // 1. Check duplicate plan
     const existing = await this.dailyProductionPlanRepository.findOne({
@@ -339,7 +368,22 @@ export class ProductionPlanningService {
         });
       }
     } else {
-      // AI failure -> Fallback handling
+      // AI failure -> Fallback handling.
+      // Branching on `ok` alone logged a never-retried 401 with the same
+      // "unreachable" wording as a genuine outage, so a missing
+      // AI_SHARED_SECRET produced a whole restaurant of FALLBACK_YESTERDAY
+      // plans that looked like a transient blip. Classify by KIND.
+      if (!aiResult.ok) {
+        onAiFailure?.(
+          reportAiFailure(
+            this.logger,
+            '/integration/restomind/production-plan',
+            aiResult,
+            `restaurant ${restaurantId.toString()}, date ${dateStr}`,
+          ),
+        );
+      }
+
       this.logger.error(
         `[CRITICAL ALERT] AI Production Plan generation failed${
           aiResult.ok ? '' : `: ${aiResult.message}`
@@ -414,13 +458,23 @@ export class ProductionPlanningService {
   }
 
   /**
-   * Cron Job 1: Midnight Daily Production Plan Generation (12:00 AM)
+   * Cron Job 1: Daily Production Plan Generation — 01:00 Cairo.
+   *
+   * Was EVERY_DAY_AT_MIDNIGHT (`0 0 * * *`), which collided with
+   * WeeklyPredictionService's `0 0 * * 0` in the same minute every Sunday.
+   * The FastAPI service is single-process and the batch retry budget is only
+   * 2 attempts at a 10s timeout, so the contention pushed products onto the
+   * naive fallback on exactly one night a week. The schedule is now:
+   *   01:00 daily — this plan sync
+   *   02:00 daily — nightly AI learning sync
+   *   00:00 Sunday — weekly prediction batch
+   *   03:00 Sunday — accuracy reconciliation
+   * Written as an explicit expression rather than CronExpression so the hour
+   * is visible next to the timezone it is interpreted in.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { timeZone: BUSINESS_TIMEZONE })
+  @Cron('0 1 * * *', { timeZone: BUSINESS_TIMEZONE })
   async handleDailyPlanGeneration() {
-    this.logger.log(
-      'Executing midnight daily production plan generation cron...',
-    );
+    this.logger.log('Executing 01:00 daily production plan generation cron...');
     const todayStr = this.getTodayDateString();
 
     const restaurants =

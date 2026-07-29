@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { AiCallResult } from '../Types/ai.types';
 
 const DEFAULT_RETRIES = 3;
@@ -19,8 +19,30 @@ export interface AiCallOptions {
  * is down", because only the second one justifies a fallback.
  */
 @Injectable()
-export class AiClientService {
+export class AiClientService implements OnModuleInit {
   private readonly logger = new Logger(AiClientService.name);
+
+  /**
+   * Boot-time guard for the single most damaging misconfiguration on this
+   * integration: the AI service is started WITH a shared secret and NestJS
+   * without one. Every `/integration/restomind/*` call then returns 401, which
+   * the client classifies as `client_error` and never retries, so forecasting
+   * silently degrades to the naive fallback while every endpoint still answers
+   * HTTP 200.
+   *
+   * Deliberately a warning, not a throw: an unsecured local dev setup (no
+   * secret on either side) is legitimate and must still boot.
+   */
+  onModuleInit(): void {
+    if (!process.env.AI_SHARED_SECRET) {
+      this.logger.warn(
+        `AI_SHARED_SECRET is not set. Requests to ${this.baseUrl} will be sent WITHOUT the ` +
+          `X-RestoMind-Key header — if that AI service enforces a shared secret, every call ` +
+          `will fail with HTTP 401, will NOT be retried, and every prediction will silently ` +
+          `fall back. This is expected only for an unsecured local development AI service.`,
+      );
+    }
+  }
 
   get baseUrl(): string {
     return (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200').replace(

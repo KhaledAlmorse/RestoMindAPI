@@ -12,6 +12,12 @@ import { RestaurantRepository } from 'src/DB/Repositories/restaurant.repository'
 import { Prediction } from 'src/DB/Models/prediction.model';
 import { ConfidenceLevelEnum, PredictionSourceEnum } from 'src/Common/Types';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import {
+  addDaysToDateString,
+  getBusinessDateString,
+  getBusinessDayOfWeek,
+  getBusinessDayRange,
+} from 'src/Common/Utils/date.util';
 
 describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', () => {
   let service: WeeklyPredictionService;
@@ -649,6 +655,185 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     });
     // MAPE = mean(|100-90|/100, |50-60|/50) = mean(0.10, 0.20) = 0.15
     expect(result.mape).toBeCloseTo(0.15, 4);
+  });
+
+  it('reconciles against the seven Cairo days of the target week, not a UTC-midnight span', async () => {
+    // A July week: Cairo is on DST (UTC+3) for its whole span, so a
+    // UTC-midnight window is a genuinely different pair of instants — Cairo
+    // midnight Sunday is 21:00Z the previous Saturday. (A winter week under
+    // UTC+2 would differ too; July just makes the gap unambiguous and free of
+    // any DST transition inside the window.)
+    const week = '2026-07-19';
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      {
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        predictedOrders: 10,
+      },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockPredictionRepo.bulkWrite = jest.fn().mockResolvedValue({});
+
+    await service.reconcilePredictionAccuracy(mockRestaurantId, week);
+
+    const { start } = getBusinessDayRange(week);
+    const { end } = getBusinessDayRange(addDaysToDateString(week, 6));
+    const filters = mockSalesRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.date).toEqual({ $gte: start, $lt: end });
+
+    // The window must cover all seven Cairo days — [Sun 00:00, next Sun 00:00).
+    expect(end.getTime() - start.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+
+    // And it must NOT be the UTC-midnight window. Spelled out explicitly so a
+    // regression to `new Date(`${week}T00:00:00.000Z`)` cannot slip through.
+    expect(start).not.toEqual(new Date(`${week}T00:00:00.000Z`));
+    expect(end).not.toEqual(
+      new Date(`${addDaysToDateString(week, 7)}T00:00:00.000Z`),
+    );
+    expect(start.toISOString()).toBe('2026-07-18T21:00:00.000Z');
+    expect(end.toISOString()).toBe('2026-07-25T21:00:00.000Z');
+  });
+
+  it('getAccuracy returns one bucket per week, oldest-first, from a single query', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+
+    // Derived the same way the service does: Cairo today, back to Cairo Sunday.
+    const currentWeekStart = addDaysToDateString(
+      getBusinessDateString(),
+      -getBusinessDayOfWeek(),
+    );
+    const w1 = addDaysToDateString(currentWeekStart, -7); // most recently closed
+    const w2 = addDaysToDateString(currentWeekStart, -14); // nothing reconciled
+    const w3 = addDaysToDateString(currentWeekStart, -21); // oldest
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      { targetWeek: w1, predictedOrders: 100, actualOrders: 90, errorAbs: 10 },
+      { targetWeek: w3, predictedOrders: 50, actualOrders: 60, errorAbs: 10 },
+      // A zero-prediction row: excluded from the MAPE mean (a percentage error
+      // against 0 is undefined) but still counted and still summed.
+      { targetWeek: w3, predictedOrders: 0, actualOrders: 7, errorAbs: 7 },
+    ]);
+
+    const result = await service.getAccuracy('507f1f77bcf86cd799439011', 3);
+
+    // One round trip, not one per week.
+    expect(mockPredictionRepo.findMany).toHaveBeenCalledTimes(1);
+    const filters = mockPredictionRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.actualOrders).toEqual({ $ne: null });
+
+    const asked: string[] = filters.targetWeek.$in;
+    expect(Array.isArray(asked)).toBe(true);
+    expect(asked).toHaveLength(3);
+    // The still-open current week must never be asked for.
+    expect(asked).not.toContain(currentWeekStart);
+    const ordered = [...asked].sort();
+    expect(ordered).toEqual([w3, w2, w1]);
+    for (let i = 1; i < ordered.length; i++) {
+      expect(addDaysToDateString(ordered[i - 1], 7)).toBe(ordered[i]);
+    }
+
+    // Oldest-first: the dashboard chart plots left-to-right in time.
+    expect(result.weeks.map((w: any) => w.targetWeek)).toEqual([w3, w2, w1]);
+
+    // A week with zero reconciled rows stays in the series. Dropping it would
+    // silently shift every later point on the chart.
+    expect(result.weeks[1]).toEqual({
+      targetWeek: w2,
+      predictions: 0,
+      mape: null,
+      totalPredicted: 0,
+      totalActual: 0,
+    });
+
+    // w3: both rows counted, but MAPE = 10/50 only — the zero-prediction row
+    // is out of the mean, not out of the totals.
+    expect(result.weeks[0].predictions).toBe(2);
+    expect(result.weeks[0].totalPredicted).toBe(50);
+    expect(result.weeks[0].totalActual).toBe(67);
+    expect(result.weeks[0].mape).toBeCloseTo(0.2, 4);
+
+    // w1 grouped back onto its own key, not merged with w3.
+    expect(result.weeks[2].predictions).toBe(1);
+    expect(result.weeks[2].mape).toBeCloseTo(0.1, 4);
+
+    expect(result.restaurantId).toBe(mockRestaurantId.toString());
+  });
+
+  it('the accuracy cron targets the week that just closed, derived from Cairo', async () => {
+    const r1 = new Types.ObjectId();
+    mockRestaurantRepo.findMany.mockResolvedValue([{ _id: r1 }]);
+
+    const spy = jest
+      .spyOn(service, 'reconcilePredictionAccuracy')
+      .mockResolvedValue({
+        targetWeek: 'stub',
+        reconciled: 0,
+        mape: null,
+      } as any);
+
+    await service.handleAccuracyReconciliationCron();
+
+    const currentWeekStart = addDaysToDateString(
+      getBusinessDateString(),
+      -getBusinessDayOfWeek(),
+    );
+    const closedWeek = addDaysToDateString(currentWeekStart, -7);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toBe(closedWeek);
+    // It is the *previous* week, and it is a Sunday. Read at UTC noon so the
+    // weekday check cannot straddle a day boundary.
+    expect(addDaysToDateString(spy.mock.calls[0][1], 7)).toBe(currentWeekStart);
+    const [y, m, d] = closedWeek.split('-').map(Number);
+    expect(new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay()).toBe(0);
+  });
+
+  it('the accuracy cron keeps going when one restaurant throws', async () => {
+    const r1 = new Types.ObjectId();
+    const r2 = new Types.ObjectId();
+    const r3 = new Types.ObjectId();
+    mockRestaurantRepo.findMany.mockResolvedValue([
+      { _id: r1 },
+      { _id: r2 },
+      { _id: r3 },
+    ]);
+
+    const errorLog = jest
+      .spyOn((service as any).logger, 'error')
+      .mockImplementation(() => {});
+
+    const spy = jest
+      .spyOn(service, 'reconcilePredictionAccuracy')
+      .mockImplementation(async (restaurantId: any) => {
+        if (restaurantId.toString() === r2.toString()) {
+          throw new Error('mongo unavailable');
+        }
+        return { targetWeek: 'stub', reconciled: 0, mape: null } as any;
+      });
+
+    // The whole point of the try/catch: one bad restaurant must not abort the
+    // sweep, and the cron itself must still resolve.
+    await expect(
+      service.handleAccuracyReconciliationCron(),
+    ).resolves.toBeUndefined();
+
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy.mock.calls.map((c) => String(c[0]))).toEqual([
+      String(r1),
+      String(r2),
+      String(r3),
+    ]);
+    expect(
+      errorLog.mock.calls.some((call) =>
+        new RegExp(`Accuracy reconciliation failed for restaurant ${r2}`).test(
+          String(call[0]),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it('processes products concurrently and reports per-product failures', async () => {

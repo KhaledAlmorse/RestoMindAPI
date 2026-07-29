@@ -15,6 +15,7 @@ import { WeeklyPredictionService } from './weekly-prediction.service';
 import { RecalculatePredictionDto } from './dto/recalculate-prediction.dto';
 import { BatchRecalculateDto } from './dto/batch-recalculate.dto';
 import { QueryPredictionsDto } from './dto/query-predictions.dto';
+import { AiBackfillDto } from './dto/ai-backfill.dto';
 
 @Controller('predictions')
 export class WeeklyPredictionController {
@@ -103,7 +104,7 @@ export class WeeklyPredictionController {
   @HttpCode(HttpStatus.OK)
   @Auth('manager')
   async backfill(
-    @Body() body: { days?: number },
+    @Body() body: AiBackfillDto,
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
   ) {

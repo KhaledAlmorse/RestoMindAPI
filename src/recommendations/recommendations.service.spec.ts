@@ -611,8 +611,10 @@ describe('RecommendationsService', () => {
       const fetchCallBody = JSON.parse(
         (global.fetch as jest.Mock).mock.calls[0][1].body,
       );
-      // avgDailySales = round((10+15+20+10+15+20+10) / 7) = round(100/7) = 14
-      expect(fetchCallBody.stock[0].avgDailySales).toBe(14);
+      // avgDailySales = (10+15+20+10+15+20+10) / 7 = 100/7 = 14.29 (2dp).
+      // Deliberately NOT rounded to a whole unit: integer rounding is what
+      // sent 0 for every product forecast under 4 units/week.
+      expect(fetchCallBody.stock[0].avgDailySales).toBeCloseTo(14.29, 2);
     });
 
     it('should throw ServiceUnavailableException when validatePlan AI service is unreachable', async () => {

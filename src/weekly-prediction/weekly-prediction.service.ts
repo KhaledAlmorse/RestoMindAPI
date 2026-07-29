@@ -22,6 +22,11 @@ import {
   isValidDateString,
 } from 'src/Common/Utils/date.util';
 import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
+import {
+  degradationFields,
+  reportAiFailure,
+} from 'src/Common/Utils/ai-degradation.util';
+import type { AiDegradation } from 'src/Common/Types/ai.types';
 import { Prediction, PredictionType } from 'src/DB/Models/prediction.model';
 import { PredictionRepository } from 'src/DB/Repositories/prediction.repository';
 import { ProductRepository } from 'src/DB/Repositories/product.repository';
@@ -178,6 +183,11 @@ export class WeeklyPredictionService {
     // catalogue size" problem that motivates the batch caller's reduced
     // budget below. Only pass a lower value from a caller that fans out.
     retries = 3,
+    // Optional sink so a fan-out caller (batchRecalculate) can surface WHY the
+    // rows it returns are fallbacks. Passed as a callback rather than folded
+    // into the return value so the single-product signature — and every
+    // existing caller and test double — stays untouched.
+    onAiFailure?: (degradation: AiDegradation) => void,
   ) {
     const product = await this.productRepository.findOne({
       filters: { _id: productId, restaurantId, isDeleted: false },
@@ -262,6 +272,8 @@ export class WeeklyPredictionService {
     };
     let factors: any[] = [];
     let dailyBreakdown: Array<{ date: string; predictedQuantity: number }> = [];
+    // Recorded onto featuresUsed so a stored fallback row says WHY it is one.
+    let fallbackReason = 'AI response missing predictedOrders';
 
     if (aiResponse) {
       // AI success path
@@ -325,7 +337,28 @@ export class WeeklyPredictionService {
         dailyBreakdown = this.distributeAcrossWeek(predictedOrders, dailyDates);
       }
     } else {
-      // REQUIREMENT 6: AI failure fallback path
+      // REQUIREMENT 6: AI failure fallback path.
+      // Branching on `ok` alone made a 401 (never retried, a configuration
+      // fault) indistinguishable from a real outage. Classify by KIND, log
+      // accordingly, and hand the descriptor up so the endpoint can report it.
+      if (!aiResult.ok) {
+        const degradation = reportAiFailure(
+          this.logger,
+          '/integration/restomind/predict',
+          aiResult,
+          `product ${productId.toString()}, targetWeek ${targetWeekStr}`,
+        );
+        onAiFailure?.(degradation);
+        fallbackReason =
+          degradation.kind === 'client_error'
+            ? `AI rejected the request (HTTP ${degradation.status ?? '4xx'}) — probable configuration fault`
+            : 'AI service unreachable';
+      } else {
+        this.logger.error(
+          `[AI CONTRACT] AI answered ${'/integration/restomind/predict'} without a predictedOrders field for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
+        );
+      }
+
       this.logger.error(
         `[FALLBACK PREDICTION] AI prediction call failed${
           aiResult.ok ? '' : `: ${aiResult.message}`
@@ -367,7 +400,7 @@ export class WeeklyPredictionService {
       confidence = ConfidenceLevelEnum.LOW;
       source = PredictionSourceEnum.FALLBACK_NAIVE;
       featuresUsed = {
-        fallbackReason: 'AI service unreachable',
+        fallbackReason,
         lastWeekQty: totalLastWeekQty,
         avgDailySales,
       };
@@ -455,6 +488,13 @@ export class WeeklyPredictionService {
       activeProductsList.length,
     );
     const failedProductIds: string[] = [];
+    // A batch that answers HTTP 200 with `totalProductsPredicted: 50` while
+    // every single row is a naive fallback is indistinguishable from a healthy
+    // batch. Count the degraded products and keep the first failure's kind so
+    // the response can say so — and so a 401 storm reads as "misconfigured",
+    // not "the AI is down".
+    const degradedProductIds: string[] = [];
+    let firstDegradation: AiDegradation | null = null;
     let cursor = 0;
 
     const worker = async () => {
@@ -470,6 +510,19 @@ export class WeeklyPredictionService {
             // 2 attempts, not the default 3: this runs once per product in a
             // batch, so the retry budget multiplies by the catalogue size.
             2,
+            (degradation) => {
+              degradedProductIds.push(prod._id.toString());
+              // client_error wins: a configuration fault is the more
+              // actionable diagnosis and must not be masked by a stray
+              // timeout on another product.
+              if (
+                !firstDegradation ||
+                (firstDegradation.kind !== 'client_error' &&
+                  degradation.kind === 'client_error')
+              ) {
+                firstDegradation = degradation;
+              }
+            },
           );
         } catch (err: any) {
           failedProductIds.push(prod._id.toString());
@@ -504,6 +557,11 @@ export class WeeklyPredictionService {
       totalProductsPredicted: predictions.length,
       predictions,
       failedProductIds,
+      // Degradation sits alongside failedProductIds: those two are different
+      // outcomes. A failed product produced no row at all; a degraded product
+      // produced a row the AI had no part in.
+      ...degradationFields(firstDegradation),
+      degradedProductIds,
       autoDraftPOsCreated: autoDraftResult.draftPurchaseOrders.length,
       draftPurchaseOrders: autoDraftResult.draftPurchaseOrders,
       unassignedShortfalls: autoDraftResult.unassignedShortfalls,
@@ -570,10 +628,17 @@ export class WeeklyPredictionService {
     );
 
     const byProductId = new Map<string, any>();
+    let degradation: AiDegradation | null = null;
     if (aiStatus.ok) {
       for (const item of aiStatus.data?.items || []) {
         byProductId.set(String(item.productId), item);
       }
+    } else {
+      degradation = reportAiFailure(
+        this.logger,
+        `/integration/restomind/status/${restaurantId.toString()}`,
+        aiStatus,
+      );
     }
 
     const items: any[] = [];
@@ -629,8 +694,7 @@ export class WeeklyPredictionService {
       restaurantId,
       totalProducts: items.length,
       trainedCount: items.filter((i) => i.status === 'trained').length,
-      degraded: !aiStatus.ok,
-      ...(aiStatus.ok ? {} : { degradedReason: aiStatus.message }),
+      ...degradationFields(degradation),
       items,
     };
   }
