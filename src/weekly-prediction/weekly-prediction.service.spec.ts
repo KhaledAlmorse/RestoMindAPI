@@ -650,4 +650,36 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     // MAPE = mean(|100-90|/100, |50-60|/50) = mean(0.10, 0.20) = 0.15
     expect(result.mape).toBeCloseTo(0.15, 4);
   });
+
+  it('processes products concurrently and reports per-product failures', async () => {
+    const ids = Array.from({ length: 12 }, () => new Types.ObjectId());
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue(ids.map((_id) => ({ _id })));
+
+    let inFlight = 0;
+    let peakInFlight = 0;
+    jest
+      .spyOn(service, 'recalculateProductPrediction')
+      .mockImplementation(async (_r: any, productId: any) => {
+        inFlight++;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((r) => setImmediate(r));
+        inFlight--;
+        if (productId.toString() === ids[3].toString()) {
+          throw new Error('AI exploded');
+        }
+        return { productId } as any;
+      });
+
+    const result = await service.batchRecalculate('507f1f77bcf86cd799439011');
+
+    expect(result.totalProductsPredicted).toBe(11);
+    expect(result.failedProductIds).toEqual([ids[3].toString()]);
+    // Sequential would peak at 1; unbounded would peak at 12.
+    expect(peakInFlight).toBeGreaterThan(1);
+    expect(peakInFlight).toBeLessThanOrEqual(5);
+  });
 });

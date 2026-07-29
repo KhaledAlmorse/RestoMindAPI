@@ -1,4 +1,13 @@
-import { IsMongoId, IsOptional, IsString, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsInt,
+  IsMongoId,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class QueryPredictionsDto {
   @IsOptional()
@@ -13,10 +22,15 @@ export class QueryPredictionsDto {
   productId?: string;
 
   @IsOptional()
-  @IsString()
-  page?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
 
   @IsOptional()
-  @IsString()
-  limit?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 10;
 }

@@ -37,6 +37,13 @@ export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 /** Mirrors MIN_DAYS_FOR_LEARNED in prediction-model/app/integration/registry.py. */
 export const MIN_DAYS_FOR_LEARNED = 14;
 
+/**
+ * Products recalculated in parallel. Sequential processing meant 50 products
+ * could take 25 minutes in one request; unbounded parallelism would stampede
+ * the single-process AI service.
+ */
+export const BATCH_CONCURRENCY = 5;
+
 @Injectable()
 export class WeeklyPredictionService {
   private readonly logger = new Logger(WeeklyPredictionService.name);
@@ -225,6 +232,9 @@ export class WeeklyPredictionService {
         avgDailySales,
         promotionActive,
       },
+      // 2 attempts, not 3: this runs once per product in a batch, so the retry
+      // budget multiplies by the catalogue size.
+      { retries: 2 },
     );
 
     const aiResponse =
@@ -422,22 +432,46 @@ export class WeeklyPredictionService {
       filters: { restaurantId, isDeleted: false },
     });
 
-    const predictions: PredictionType[] = [];
+    const activeProductsList = activeProducts || [];
 
-    for (const prod of activeProducts || []) {
-      try {
-        const pred = await this.recalculateProductPrediction(
-          restaurantId,
-          prod._id,
-          targetWeek,
-        );
-        predictions.push(pred);
-      } catch (err: any) {
-        this.logger.error(
-          `Failed to recalculate prediction for product ${prod._id.toString()}: ${err?.message}`,
-        );
+    // Index-keyed slots (not push) so the result preserves the original
+    // product query order even though workers complete out of order.
+    const predictionSlots: (PredictionType | undefined)[] = new Array(
+      activeProductsList.length,
+    );
+    const failedProductIds: string[] = [];
+    let cursor = 0;
+
+    const worker = async () => {
+      for (;;) {
+        const idx = cursor++;
+        if (idx >= activeProductsList.length) return;
+        const prod = activeProductsList[idx];
+        try {
+          predictionSlots[idx] = await this.recalculateProductPrediction(
+            restaurantId,
+            prod._id,
+            targetWeek,
+          );
+        } catch (err: any) {
+          failedProductIds.push(prod._id.toString());
+          this.logger.error(
+            `Failed to recalculate prediction for product ${prod._id.toString()}: ${err?.message}`,
+          );
+        }
       }
-    }
+    };
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(BATCH_CONCURRENCY, activeProductsList.length || 1) },
+        () => worker(),
+      ),
+    );
+
+    const predictions = predictionSlots.filter(
+      (p): p is PredictionType => p !== undefined,
+    );
 
     // Automatically trigger SupplierAutoDraftService workflow
     const autoDraftResult =
@@ -451,6 +485,7 @@ export class WeeklyPredictionService {
       targetWeek,
       totalProductsPredicted: predictions.length,
       predictions,
+      failedProductIds,
       autoDraftPOsCreated: autoDraftResult.draftPurchaseOrders.length,
       draftPurchaseOrders: autoDraftResult.draftPurchaseOrders,
       unassignedShortfalls: autoDraftResult.unassignedShortfalls,
@@ -462,13 +497,9 @@ export class WeeklyPredictionService {
    */
   async getPredictions(query: QueryPredictionsDto, userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
-    const { page = '1', limit = '10', targetWeek, productId } = query;
-
-    const parsedPage = parseInt(page, 10);
-    const parsedLimit = parseInt(limit, 10);
-    const pageNum = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
-    const limitNum =
-      Number.isNaN(parsedLimit) || parsedLimit < 1 ? 10 : parsedLimit;
+    const { page = 1, limit = 10, targetWeek, productId } = query;
+    const pageNum = page;
+    const limitNum = limit;
     const skip = (pageNum - 1) * limitNum;
 
     const filters: Record<string, any> = {
