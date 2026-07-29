@@ -525,4 +525,32 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     });
     expect(result.rowsSent).toBe(2);
   });
+
+  it('backfill attributes a late-evening Cairo sale to the correct calendar day', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'Pastry' } },
+    ]);
+    // 2026-07-15T22:30:00.000Z is 2026-07-16 01:30 in Cairo (UTC+3, summer).
+    // UTC still says the 15th; the sale must be keyed to the 16th, matching
+    // the same derivation the nightly sync uses, since both feed the same
+    // AI registry and dedupe/group on (date, productId).
+    mockSalesRepo.findMany.mockResolvedValue([
+      { productId: mockProductId, date: new Date('2026-07-15T22:30:00.000Z'), quantitySold: 4 },
+    ]);
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ learnedLevels: {} }),
+    }) as any;
+
+    await service.backfillAiHistory('507f1f77bcf86cd799439011', 90);
+
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.records[0].date).toBe('2026-07-16');
+  });
 });

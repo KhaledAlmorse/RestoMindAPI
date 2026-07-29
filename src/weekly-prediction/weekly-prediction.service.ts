@@ -18,6 +18,7 @@ import {
   addDaysToDateString,
   getBusinessDateString,
   getBusinessDayOfWeek,
+  getBusinessDayRange,
   isValidDateString,
 } from 'src/Common/Utils/date.util';
 import { Prediction, PredictionType } from 'src/DB/Models/prediction.model';
@@ -565,7 +566,10 @@ export class WeeklyPredictionService {
     const restaurantId = await this.getManagerRestaurantId(userId);
     const today = getBusinessDateString();
     const fromDateStr = addDaysToDateString(today, -Math.abs(days));
-    const fromDate = new Date(`${fromDateStr}T00:00:00.000Z`);
+    // Cairo day boundary, not the UTC-aligned instant of the same date
+    // string — otherwise the window's lower bound silently excludes the
+    // first few early-morning hours (Cairo time) of the oldest day.
+    const fromDate = getBusinessDayRange(fromDateStr).start;
 
     const products =
       (await this.productRepository.findMany({
@@ -593,7 +597,13 @@ export class WeeklyPredictionService {
     }
 
     const records = sales.map((s: any) => ({
-      date: new Date(s.date).toISOString().split('T')[0],
+      // Must match the nightly sync's key derivation
+      // (production-planning.service.ts's handleNightlyAiSync): both feed the
+      // same AI registry, which de-duplicates on (date, productId) and groups
+      // by date. A UTC-derived key here would disagree with the nightly
+      // sync's Cairo-derived key for late-evening Cairo sales, causing dedup
+      // misses and misattributed weekday averages.
+      date: getBusinessDateString(new Date(s.date)),
       productId: s.productId.toString(),
       salesQty: s.quantitySold || 0,
     }));
