@@ -13,6 +13,7 @@ import {
   PurchaseOrderSourceEnum,
 } from 'src/Common/Types';
 import { PredictionRepository } from 'src/DB/Repositories/prediction.repository';
+import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 export interface UnassignedShortfall {
   ingredientId: string;
@@ -43,7 +44,16 @@ export class SupplierAutoDraftService {
     targetWeek: string,
     createdByUserId: Types.ObjectId,
   ) {
-    const targetWeekStart = new Date(`${targetWeek}T00:00:00.000Z`);
+    // `targetWeek` is a CAIRO calendar date (resolveTargetWeek), so a
+    // UTC-midnight literal named an instant 2-3h off the day it claims. This
+    // value is not merely a query bound: it gates `expiryDate: { $gt }` and
+    // `expectedDeliveryDate: { $lte }` against real batch/PO timestamps, AND is
+    // written to `expectedDeliveryDate` on the draft PO — where it is also one
+    // of the six clauses of the idempotency filter below. Read and write derive
+    // from this one expression, so idempotency held before and holds now; but
+    // the instant itself was wrong, and drafts written by the old code carry
+    // the old value (see the report's migration note).
+    const targetWeekStart = getBusinessDayRange(targetWeek).start;
 
     // 1. Get all stored predictions for targetWeek
     const predictions = await this.predictionRepository.findMany({

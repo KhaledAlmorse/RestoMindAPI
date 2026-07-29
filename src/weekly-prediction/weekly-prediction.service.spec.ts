@@ -486,13 +486,66 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     );
 
     const filters = mockOfferRepo.findOne.mock.calls[0][0].filters;
-    // The week is [2026-07-27T00:00Z, 2026-08-03T00:00Z).
+    // The week is the seven CAIRO days beginning 2026-07-27, i.e.
+    // [2026-07-26T21:00Z, 2026-08-02T21:00Z) in summer (UTC+3). This test
+    // previously pinned the UTC-midnight pair, which is the defect, not the
+    // contract — targetWeek is a Cairo calendar date.
     expect(filters.startDate).toEqual({
-      $lt: new Date('2026-08-03T00:00:00.000Z'),
+      $lt: new Date('2026-08-02T21:00:00.000Z'),
     });
     expect(filters.endDate).toEqual({
-      $gte: new Date('2026-07-27T00:00:00.000Z'),
+      $gte: new Date('2026-07-26T21:00:00.000Z'),
     });
+    // Still exactly seven days wide.
+    expect(
+      filters.startDate.$lt.getTime() - filters.endDate.$gte.getTime(),
+    ).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('reads the naive fallback last-week window as Cairo days, not UTC midnight', async () => {
+    // This window produces predictedOrders for exactly the fallback_naive rows
+    // the endpoint labels as degraded. targetWeek is a Cairo calendar date, so
+    // a UTC-midnight literal named an instant 3h (summer) away from the week
+    // it claims — the label was right while the number under it was skewed.
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Baklava',
+      category: { name: 'Dessert' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+    // beforeEach mocks fetch to reject, so the naive fallback path runs.
+
+    await service.recalculateProductPrediction(
+      mockRestaurantId,
+      mockProductId,
+      '2026-07-27',
+    );
+
+    // Two sales lookups fire: [0] the 14-day rolling window, [1] the
+    // last-week equivalent period. Assert the count first so the index below
+    // cannot pass vacuously.
+    expect(mockSalesRepo.findMany).toHaveBeenCalledTimes(2);
+    const lastWeek = mockSalesRepo.findMany.mock.calls[1][0].filters;
+
+    // The seven Cairo days before 2026-07-27, i.e. the Cairo week starting
+    // 2026-07-20: [2026-07-19T21:00Z, 2026-07-26T21:00Z) in summer (UTC+3).
+    expect(lastWeek.date.$gte.toISOString()).toBe('2026-07-19T21:00:00.000Z');
+    expect(lastWeek.date.$lt.toISOString()).toBe('2026-07-26T21:00:00.000Z');
+    expect(lastWeek.date.$lt.getTime() - lastWeek.date.$gte.getTime()).toBe(
+      7 * 24 * 60 * 60 * 1000,
+    );
+    // Explicitly not the UTC-midnight pair this used to build.
+    expect(lastWeek.date.$gte).not.toEqual(
+      new Date('2026-07-20T00:00:00.000Z'),
+    );
+    expect(lastWeek.date.$lt).not.toEqual(
+      new Date('2026-07-27T00:00:00.000Z'),
+    );
   });
 
   it('backfills sales history to the AI with product metadata attached', async () => {
@@ -1018,6 +1071,97 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.degradedReason).toBe('Invalid X-RestoMind-Key');
     // A 4xx is never retried: retrying cannot fix a bad shared secret.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a contract-violating AI 200 as degraded, not as a healthy answer', async () => {
+    // The AI answers 200 but omits predictedOrders. The fallback branch runs
+    // and the row is persisted with featuresUsed.fallbackReason set — but the
+    // degradation callback used to sit inside `if (!aiResult.ok)`, so the wire
+    // said `degraded: false` while the stored row said why it had degraded.
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      // Well-formed JSON, valid HTTP, and useless: no predictedOrders.
+      json: async () => ({
+        modelVersionId: 'restomind-bridge/rule_based-v0.1',
+        confidence: 'low',
+        factors: [],
+      }),
+    }) as any;
+
+    const result: any = await service.recalculateSingle(
+      '507f1f77bcf86cd799439011',
+      mockProductId.toString(),
+      targetWeek,
+    );
+
+    expect(result.data.source).toBe(PredictionSourceEnum.FALLBACK_NAIVE);
+    expect(result.degraded).toBe(true);
+    // `unavailable`, not `client_error`: our request was fine, the service just
+    // could not give a usable answer — which is exactly when a fallback is
+    // right. Matches the degradation scanSurplus synthesises for a 200 with no
+    // itemsAtRisk.
+    expect(result.degradedKind).toBe('unavailable');
+    expect(result.degradedReason).toBe('AI response missing predictedOrders');
+    // No HTTP status: there was no error status, the 200 was the problem.
+    expect(result.degradedStatus).toBeUndefined();
+    // The wire now agrees with what was persisted.
+    expect(result.data.featuresUsed.fallbackReason).toBe(
+      result.degradedReason,
+    );
+  });
+
+  it('batchRecalculate also reports a contract-violating AI 200 as degraded', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'Pastry' } },
+    ]);
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ confidence: 'low', factors: [] }),
+    }) as any;
+
+    const result: any = await service.batchRecalculate(
+      '507f1f77bcf86cd799439011',
+      targetWeek,
+    );
+
+    expect(result.degraded).toBe(true);
+    expect(result.degradedKind).toBe('unavailable');
+    expect(result.degradedReason).toBe('AI response missing predictedOrders');
+    expect(result.degradedProductIds).toEqual([mockProductId.toString()]);
   });
 
   it('recalculateSingle reports no degradation on the happy path', async () => {

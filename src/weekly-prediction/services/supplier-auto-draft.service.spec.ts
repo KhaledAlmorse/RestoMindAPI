@@ -231,9 +231,69 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
         supplierId,
         status: PurchaseOrderStatusEnum.DRAFT,
         source: PurchaseOrderSourceEnum.AI_FORECAST,
-        expectedDeliveryDate: new Date('2026-07-27T00:00:00.000Z'),
+        // Cairo week start, not the UTC-midnight literal this used to be:
+        // 2026-07-27 in Cairo (summer, UTC+3) begins at 21:00Z the day before.
+        expectedDeliveryDate: new Date('2026-07-26T21:00:00.000Z'),
         isDeleted: false,
       }),
+    );
+    expect(idempotencyFilters.expectedDeliveryDate.toISOString()).toBe(
+      '2026-07-26T21:00:00.000Z',
+    );
+  });
+
+  it('writes the same expectedDeliveryDate it looks drafts up by', async () => {
+    // The idempotency-critical property. `expectedDeliveryDate` is both a
+    // clause of the six-part dedup filter AND a field written onto the draft,
+    // so if the read and the write ever derived from different expressions,
+    // every recalculation would create a fresh duplicate PO. Both come from
+    // one `targetWeekStart`, so they cannot drift — assert it directly rather
+    // than trusting that they still share a variable.
+    const supplierId = new Types.ObjectId();
+    const ingredientId = new Types.ObjectId();
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      { productId: new Types.ObjectId(), predictedOrders: 100 },
+    ]);
+    mockRecipeRepo.findOne.mockResolvedValue({
+      ingredients: [
+        { ingredientId, quantityPerPortion: 2, yieldPercentage: 100 },
+      ],
+    });
+    mockIngredientRepo.findOne.mockResolvedValue({
+      _id: ingredientId,
+      name: 'Flour',
+      ingredientCode: 'FLR',
+      unit: 'kg',
+      supplierId,
+    });
+    mockInventoryBatchRepo.findMany.mockResolvedValue([]);
+    mockPurchaseOrderRepo.findMany.mockResolvedValue([]);
+    // No existing draft -> the create path runs.
+    mockPurchaseOrderRepo.findOne.mockResolvedValue(null);
+    mockPurchaseOrderRepo.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    await service.generateAutoDrafts(
+      mockRestaurantId,
+      '2026-07-27',
+      new Types.ObjectId(),
+    );
+
+    const lookupCall = mockPurchaseOrderRepo.findOne.mock.calls.find(
+      ([{ filters }]: any) => filters?.status === PurchaseOrderStatusEnum.DRAFT,
+    );
+    const [{ filters: lookupFilters }] = lookupCall as any;
+    const created = mockPurchaseOrderRepo.create.mock.calls[0][0];
+
+    expect(created.expectedDeliveryDate.toISOString()).toBe(
+      '2026-07-26T21:00:00.000Z',
+    );
+    // Read bound === written value: a draft created by one run is found by the
+    // next, so the second run reuses instead of duplicating.
+    expect(created.expectedDeliveryDate).toEqual(
+      lookupFilters.expectedDeliveryDate,
     );
   });
 

@@ -29,10 +29,7 @@ import {
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
-import {
-  getBusinessDateString,
-  getBusinessDayRange,
-} from 'src/Common/Utils/date.util';
+import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 describe('RecommendationsService', () => {
   let service: RecommendationsService;
@@ -771,24 +768,39 @@ describe('RecommendationsService', () => {
         json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
       }) as any;
 
-      await service.scanSurplus('507f1f77bcf86cd799439011');
+      // Frozen so the expected bounds can be written as absolute instants
+      // rather than recomputed with the same helpers the service uses (which
+      // would only prove self-consistency). 09:00Z is 12:00 in Cairo on
+      // 2026-07-29, comfortably inside the day from either zone's point of
+      // view, so the assertion is not a boundary special case.
+      jest.useFakeTimers({ now: new Date('2026-07-29T09:00:00.000Z') });
+      try {
+        await service.scanSurplus('507f1f77bcf86cd799439011');
+      } finally {
+        jest.useRealTimers();
+      }
 
-      const { start, end } = getBusinessDayRange(getBusinessDateString());
       const filters = mockWasteReportRepo.findOne.mock.calls[0][0].filters;
-      expect(filters.createdAt).toEqual({ $gte: start, $lt: end });
+
+      // The Cairo day 2026-07-29 is [2026-07-28T21:00Z, 2026-07-29T21:00Z) in
+      // summer (UTC+3). Written out rather than derived: under the suite's
+      // pinned TZ=UTC the server-local day would be
+      // [2026-07-29T00:00Z, 2026-07-30T00:00Z), so these literals discriminate
+      // between the two unconditionally — no `if` guard, on any machine.
+      expect(filters.createdAt.$gte.toISOString()).toBe(
+        '2026-07-28T21:00:00.000Z',
+      );
+      expect(filters.createdAt.$lt.toISOString()).toBe(
+        '2026-07-29T21:00:00.000Z',
+      );
 
       // Half-open and exactly one Cairo day wide. The old code used an
       // inclusive `$lte ...23:59:59.999` upper bound; this pins the shape too.
       expect(Object.keys(filters.createdAt).sort()).toEqual(['$gte', '$lt']);
-      expect(end.getTime() - start.getTime()).toBe(24 * 60 * 60 * 1000);
 
-      // And explicitly not the server's local midnight, which is what
-      // `new Date().setHours(0,0,0,0)` produced.
-      const localMidnight = new Date();
-      localMidnight.setHours(0, 0, 0, 0);
-      if (localMidnight.getTime() !== start.getTime()) {
-        expect(filters.createdAt.$gte).not.toEqual(localMidnight);
-      }
+      // Belt and braces: still agrees with the helper the service uses.
+      const { start, end } = getBusinessDayRange('2026-07-29');
+      expect(filters.createdAt).toEqual({ $gte: start, $lt: end });
     });
   });
 });

@@ -149,9 +149,12 @@ export class WeeklyPredictionService {
     productId: Types.ObjectId,
     targetWeekStr: string,
   ): Promise<boolean> {
-    const targetWeekStart = new Date(`${targetWeekStr}T00:00:00.000Z`);
-    const targetWeekEnd = new Date(targetWeekStart);
-    targetWeekEnd.setUTCDate(targetWeekEnd.getUTCDate() + 7);
+    // Cairo week bounds: `targetWeekStr` is a Cairo calendar date, so a
+    // UTC-midnight literal named an instant 2-3h away from the day it claims.
+    const targetWeekStart = getBusinessDayRange(targetWeekStr).start;
+    const targetWeekEnd = getBusinessDayRange(
+      addDaysToDateString(targetWeekStr, 7),
+    ).start;
 
     const activeOffer = await this.offerRepository.findOne({
       filters: {
@@ -357,6 +360,21 @@ export class WeeklyPredictionService {
         this.logger.error(
           `[AI CONTRACT] AI answered ${'/integration/restomind/predict'} without a predictedOrders field for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
         );
+        // A 200 that violates the contract is still a degraded answer. Without
+        // this the row was persisted with featuresUsed.fallbackReason set while
+        // the response said `degraded: false` — the same silent-200 failure F1
+        // exists to close, reached through a different door.
+        //
+        // `unavailable`, not `client_error`: the request was fine, so blaming
+        // the caller would be wrong, and this file's own type doc defines
+        // `unavailable` as "the service could not answer, which is exactly when
+        // a fallback is correct" — which is what happened. It also matches the
+        // degradation scanSurplus synthesises for the identical shape (a 200
+        // with no `itemsAtRisk`). Introducing a third `contract` kind is the
+        // better long-term answer, but that is the classification question
+        // deferred to the ledger, and taking it unilaterally here would leave
+        // scanSurplus inconsistent.
+        onAiFailure?.({ kind: 'unavailable', reason: fallbackReason });
       }
 
       this.logger.error(
@@ -365,10 +383,16 @@ export class WeeklyPredictionService {
         } for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
       );
 
-      // Fallback: equivalent period from last week (7 days prior)
-      const lastWeekStart = new Date(`${targetWeekStr}T00:00:00.000Z`);
-      lastWeekStart.setUTCDate(lastWeekStart.getUTCDate() - 7);
-      const lastWeekEnd = new Date(`${targetWeekStr}T00:00:00.000Z`);
+      // Fallback: equivalent period from last week (7 days prior).
+      // `targetWeekStr` comes from resolveTargetWeek, which returns a CAIRO
+      // calendar date — so a UTC-midnight literal built from it was 2-3h off
+      // the Cairo week it names. This arithmetic produces predictedOrders for
+      // exactly the fallback rows the endpoint now labels as degraded; the
+      // label was right while the number under it was three hours skewed.
+      const lastWeekStart = getBusinessDayRange(
+        addDaysToDateString(targetWeekStr, -7),
+      ).start;
+      const lastWeekEnd = getBusinessDayRange(targetWeekStr).start;
 
       const lastWeekSales = await this.salesTransactionRepository.findMany({
         filters: {
