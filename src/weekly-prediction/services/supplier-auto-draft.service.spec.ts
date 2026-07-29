@@ -217,5 +217,71 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       expect.objectContaining({ filters: { _id: existingPoId } }),
     );
     expect(result.reusedExistingDrafts).toBe(1);
+
+    // Pin the idempotency lookup itself: prove all six clauses are present,
+    // not just that "once a draft is found, the right one gets updated".
+    const idempotencyCall = mockPurchaseOrderRepo.findOne.mock.calls.find(
+      ([{ filters }]: any) => filters?.status === PurchaseOrderStatusEnum.DRAFT,
+    );
+    expect(idempotencyCall).toBeDefined();
+    const [{ filters: idempotencyFilters }] = idempotencyCall as any;
+    expect(idempotencyFilters).toEqual(
+      expect.objectContaining({
+        restaurantId: mockRestaurantId,
+        supplierId,
+        status: PurchaseOrderStatusEnum.DRAFT,
+        source: PurchaseOrderSourceEnum.AI_FORECAST,
+        expectedDeliveryDate: new Date('2026-07-27T00:00:00.000Z'),
+        isDeleted: false,
+      }),
+    );
+  });
+
+  it('does NOT overwrite a MANUALLY created draft when reusing AI drafts', async () => {
+    const supplierId = new Types.ObjectId();
+    const ingredientId = new Types.ObjectId();
+    const existingPoId = new Types.ObjectId();
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      { productId: new Types.ObjectId(), predictedOrders: 100 },
+    ]);
+    mockRecipeRepo.findOne.mockResolvedValue({
+      ingredients: [{ ingredientId, quantityPerPortion: 2, yieldPercentage: 100 }],
+    });
+    mockIngredientRepo.findOne.mockResolvedValue({
+      _id: ingredientId,
+      name: 'Flour',
+      ingredientCode: 'FLR',
+      unit: 'kg',
+      supplierId,
+    });
+    mockInventoryBatchRepo.findMany.mockResolvedValue([]);
+    mockPurchaseOrderRepo.findMany.mockResolvedValue([]);
+
+    // Behave like the real query: only return a match when the filter is
+    // actually asking for an AI_FORECAST draft. A MANUALLY sourced draft
+    // (or any lookup missing that clause) must not be found/reused here.
+    mockPurchaseOrderRepo.findOne.mockImplementation(({ filters }: any) =>
+      Promise.resolve(
+        filters?.source === PurchaseOrderSourceEnum.AI_FORECAST
+          ? { _id: existingPoId, supplierId, items: [] }
+          : null,
+      ),
+    );
+    mockPurchaseOrderRepo.update.mockResolvedValue({ _id: existingPoId, items: [] });
+
+    const result = await service.generateAutoDrafts(
+      mockRestaurantId,
+      '2026-07-27',
+      new Types.ObjectId(),
+    );
+
+    // The AI draft is found via the source: AI_FORECAST guard and reused;
+    // a manual draft (which would fail that filter) is never touched here.
+    expect(mockPurchaseOrderRepo.update).toHaveBeenCalledWith(
+      expect.objectContaining({ filters: { _id: existingPoId } }),
+    );
+    expect(mockPurchaseOrderRepo.create).not.toHaveBeenCalled();
+    expect(result.reusedExistingDrafts).toBe(1);
   });
 });
