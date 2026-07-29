@@ -109,6 +109,15 @@ export class ProductionPlanningService {
     const todayStr = this.getTodayDateString();
     const dateStr = requestedDate || todayStr;
 
+    // Browsing to an arbitrary future date would generate AND persist a plan,
+    // hammering the AI once per page view.
+    const MAX_HORIZON_DAYS = 14;
+    if (dateStr > addDaysToDateString(todayStr, MAX_HORIZON_DAYS)) {
+      throw new BadRequestException(
+        `Production plans can only be generated up to ${MAX_HORIZON_DAYS} days ahead`,
+      );
+    }
+
     // Check if plan exists (populated)
     let plan = await this.dailyProductionPlanRepository.findOne({
       filters: { restaurantId, date: dateStr, isDeleted: false },
@@ -161,18 +170,36 @@ export class ProductionPlanningService {
       }
     }
 
+    // arrayFilters silently match nothing for a product that is not in the
+    // plan, so the manager saw success while their entry vanished. Partition
+    // up front and report both halves.
+    const planProductIds = new Set(
+      (plan.items || []).map((i: any) =>
+        (i.productId?._id ?? i.productId).toString(),
+      ),
+    );
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    for (const item of dto.items) {
+      (planProductIds.has(item.productId) ? applied : skipped).push(
+        item.productId,
+      );
+    }
+
     // Build atomic $set and arrayFilters
     const setQuery: Record<string, any> = {};
     const arrayFilters: Record<string, any>[] = [];
 
-    dto.items.forEach((item, index) => {
-      const filterKey = `elem${index}`;
-      setQuery[`items.$[${filterKey}].actualProducedQty`] =
-        item.actualProducedQty;
-      arrayFilters.push({
-        [`${filterKey}.productId`]: new Types.ObjectId(item.productId),
+    dto.items
+      .filter((item) => planProductIds.has(item.productId))
+      .forEach((item, index) => {
+        const filterKey = `elem${index}`;
+        setQuery[`items.$[${filterKey}].actualProducedQty`] =
+          item.actualProducedQty;
+        arrayFilters.push({
+          [`${filterKey}.productId`]: new Types.ObjectId(item.productId),
+        });
       });
-    });
 
     if (Object.keys(setQuery).length > 0) {
       await this.dailyProductionPlanModel
@@ -190,7 +217,7 @@ export class ProductionPlanningService {
       populationArray: PRODUCT_POPULATION_OPTIONS as any,
     });
 
-    return { success: true, data: populatedPlan };
+    return { success: true, data: populatedPlan, applied, skipped };
   }
 
   /**

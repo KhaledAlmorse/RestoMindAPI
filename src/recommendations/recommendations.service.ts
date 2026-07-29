@@ -566,9 +566,12 @@ export class RecommendationsService {
       );
     }
 
-    // 3. Overlapping-offer check (Phase 0B rule)
+    // 3. Overlapping-offer check (Phase 0B rule), scoped to THIS restaurant.
+    // Without restaurantId, another tenant's offer on the same product blocked
+    // approval here.
     const existingOffers = await this.offerRepository.findMany({
       filters: {
+        restaurantId,
         productId: rec.productId,
         isDeleted: false,
         status: { $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED] },
@@ -583,8 +586,10 @@ export class RecommendationsService {
 
     // 4. Compute Offer values
     const originalPrice = product.price;
-    const discountPercentage =
-      dto.discountPercentage ?? rec.suggestedValue ?? 10;
+    const rawDiscount = dto.discountPercentage ?? rec.suggestedValue ?? 10;
+    // Clamp: rows written before EditRecommendationDto gained @Max(100) can
+    // still carry a value that would make offerPrice negative.
+    const discountPercentage = Math.min(100, Math.max(1, rawDiscount));
     const offerPrice =
       Math.round(originalPrice * (1 - discountPercentage / 100) * 100) / 100;
     const availableQuantity = dto.availableQuantity ?? 10;
@@ -593,6 +598,10 @@ export class RecommendationsService {
     const endDate = dto.endDate
       ? new Date(dto.endDate)
       : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    if (endDate <= startDate) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
 
     // 5. Create Offer
     const offer = await this.offerRepository.create({

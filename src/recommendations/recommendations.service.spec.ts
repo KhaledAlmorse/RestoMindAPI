@@ -257,6 +257,65 @@ describe('RecommendationsService', () => {
         service.approveRecommendation(mockRecId.toString(), mockUserId, {}),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('scopes the overlapping-offer check to the caller restaurant', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        status: 'pending',
+        type: 'apply_discount',
+        suggestedValue: 20,
+      });
+      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockOfferRepo.findMany.mockResolvedValue([]);
+      mockOfferRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockRecommendationRepo.update.mockResolvedValue({});
+
+      await service.approveRecommendation(
+        new Types.ObjectId().toString(),
+        '507f1f77bcf86cd799439011',
+        {},
+      );
+
+      expect(mockOfferRepo.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({ restaurantId: mockRestaurantId }),
+        }),
+      );
+    });
+
+    it('clamps a runaway suggestedValue so the offer price stays positive', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        status: 'edited',
+        type: 'apply_discount',
+        suggestedValue: 500, // legacy row written before the DTO cap
+      });
+      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockOfferRepo.findMany.mockResolvedValue([]);
+      mockOfferRepo.create.mockImplementation((doc: any) =>
+        Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+      );
+      mockRecommendationRepo.update.mockResolvedValue({});
+
+      const result = await service.approveRecommendation(
+        new Types.ObjectId().toString(),
+        '507f1f77bcf86cd799439011',
+        {},
+      );
+
+      expect(result.offer.discountPercentage).toBeLessThanOrEqual(100);
+      expect(result.offer.offerPrice).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('scanSurplus & validatePlan graceful AI failure', () => {

@@ -405,6 +405,34 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('reports which productIds were applied and which were not in the plan', async () => {
+      const inPlan = new Types.ObjectId();
+      const notInPlan = new Types.ObjectId();
+
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockPlanRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        items: [{ productId: inPlan, recommendedQty: 10 }],
+      });
+      mockDailyProductionPlanModel.findOneAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({}),
+      });
+
+      const result = await service.recordActuals('507f1f77bcf86cd799439011', {
+        date: '2026-07-29',
+        items: [
+          { productId: inPlan.toString(), actualProducedQty: 8 },
+          { productId: notInPlan.toString(), actualProducedQty: 5 },
+        ],
+      });
+
+      expect(result.applied).toEqual([inPlan.toString()]);
+      expect(result.skipped).toEqual([notInPlan.toString()]);
+    });
   });
 
   // ==========================================
