@@ -612,4 +612,42 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.degraded).toBe(true);
     expect(result.items[0].status).toBe('cold_start');
   });
+
+  it('writes actualOrders and errorAbs back onto a closed week', async () => {
+    const p1 = new Types.ObjectId();
+    const p2 = new Types.ObjectId();
+    const pred1 = new Types.ObjectId();
+    const pred2 = new Types.ObjectId();
+
+    mockPredictionRepo.findMany.mockResolvedValue([
+      { _id: pred1, productId: p1, predictedOrders: 100 },
+      { _id: pred2, productId: p2, predictedOrders: 50 },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([
+      { productId: p1, quantitySold: 40 },
+      { productId: p1, quantitySold: 50 },
+      { productId: p2, quantitySold: 60 },
+    ]);
+    mockPredictionRepo.bulkWrite = jest.fn().mockResolvedValue({ modifiedCount: 2 });
+
+    const result = await service.reconcilePredictionAccuracy(
+      mockRestaurantId,
+      '2026-07-20',
+    );
+
+    expect(result.reconciled).toBe(2);
+    const ops = mockPredictionRepo.bulkWrite.mock.calls[0][0];
+    const first = ops.find((o: any) => String(o.updateOne.filter._id) === String(pred1));
+    expect(first.updateOne.update.$set).toEqual({
+      actualOrders: 90,
+      errorAbs: 10,
+    });
+    const second = ops.find((o: any) => String(o.updateOne.filter._id) === String(pred2));
+    expect(second.updateOne.update.$set).toEqual({
+      actualOrders: 60,
+      errorAbs: 10,
+    });
+    // MAPE = mean(|100-90|/100, |50-60|/50) = mean(0.10, 0.20) = 0.15
+    expect(result.mape).toBeCloseTo(0.15, 4);
+  });
 });

@@ -587,6 +587,209 @@ export class WeeklyPredictionService {
   }
 
   /**
+   * Write real sales back onto a closed week's predictions.
+   *
+   * `actualOrders` and `errorAbs` were declared on the model and never written
+   * by anything, so there was no accuracy signal at all — no MAPE, no drift
+   * detection, and `confidence` meant nothing. This closes that loop.
+   */
+  async reconcilePredictionAccuracy(
+    restaurantId: Types.ObjectId,
+    targetWeek: string,
+  ) {
+    // CORRECTION (controller, pre-dispatch): the original draft of this brief
+    // built the window from UTC midnight (`T00:00:00.000Z`), which contradicts
+    // this plan's Global Constraint that all business days are Cairo days. In
+    // summer Cairo is UTC+3, so a UTC window would have credited the first
+    // three hours of Sunday's sales to the wrong week and dropped the last
+    // three hours of Saturday's. Use the Cairo day range helper added in
+    // Task 4 instead.
+    const weekStart = getBusinessDayRange(targetWeek).start;
+    const weekEnd = getBusinessDayRange(addDaysToDateString(targetWeek, 6)).end;
+
+    const predictions =
+      (await this.predictionRepository.findMany({
+        filters: { restaurantId, targetWeek, isDeleted: false },
+      })) || [];
+
+    if (predictions.length === 0) {
+      return { targetWeek, reconciled: 0, mape: null };
+    }
+
+    const sales =
+      (await this.salesTransactionRepository.findMany({
+        filters: {
+          restaurantId,
+          isDeleted: false,
+          date: { $gte: weekStart, $lt: weekEnd },
+        },
+      })) || [];
+
+    const actualByProduct = new Map<string, number>();
+    for (const sale of sales) {
+      const key = sale.productId?.toString();
+      if (!key) continue;
+      actualByProduct.set(
+        key,
+        (actualByProduct.get(key) || 0) + (sale.quantitySold || 0),
+      );
+    }
+
+    const operations: any[] = [];
+    const errorRatios: number[] = [];
+
+    for (const pred of predictions) {
+      const actual = actualByProduct.get(pred.productId.toString()) || 0;
+      const errorAbs = Math.abs((pred.predictedOrders || 0) - actual);
+
+      operations.push({
+        updateOne: {
+          filter: { _id: pred._id },
+          update: { $set: { actualOrders: actual, errorAbs } },
+        },
+      });
+
+      // Skip zero-prediction rows: a percentage error against 0 is undefined
+      // and would poison the mean. If every row in the week has
+      // predictedOrders === 0, errorRatios stays empty and mape below is
+      // null, not NaN.
+      if (pred.predictedOrders > 0) {
+        errorRatios.push(errorAbs / pred.predictedOrders);
+      }
+    }
+
+    await this.predictionRepository.bulkWrite(operations);
+
+    const mape = errorRatios.length
+      ? Math.round(
+          (errorRatios.reduce((a, b) => a + b, 0) / errorRatios.length) * 10000,
+        ) / 10000
+      : null;
+
+    this.logger.log(
+      `Reconciled ${operations.length} predictions for week ${targetWeek} (MAPE ${mape ?? 'n/a'})`,
+    );
+
+    return { targetWeek, reconciled: operations.length, mape };
+  }
+
+  /**
+   * Rolling accuracy history, for the dashboard's headline metric.
+   *
+   * Fetches every reconciled prediction across the whole window in a single
+   * query (`targetWeek: { $in: [...] }`) and groups by week in memory,
+   * rather than issuing one `findMany` per week — 1 round trip instead of
+   * `weeks` (8 by default).
+   *
+   * `actualOrders: { $ne: null }` is what actually restricts this to
+   * reconciled rows: the model declares `actualOrders` with `default: null`
+   * (not omitted), so Mongoose sets it explicitly to `null` on every
+   * unreconciled document, and it never has a chance to be simply absent.
+   * Mongo's `{ $ne: null }` excludes both "field is null" and "field is
+   * missing" documents, so this filter is correct either way.
+   */
+  async getAccuracy(userId: string, weeks = 8) {
+    const restaurantId = await this.getManagerRestaurantId(userId);
+    const today = getBusinessDateString();
+    const dayOfWeek = getBusinessDayOfWeek();
+    const currentWeekStart = addDaysToDateString(today, -dayOfWeek);
+
+    const targetWeeks: string[] = [];
+    for (let i = 1; i <= weeks; i++) {
+      targetWeeks.push(addDaysToDateString(currentWeekStart, -7 * i));
+    }
+
+    const predictions =
+      (await this.predictionRepository.findMany({
+        filters: {
+          restaurantId,
+          targetWeek: { $in: targetWeeks },
+          isDeleted: false,
+          actualOrders: { $ne: null },
+        },
+      })) || [];
+
+    const byWeek = new Map<string, PredictionType[]>();
+    for (const pred of predictions) {
+      const key = pred.targetWeek;
+      if (!byWeek.has(key)) byWeek.set(key, []);
+      byWeek.get(key)!.push(pred);
+    }
+
+    const results = targetWeeks.map((targetWeek) => {
+      const weekPredictions = byWeek.get(targetWeek) || [];
+
+      if (weekPredictions.length === 0) {
+        return {
+          targetWeek,
+          predictions: 0,
+          mape: null,
+          totalPredicted: 0,
+          totalActual: 0,
+        };
+      }
+
+      const ratios = weekPredictions
+        .filter((p) => (p.predictedOrders || 0) > 0)
+        .map((p) => (p.errorAbs || 0) / p.predictedOrders);
+
+      return {
+        targetWeek,
+        predictions: weekPredictions.length,
+        mape: ratios.length
+          ? Math.round(
+              (ratios.reduce((a, b) => a + b, 0) / ratios.length) * 10000,
+            ) / 10000
+          : null,
+        totalPredicted: weekPredictions.reduce(
+          (a, p) => a + (p.predictedOrders || 0),
+          0,
+        ),
+        totalActual: weekPredictions.reduce(
+          (a, p) => a + (p.actualOrders || 0),
+          0,
+        ),
+      };
+    });
+
+    return { restaurantId: restaurantId.toString(), weeks: results.reverse() };
+  }
+
+  /**
+   * Sunday 03:00 Cairo — reconcile the week that closed this morning.
+   * Deliberately after the 00:00 prediction cron so the two never contend.
+   */
+  @Cron('0 3 * * 0', { timeZone: BUSINESS_TIMEZONE })
+  async handleAccuracyReconciliationCron() {
+    this.logger.log('Starting weekly prediction accuracy reconciliation...');
+
+    const today = getBusinessDateString();
+    const dayOfWeek = getBusinessDayOfWeek();
+    const currentWeekStart = addDaysToDateString(today, -dayOfWeek);
+    const closedWeek = addDaysToDateString(currentWeekStart, -7);
+
+    const restaurants =
+      (await this.restaurantRepository.findMany({
+        filters: { isDeleted: false },
+      })) || [];
+
+    for (const rest of restaurants) {
+      try {
+        await this.reconcilePredictionAccuracy(
+          new Types.ObjectId(rest._id.toString()),
+          closedWeek,
+        );
+      } catch (err: any) {
+        this.logger.error(
+          `Accuracy reconciliation failed for restaurant ${rest._id.toString()}: ${err?.message}`,
+        );
+      }
+    }
+
+    this.logger.log('Weekly prediction accuracy reconciliation completed.');
+  }
+
+  /**
    * Ship the restaurant's recent sales history to the AI in one call so learned
    * demand levels bootstrap immediately.
    *

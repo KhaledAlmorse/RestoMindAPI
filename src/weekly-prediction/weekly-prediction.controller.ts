@@ -81,6 +81,24 @@ export class WeeklyPredictionController {
     res.status(HttpStatus.OK).json(result);
   }
 
+  @Get('accuracy')
+  @Auth('manager')
+  async getAccuracy(
+    @Query('weeks') weeks: string | undefined,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const userId = authUser.user._id.toString();
+    const parsed = Number(weeks);
+    const window =
+      Number.isFinite(parsed) && parsed > 0 && parsed <= 52 ? parsed : 8;
+    const result = await this.weeklyPredictionService.getAccuracy(
+      userId,
+      window,
+    );
+    res.status(HttpStatus.OK).json({ data: result });
+  }
+
   @Post('ai-backfill')
   @HttpCode(HttpStatus.OK)
   @Auth('manager')
