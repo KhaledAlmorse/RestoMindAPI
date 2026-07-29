@@ -553,4 +553,63 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.records[0].date).toBe('2026-07-16');
   });
+
+  it('derives training status from the model, not a local transaction count', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'معجنات' } },
+    ]);
+    // 40 transactions would read as "trained" under the old local heuristic...
+    mockSalesRepo.countDocuments.mockResolvedValue(40);
+    mockPredictionRepo.findMany.mockResolvedValue([]);
+
+    // ...but the model has only seen 3 distinct days.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        restaurantId: mockRestaurantId.toString(),
+        productsTracked: 1,
+        usingLearnedLevel: 0,
+        items: [
+          {
+            productId: mockProductId.toString(),
+            title: 'Croissant',
+            observedDays: 3,
+            levelSource: 'owner_estimate',
+            learnedLevel: null,
+          },
+        ],
+      }),
+    }) as any;
+
+    const result = await service.getLearnedStatus('507f1f77bcf86cd799439011');
+
+    expect(result.degraded).toBe(false);
+    expect(result.items[0].status).toBe('learning');
+    expect(result.items[0].observedDays).toBe(3);
+    expect(result.items[0].levelSource).toBe('owner_estimate');
+    expect(result.items[0].progress).toBeCloseTo(3 / 14, 3);
+  });
+
+  it('falls back to the local heuristic and flags degraded when the AI is down', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'معجنات' } },
+    ]);
+    mockSalesRepo.countDocuments.mockResolvedValue(0);
+    mockPredictionRepo.findMany.mockResolvedValue([]);
+    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+
+    const result = await service.getLearnedStatus('507f1f77bcf86cd799439011');
+
+    expect(result.degraded).toBe(true);
+    expect(result.items[0].status).toBe('cold_start');
+  });
 });

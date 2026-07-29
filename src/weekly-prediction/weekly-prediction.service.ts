@@ -34,6 +34,9 @@ import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
+/** Mirrors MIN_DAYS_FOR_LEARNED in prediction-model/app/integration/registry.py. */
+export const MIN_DAYS_FOR_LEARNED = 14;
+
 @Injectable()
 export class WeeklyPredictionService {
   private readonly logger = new Logger(WeeklyPredictionService.name);
@@ -495,61 +498,91 @@ export class WeeklyPredictionService {
   }
 
   /**
-   * Get AI learning status per product
+   * Per-product training status, sourced from the MODEL.
+   *
+   * The previous local heuristic (`salesCount >= 30` transactions) had no
+   * relationship to the model's real criterion — 14 quiet days with a learned
+   * level — so the UI reported "trained" for products still forecast from the
+   * bridge's DEFAULT_DAILY_LEVEL. When the AI is unreachable we still answer,
+   * but say so via `degraded`.
    */
   async getLearnedStatus(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
 
-    const activeProducts = await this.productRepository.findMany({
-      filters: { restaurantId, isDeleted: false },
-      populationArray: [{ path: 'category' }],
-    });
+    const activeProducts =
+      (await this.productRepository.findMany({
+        filters: { restaurantId, isDeleted: false },
+        populationArray: [{ path: 'category' }],
+      })) || [];
 
-    const statusList: any[] = [];
+    const aiStatus = await this.aiClient.get<any>(
+      `/integration/restomind/status/${restaurantId.toString()}`,
+      { retries: 2, timeoutMs: 5000 },
+    );
 
-    for (const prod of activeProducts || []) {
-      const salesCount = await this.salesTransactionRepository.countDocuments({
-        restaurantId,
-        productId: prod._id,
-        isDeleted: false,
-      });
+    const byProductId = new Map<string, any>();
+    if (aiStatus.ok) {
+      for (const item of aiStatus.data?.items || []) {
+        byProductId.set(String(item.productId), item);
+      }
+    }
+
+    const items: any[] = [];
+
+    for (const prod of activeProducts) {
+      const pid = prod._id.toString();
+
+      const salesRecordsCount =
+        await this.salesTransactionRepository.countDocuments({
+          restaurantId,
+          productId: prod._id,
+          isDeleted: false,
+        });
 
       const predictions = await this.predictionRepository.findMany({
         filters: { restaurantId, productId: prod._id, isDeleted: false },
-        sort: { createdAt: -1 },
+        sort: { targetWeek: -1 },
       });
+      const latest = predictions?.length ? predictions[0] : null;
 
-      const latestPrediction =
-        predictions && predictions.length > 0 ? predictions[0] : null;
+      const modelItem = byProductId.get(pid);
+      const observedDays = modelItem?.observedDays ?? 0;
+      const levelSource: 'learned_from_sales' | 'owner_estimate' =
+        modelItem?.levelSource === 'learned_from_sales'
+          ? 'learned_from_sales'
+          : 'owner_estimate';
 
-      const isTrained = salesCount >= 30; // 30+ transactions threshold
-      const status = isTrained
-        ? 'trained'
-        : salesCount > 0
-          ? 'learning'
-          : 'cold_start';
+      const status =
+        levelSource === 'learned_from_sales'
+          ? 'trained'
+          : observedDays > 0 || salesRecordsCount > 0
+            ? 'learning'
+            : 'cold_start';
 
-      statusList.push({
+      items.push({
         productId: prod._id,
         title: prod.title,
-        salesRecordsCount: salesCount,
+        salesRecordsCount,
+        observedDays,
+        levelSource,
+        learnedLevel: modelItem?.learnedLevel ?? null,
         status,
-        latestModelVersion: latestPrediction
-          ? latestPrediction.modelVersionId
-          : 'none',
-        latestPredictionSource: latestPrediction
-          ? latestPrediction.source
-          : 'none',
-        lastUpdated: latestPrediction
-          ? (latestPrediction as any).updatedAt
-          : null,
+        progress:
+          Math.round(Math.min(1, observedDays / MIN_DAYS_FOR_LEARNED) * 1000) /
+          1000,
+        latestModelVersion: latest ? latest.modelVersionId : 'none',
+        latestPredictionSource: latest ? latest.source : 'none',
+        lastUpdated: latest ? (latest as any).updatedAt : null,
       });
     }
 
     return {
       restaurantId,
-      totalProducts: statusList.length,
-      items: statusList,
+      totalProducts: items.length,
+      trainedCount: items.filter((i) => i.status === 'trained').length,
+      degraded: !aiStatus.ok,
+      ...(aiStatus.ok ? {} : { degradedReason: aiStatus.message }),
+      items,
     };
   }
 
