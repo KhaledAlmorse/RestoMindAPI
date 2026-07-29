@@ -682,4 +682,45 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(peakInFlight).toBeGreaterThan(1);
     expect(peakInFlight).toBeLessThanOrEqual(5);
   });
+
+  it('keeps the full 3-attempt retry budget for a single recalculation but caps the batch worker at 2', async () => {
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      restaurantId: mockRestaurantId,
+    });
+    mockProductRepo.findOne.mockResolvedValue({
+      _id: mockProductId,
+      title: 'Croissant',
+      category: { name: 'Pastry' },
+    });
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: mockProductId, title: 'Croissant', category: { name: 'Pastry' } },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockOfferRepo.findOne.mockResolvedValue(null);
+    mockPredictionModel.findOne.mockResolvedValue(null);
+    mockPredictionModel.create.mockImplementation((doc: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+    );
+
+    const postSpy = jest
+      .spyOn((service as any).aiClient, 'post')
+      .mockResolvedValue({ ok: false, message: 'AI down' } as any);
+
+    await service.recalculateSingle(
+      '507f1f77bcf86cd799439011',
+      mockProductId.toString(),
+      targetWeek,
+    );
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy.mock.calls[0][2]).toEqual({ retries: 3 });
+
+    postSpy.mockClear();
+
+    await service.batchRecalculate('507f1f77bcf86cd799439011', targetWeek);
+
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    expect(postSpy.mock.calls[0][2]).toEqual({ retries: 2 });
+  });
 });

@@ -172,6 +172,11 @@ export class WeeklyPredictionService {
     restaurantId: Types.ObjectId,
     productId: Types.ObjectId,
     targetWeekStr: string,
+    // Full budget by default: this function is shared, and recalculateSingle
+    // (exactly one AI call per request) never had the "retries multiply by
+    // catalogue size" problem that motivates the batch caller's reduced
+    // budget below. Only pass a lower value from a caller that fans out.
+    retries = 3,
   ) {
     const product = await this.productRepository.findOne({
       filters: { _id: productId, restaurantId, isDeleted: false },
@@ -232,9 +237,7 @@ export class WeeklyPredictionService {
         avgDailySales,
         promotionActive,
       },
-      // 2 attempts, not 3: this runs once per product in a batch, so the retry
-      // budget multiplies by the catalogue size.
-      { retries: 2 },
+      { retries },
     );
 
     const aiResponse =
@@ -452,6 +455,9 @@ export class WeeklyPredictionService {
             restaurantId,
             prod._id,
             targetWeek,
+            // 2 attempts, not the default 3: this runs once per product in a
+            // batch, so the retry budget multiplies by the catalogue size.
+            2,
           );
         } catch (err: any) {
           failedProductIds.push(prod._id.toString());
