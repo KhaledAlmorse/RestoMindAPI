@@ -9,7 +9,11 @@ import {
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
-import { getBusinessDateString } from 'src/Common/Utils/date.util';
+import {
+  addDaysToDateString,
+  getBusinessDateString,
+  getBusinessDayOfWeek,
+} from 'src/Common/Utils/date.util';
 import {
   OfferSourceEnum,
   OfferStatusEnum,
@@ -131,12 +135,26 @@ export class RecommendationsService {
     });
   }
 
+  /**
+   * The week the surplus scan reasons about. Mirrors
+   * WeeklyPredictionService.resolveTargetWeek; duplicated deliberately rather
+   * than importing that service, to keep the two feature modules decoupled.
+   */
+  private currentTargetWeek(): string {
+    const today = getBusinessDateString();
+    const dayOfWeek = getBusinessDayOfWeek();
+    // The week in progress started on the most recent Sunday.
+    return addDaysToDateString(today, -dayOfWeek);
+  }
+
   async scanSurplus(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
+    const targetWeek = this.currentTargetWeek();
 
     // 1. Fetch active products for restaurant
     const products = await this.productRepository.findMany({
       filters: { restaurantId, isDeleted: false },
+      populationArray: [{ path: 'category' }],
     });
 
     if (!products || products.length === 0) {
@@ -165,7 +183,7 @@ export class RecommendationsService {
     const stockItems: Array<{
       productId: string;
       title: string;
-      category: string;
+      category: string | null;
       price: number;
       freshnessWindow: number;
       currentStock: number;
@@ -182,8 +200,16 @@ export class RecommendationsService {
       let productTotalStock = 0;
 
       // Get prediction once per product
+      // Without a targetWeek filter this returned natural order — in practice
+      // the OLDEST prediction — so today's discount was driven by a months-old
+      // forecast.
       const prediction = await this.predictionRepository.findOne({
-        filters: { restaurantId, productId: product._id, isDeleted: false },
+        filters: {
+          restaurantId,
+          productId: product._id,
+          targetWeek,
+          isDeleted: false,
+        },
       });
 
       for (const recipeIngredient of recipe.ingredients) {
@@ -268,10 +294,19 @@ export class RecommendationsService {
         }
       }
 
+      const categoryName =
+        product.category &&
+        typeof product.category === 'object' &&
+        (product.category as any).name
+          ? (product.category as any).name
+          : null;
+
       stockItems.push({
         productId: product._id.toString(),
         title: product.title || 'Product',
-        category: 'General',
+        // 'General' matched no market-prior keyword, so every product resolved
+        // to neutral priors and surplus risk was never category-aware.
+        category: categoryName,
         price: product.price || 0,
         freshnessWindow: product.freshnessWindow || 2,
         currentStock: productTotalStock,

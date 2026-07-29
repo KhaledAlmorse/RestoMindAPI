@@ -594,5 +594,46 @@ describe('RecommendationsService', () => {
       // The waste reports it already wrote must still be reported, not discarded.
       expect(mockWasteReportRepo.create).toHaveBeenCalled();
     });
+
+    it('scopes the prediction lookup to a targetWeek and sends the real category', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        {
+          _id: mockProductId,
+          title: 'Croissant',
+          price: 18,
+          freshnessWindow: 2,
+          category: { name: 'معجنات' },
+        },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      const predFilters = mockPredictionRepo.findOne.mock.calls[0][0].filters;
+      expect(predFilters).toHaveProperty('targetWeek');
+      expect(predFilters.targetWeek).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+      expect(body.stock[0].category).toBe('معجنات');
+    });
   });
 });
