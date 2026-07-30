@@ -93,11 +93,42 @@ export class WasteReportsService {
   async getSummary(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
 
+    // Find the latest WasteReport to determine the latest scan date
+    const reports = await this.wasteReportRepository.findMany({
+      filters: { restaurantId, isDeleted: false },
+      sort: 'createdAt',
+      order: 'desc',
+    });
+
+    const latestReport = reports && reports.length > 0 ? reports[0] : null;
+
+    if (!latestReport) {
+      return {
+        restaurantId,
+        totalReports: 0,
+        totalSurplusQuantity: 0,
+        totalEstimatedWasteCost: 0,
+        riskBreakdown: {
+          high: 0,
+          medium: 0,
+          low: 0,
+        },
+        reports: [],
+      };
+    }
+
+    const createdAtDate = (latestReport as any).createdAt || new Date();
+    const latestDateStart = new Date(createdAtDate);
+    latestDateStart.setHours(0, 0, 0, 0);
+    const latestDateEnd = new Date(createdAtDate);
+    latestDateEnd.setHours(23, 59, 59, 999);
+
     const pipeline = [
       {
         $match: {
           restaurantId: new Types.ObjectId(restaurantId.toString()),
           isDeleted: false,
+          createdAt: { $gte: latestDateStart, $lte: latestDateEnd },
         },
       },
       {

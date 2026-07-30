@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import {
   CategoryModel,
+  DailyProductionPlanModel,
   IngredientModel,
   InventoryBatchModel,
   OfferModel,
@@ -15,6 +16,7 @@ import {
 } from 'src/DB/Models';
 import {
   CategoryRepository,
+  DailyProductionPlanRepository,
   IngredientRepository,
   InventoryBatchRepository,
   OfferRepository,
@@ -44,6 +46,7 @@ import { RecommendationsService } from './recommendations.service';
     IngredientModel,
     RecipeModel,
     PredictionModel,
+    DailyProductionPlanModel,
   ],
   controllers: [RecommendationsController],
   providers: [
@@ -60,6 +63,7 @@ import { RecommendationsService } from './recommendations.service';
     IngredientRepository,
     RecipeRepository,
     PredictionRepository,
+    DailyProductionPlanRepository,
   ],
   exports: [RecommendationsService, RecommendationRepository],
 })
