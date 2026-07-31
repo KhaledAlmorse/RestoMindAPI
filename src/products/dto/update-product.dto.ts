@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -38,6 +39,13 @@ export class UpdateProductDto {
   @Min(0)
   @IsOptional()
   freshnessWindow?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  expectedDailySales?: number;
 
   @Transform(({ value }) => {
     if (typeof value === 'string') {

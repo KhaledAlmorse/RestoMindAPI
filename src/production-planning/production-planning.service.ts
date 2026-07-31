@@ -6,8 +6,20 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from '../Common/Types';
+import {
+  BUSINESS_TIMEZONE,
+  addDaysToDateString,
+  getBusinessDateString,
+  getBusinessDayRange,
+} from '../Common/Utils/date.util';
+import { resolveAvgDailySales } from '../Common/Utils/sales-estimate.util';
+import {
+  degradationFields,
+  reportAiFailure,
+} from '../Common/Utils/ai-degradation.util';
+import type { AiDegradation } from '../Common/Types/ai.types';
 import {
   DailyProductionPlan,
   DailyProductionPlanType,
@@ -19,6 +31,7 @@ import { UserRepository } from '../DB/Repositories/user.repository';
 import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
+import { AiClientService } from '../Common/Services/ai-client.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -38,6 +51,7 @@ export class ProductionPlanningService {
   private readonly logger = new Logger(ProductionPlanningService.name);
 
   constructor(
+    private readonly aiClient: AiClientService,
     private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
     private readonly productRepository: ProductRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
@@ -82,16 +96,14 @@ export class ProductionPlanningService {
    * Helper to get today's date in YYYY-MM-DD format
    */
   getTodayDateString(): string {
-    return new Date().toISOString().split('T')[0];
+    return getBusinessDateString();
   }
 
   /**
    * Helper to get previous date string for YYYY-MM-DD
    */
   getYesterdayDateString(dateStr: string): string {
-    const current = new Date(`${dateStr}T00:00:00.000Z`);
-    current.setUTCDate(current.getUTCDate() - 1);
-    return current.toISOString().split('T')[0];
+    return addDaysToDateString(dateStr, -1);
   }
 
   /**
@@ -102,6 +114,16 @@ export class ProductionPlanningService {
     const restaurantId = await this.getManagerRestaurantId(userId);
     const todayStr = this.getTodayDateString();
     const dateStr = requestedDate || todayStr;
+    let degradation: AiDegradation | null = null;
+
+    // Browsing to an arbitrary future date would generate AND persist a plan,
+    // hammering the AI once per page view.
+    const MAX_HORIZON_DAYS = 14;
+    if (dateStr > addDaysToDateString(todayStr, MAX_HORIZON_DAYS)) {
+      throw new BadRequestException(
+        `Production plans can only be generated up to ${MAX_HORIZON_DAYS} days ahead`,
+      );
+    }
 
     // Check if plan exists (populated)
     let plan = await this.dailyProductionPlanRepository.findOne({
@@ -118,7 +140,9 @@ export class ProductionPlanningService {
       }
 
       // If date is today or future -> generate on-demand
-      await this.generateProductionPlan(restaurantId, dateStr);
+      await this.generateProductionPlan(restaurantId, dateStr, (d) => {
+        degradation = d;
+      });
 
       // Re-fetch populated plan
       plan = await this.dailyProductionPlanRepository.findOne({
@@ -127,7 +151,24 @@ export class ProductionPlanningService {
       });
     }
 
-    return { success: true, data: plan };
+    // A plan read straight from the DB carries no live failure, but its rows
+    // still remember whether the AI produced them — so a cached fallback plan
+    // is reported as degraded too, rather than reading as a healthy forecast.
+    const fellBack = (plan?.items || []).some(
+      (i: any) => i.source === ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+    );
+
+    if (!degradation && fellBack) {
+      return {
+        success: true,
+        data: plan,
+        degraded: true,
+        degradedReason:
+          'Plan was produced by the local fallback policy, not the forecasting model',
+      };
+    }
+
+    return { success: true, data: plan, ...degradationFields(degradation) };
   }
 
   /**
@@ -155,18 +196,36 @@ export class ProductionPlanningService {
       }
     }
 
+    // arrayFilters silently match nothing for a product that is not in the
+    // plan, so the manager saw success while their entry vanished. Partition
+    // up front and report both halves.
+    const planProductIds = new Set(
+      (plan.items || []).map((i: any) =>
+        (i.productId?._id ?? i.productId).toString(),
+      ),
+    );
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    for (const item of dto.items) {
+      (planProductIds.has(item.productId) ? applied : skipped).push(
+        item.productId,
+      );
+    }
+
     // Build atomic $set and arrayFilters
     const setQuery: Record<string, any> = {};
     const arrayFilters: Record<string, any>[] = [];
 
-    dto.items.forEach((item, index) => {
-      const filterKey = `elem${index}`;
-      setQuery[`items.$[${filterKey}].actualProducedQty`] =
-        item.actualProducedQty;
-      arrayFilters.push({
-        [`${filterKey}.productId`]: new Types.ObjectId(item.productId),
+    dto.items
+      .filter((item) => planProductIds.has(item.productId))
+      .forEach((item, index) => {
+        const filterKey = `elem${index}`;
+        setQuery[`items.$[${filterKey}].actualProducedQty`] =
+          item.actualProducedQty;
+        arrayFilters.push({
+          [`${filterKey}.productId`]: new Types.ObjectId(item.productId),
+        });
       });
-    });
 
     if (Object.keys(setQuery).length > 0) {
       await this.dailyProductionPlanModel
@@ -184,7 +243,7 @@ export class ProductionPlanningService {
       populationArray: PRODUCT_POPULATION_OPTIONS as any,
     });
 
-    return { success: true, data: populatedPlan };
+    return { success: true, data: populatedPlan, applied, skipped };
   }
 
   /**
@@ -193,6 +252,10 @@ export class ProductionPlanningService {
   async generateProductionPlan(
     restaurantId: Types.ObjectId,
     dateStr: string,
+    // Optional sink so the HTTP caller can report WHY the plan it just got is
+    // a fallback. A callback rather than a changed return type, so the cron
+    // and every existing caller stay untouched.
+    onAiFailure?: (degradation: AiDegradation) => void,
   ): Promise<DailyProductionPlanType> {
     // 1. Check duplicate plan
     const existing = await this.dailyProductionPlanRepository.findOne({
@@ -219,12 +282,16 @@ export class ProductionPlanningService {
       return emptyPlan as DailyProductionPlanType;
     }
 
-    // 3. Compute 14-day avgDailySales per product
-    const cutoffDate = new Date(`${dateStr}T00:00:00.000Z`);
-    const startDate = new Date(cutoffDate);
-    startDate.setUTCDate(
-      startDate.getUTCDate() - AVG_DAILY_SALES_LOOKBACK_DAYS,
-    );
+    // 3. Compute 14-day avgDailySales per product.
+    // `new Date(`${dateStr}T00:00:00.000Z`)` was a UTC-midnight literal built
+    // from a *Cairo* date string, so the whole lookback sat 2–3h off the Cairo
+    // days it claimed to cover — crediting the small hours of the plan day to
+    // the window and dropping the same slice 14 days back. Same defect class as
+    // the reconciliation window; use the Cairo day helper.
+    const cutoffDate = getBusinessDayRange(dateStr).start;
+    const startDate = getBusinessDayRange(
+      addDaysToDateString(dateStr, -AVG_DAILY_SALES_LOOKBACK_DAYS),
+    ).start;
 
     const salesList =
       (await this.salesTransactionRepository.findMany({
@@ -235,22 +302,29 @@ export class ProductionPlanningService {
         },
       })) || [];
 
-    // Sum sales per product
+    // Sum sales per product, and separately track how many sales rows each
+    // product has — resolveAvgDailySales needs the row count (not just the
+    // total) to tell "measured zero" apart from "no history at all".
     const salesMap = new Map<string, number>();
+    const salesRowCountMap = new Map<string, number>();
     for (const sale of salesList) {
       const pId = sale.productId ? sale.productId.toString() : '';
       if (pId) {
         const currentSum = salesMap.get(pId) || 0;
         salesMap.set(pId, currentSum + (sale.quantitySold || 0));
+        salesRowCountMap.set(pId, (salesRowCountMap.get(pId) || 0) + 1);
       }
     }
 
     const preparedProducts = products.map((prod: any) => {
       const pIdStr = prod._id.toString();
       const totalSold = salesMap.get(pIdStr) || 0;
-      const avgDailySales = Math.round(
-        totalSold / AVG_DAILY_SALES_LOOKBACK_DAYS,
-      );
+      const salesRowCount = salesRowCountMap.get(pIdStr) || 0;
+      // Precedence: measured 14-day history > owner's expectedDailySales
+      // estimate > null (cold start, no signal at all). Sending 0 for a
+      // brand-new product with no history would forecast zero and make
+      // supplier-auto-draft skip it entirely.
+      const avgDailySales = resolveAvgDailySales(totalSold, salesRowCount, prod);
       const categoryName =
         prod.category && typeof prod.category === 'object' && prod.category.name
           ? prod.category.name
@@ -266,56 +340,17 @@ export class ProductionPlanningService {
       };
     });
 
-    // 4. Try AI microservice with 3 retries
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/integration/restomind/production-plan`;
+    // 4. Call the AI microservice through the shared client.
+    const aiResult = await this.aiClient.post<any>(
+      '/integration/restomind/production-plan',
+      {
+        restaurantId: restaurantId.toString(),
+        date: dateStr,
+        products: preparedProducts,
+      },
+    );
 
-    let aiResponse: any = null;
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-        const response = await fetch(aiEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            restaurantId: restaurantId.toString(),
-            date: dateStr,
-            products: preparedProducts,
-          }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const bodyData = await response.json();
-          if (bodyData && bodyData.items) {
-            aiResponse = bodyData;
-            break;
-          }
-        } else {
-          this.logger.warn(
-            `AI production plan attempt ${attempts}/${maxAttempts} returned HTTP ${response.status}`,
-          );
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `AI production plan attempt ${attempts}/${maxAttempts} failed: ${err?.message || err}`,
-        );
-      }
-
-      if (attempts < maxAttempts) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)),
-        );
-      }
-    }
+    const aiResponse = aiResult.ok && aiResult.data?.items ? aiResult.data : null;
 
     let planItems: any[] = [];
     let totalRecommendedQty = 0;
@@ -337,9 +372,26 @@ export class ProductionPlanningService {
         });
       }
     } else {
-      // AI failure -> Fallback handling
+      // AI failure -> Fallback handling.
+      // Branching on `ok` alone logged a never-retried 401 with the same
+      // "unreachable" wording as a genuine outage, so a missing
+      // AI_SHARED_SECRET produced a whole restaurant of FALLBACK_YESTERDAY
+      // plans that looked like a transient blip. Classify by KIND.
+      if (!aiResult.ok) {
+        onAiFailure?.(
+          reportAiFailure(
+            this.logger,
+            '/integration/restomind/production-plan',
+            aiResult,
+            `restaurant ${restaurantId.toString()}, date ${dateStr}`,
+          ),
+        );
+      }
+
       this.logger.error(
-        `[CRITICAL ALERT] AI Production Plan generation failed after ${maxAttempts} retries for restaurant ${restaurantId} on date ${dateStr}. Triggering fallback policy.`,
+        `[CRITICAL ALERT] AI Production Plan generation failed${
+          aiResult.ok ? '' : `: ${aiResult.message}`
+        } for restaurant ${restaurantId} on date ${dateStr}. Triggering fallback policy.`,
       );
 
       const yesterdayStr = this.getYesterdayDateString(dateStr);
@@ -363,7 +415,12 @@ export class ProductionPlanningService {
           recQty = yesterdayMap.get(prepProd.productId) || 0;
           factor = 'fallback_yesterday_plan';
         } else {
-          recQty = prepProd.avgDailySales;
+          // prepProd.avgDailySales is null only when there is truly no
+          // signal — no measured history AND no owner estimate — in which
+          // case 0 is the honest local answer; resolveAvgDailySales already
+          // surfaced the owner's expectedDailySales above whenever one was
+          // set, so this `?? 0` never discards a real estimate.
+          recQty = prepProd.avgDailySales ?? 0;
           factor = 'fallback_14day_avg_daily_sales';
         }
 
@@ -405,13 +462,23 @@ export class ProductionPlanningService {
   }
 
   /**
-   * Cron Job 1: Midnight Daily Production Plan Generation (12:00 AM)
+   * Cron Job 1: Daily Production Plan Generation — 01:00 Cairo.
+   *
+   * Was EVERY_DAY_AT_MIDNIGHT (`0 0 * * *`), which collided with
+   * WeeklyPredictionService's `0 0 * * 0` in the same minute every Sunday.
+   * The FastAPI service is single-process and the batch retry budget is only
+   * 2 attempts at a 10s timeout, so the contention pushed products onto the
+   * naive fallback on exactly one night a week. The schedule is now:
+   *   01:00 daily — this plan sync
+   *   02:00 daily — nightly AI learning sync
+   *   00:00 Sunday — weekly prediction batch
+   *   03:00 Sunday — accuracy reconciliation
+   * Written as an explicit expression rather than CronExpression so the hour
+   * is visible next to the timezone it is interpreted in.
    */
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron('0 1 * * *', { timeZone: BUSINESS_TIMEZONE })
   async handleDailyPlanGeneration() {
-    this.logger.log(
-      'Executing midnight daily production plan generation cron...',
-    );
+    this.logger.log('Executing 01:00 daily production plan generation cron...');
     const todayStr = this.getTodayDateString();
 
     const restaurants =
@@ -437,14 +504,18 @@ export class ProductionPlanningService {
    * Cron Job 2: Nightly AI Learning Sync (2:00 AM)
    * Reuses Phase 4 AiIngestService directly!
    */
-  @Cron('0 2 * * *')
+  @Cron('0 2 * * *', { timeZone: BUSINESS_TIMEZONE })
   async handleNightlyAiSync() {
     this.logger.log('Executing 2:00 AM nightly AI learning sync cron...');
     const todayStr = this.getTodayDateString();
     const yesterdayStr = this.getYesterdayDateString(todayStr);
 
-    const yesterdayStart = new Date(`${yesterdayStr}T00:00:00.000Z`);
-    const yesterdayEnd = new Date(`${todayStr}T00:00:00.000Z`);
+    // `yesterdayStr` is a Cairo calendar date. Bound the query window with the
+    // actual UTC instants of that Cairo day — interpolating it into a
+    // `T00:00:00.000Z` boundary would make the window UTC-aligned but
+    // Cairo-labelled, with a tail reaching into the current hour.
+    const { start: yesterdayStart, end: yesterdayEnd } =
+      getBusinessDayRange(yesterdayStr);
 
     const restaurants =
       (await this.restaurantRepository.findMany({
@@ -468,17 +539,34 @@ export class ProductionPlanningService {
         }
 
         const records = sales.map((s: any) => ({
-          date: s.date
-            ? new Date(s.date).toISOString().split('T')[0]
-            : yesterdayStr,
+          // Derive the key from the Cairo day the sale actually happened on —
+          // `toISOString().split('T')[0]` would attribute a sale near Cairo
+          // midnight to the previous UTC day.
+          date: s.date ? getBusinessDateString(new Date(s.date)) : yesterdayStr,
           productId: s.productId ? s.productId.toString() : '',
           salesQty: s.quantitySold || 0,
         }));
 
+        // Sending `products: []` made the registry auto-register each product
+        // with title=productId and category=None, so every product resolved to
+        // neutral calendar priors. Send the real metadata.
+        const products =
+          (await this.productRepository.findMany({
+            filters: { restaurantId: restId, isDeleted: false },
+            populationArray: [{ path: 'category' }],
+          })) || [];
+
         await this.aiIngestService.ingest({
           restaurantId: restId.toString(),
           records,
-          products: [],
+          products: products.map((p: any) => ({
+            productId: p._id.toString(),
+            title: p.title || 'Product',
+            category:
+              p.category && typeof p.category === 'object' && p.category.name
+                ? p.category.name
+                : undefined,
+          })),
         });
       } catch (err: any) {
         this.logger.error(

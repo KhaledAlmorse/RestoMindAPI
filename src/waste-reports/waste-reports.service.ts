@@ -13,6 +13,10 @@ import {
 } from 'src/DB/Repositories';
 import { QueryWasteReportDto } from './dto/query-waste-report.dto';
 import { RiskLevelEnum } from 'src/Common/Types';
+import {
+  getBusinessDateString,
+  getBusinessDayRange,
+} from 'src/Common/Utils/date.util';
 
 @Injectable()
 export class WasteReportsService {
@@ -85,7 +89,12 @@ export class WasteReportsService {
       order: 'desc',
       populationArray: [
         { path: 'ingredientId', select: 'name unit costPerUnit' },
-        { path: 'predictionId', select: 'targetDate predictionSource' },
+        // Prediction has `targetWeek` and `source`. The old names matched no
+        // field, so this populate always returned bare _ids.
+        {
+          path: 'predictionId',
+          select: 'targetWeek source predictedOrders confidence modelVersionId',
+        },
       ],
     });
   }
@@ -93,18 +102,25 @@ export class WasteReportsService {
   async getSummary(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
 
-    // Find the latest WasteReport to determine the latest scan date
-    const reports = await this.wasteReportRepository.findMany({
+    // The summary is a snapshot of the LATEST scan, not a running total.
+    // scanSurplus writes one report per ingredient per day, so aggregating
+    // every report ever written both degrades linearly and multiplies
+    // totalEstimatedWasteCost by the number of days scanned.
+    // `limit: 1` — the previous `findMany` loaded the whole collection just to
+    // read element [0].
+    const { items } = await this.wasteReportRepository.findManyPaginated({
       filters: { restaurantId, isDeleted: false },
+      skip: 0,
+      limit: 1,
       sort: 'createdAt',
       order: 'desc',
     });
-
-    const latestReport = reports && reports.length > 0 ? reports[0] : null;
+    const latestReport = items[0] ?? null;
 
     if (!latestReport) {
       return {
         restaurantId,
+        scanDate: null,
         totalReports: 0,
         totalSurplusQuantity: 0,
         totalEstimatedWasteCost: 0,
@@ -117,18 +133,21 @@ export class WasteReportsService {
       };
     }
 
-    const createdAtDate = (latestReport as any).createdAt || new Date();
-    const latestDateStart = new Date(createdAtDate);
-    latestDateStart.setHours(0, 0, 0, 0);
-    const latestDateEnd = new Date(createdAtDate);
-    latestDateEnd.setHours(23, 59, 59, 999);
+    // The scan day is a CAIRO day. `setHours(0,0,0,0)` used the server's local
+    // day, so on a UTC container the window was offset by 2-3 hours and picked
+    // up the tail of the neighbouring Cairo day's scan.
+    const scanDate = getBusinessDateString(
+      (latestReport as any).createdAt || new Date(),
+    );
+    const { start: scanDayStart, end: scanDayEnd } =
+      getBusinessDayRange(scanDate);
 
     const pipeline = [
       {
         $match: {
           restaurantId: new Types.ObjectId(restaurantId.toString()),
           isDeleted: false,
-          createdAt: { $gte: latestDateStart, $lte: latestDateEnd },
+          createdAt: { $gte: scanDayStart, $lt: scanDayEnd },
         },
       },
       {
@@ -190,11 +209,15 @@ export class WasteReportsService {
       0,
     );
 
-    const totalEstimatedWasteCost = aggregatedReports.reduce(
-      (sum, r) =>
-        sum + (r.totalExpectedSurplus || 0) * (r.ingredient?.costPerUnit || 0),
-      0,
-    );
+    const totalEstimatedWasteCost =
+      Math.round(
+        aggregatedReports.reduce(
+          (sum, r) =>
+            sum +
+            (r.totalExpectedSurplus || 0) * (r.ingredient?.costPerUnit || 0),
+          0,
+        ) * 100,
+      ) / 100;
 
     const highRiskCount = aggregatedReports.filter(
       (r) => r.highestRiskLevel === RiskLevelEnum.HIGH,
@@ -208,6 +231,7 @@ export class WasteReportsService {
 
     return {
       restaurantId,
+      scanDate,
       totalReports: aggregatedReports.length,
       totalSurplusQuantity,
       totalEstimatedWasteCost,

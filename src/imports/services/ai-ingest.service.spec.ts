@@ -1,12 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AiIngestService } from './ai-ingest.service';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 describe('AiIngestService', () => {
   let service: AiIngestService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AiIngestService],
+      providers: [AiIngestService, AiClientService],
     }).compile();
 
     service = module.get<AiIngestService>(AiIngestService);
@@ -30,7 +31,7 @@ describe('AiIngestService', () => {
         products: [{ productId: 'p1', title: 'Croissant', category: 'Pastry' }],
       };
 
-      const result = await service.ingest(payload, 1, 10);
+      const result = await service.ingest(payload, 1);
       expect(result.success).toBe(true);
       expect(result.attempts).toBe(1);
     });
@@ -44,7 +45,7 @@ describe('AiIngestService', () => {
         products: [{ productId: 'p1', title: 'Croissant', category: 'Pastry' }],
       };
 
-      const result = await service.ingest(payload, 3, 10);
+      const result = await service.ingest(payload, 3);
       expect(result.success).toBe(false);
       expect(result.attempts).toBe(3);
       expect(result.error).toContain('Connection refused');

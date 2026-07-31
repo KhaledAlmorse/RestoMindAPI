@@ -75,4 +75,9 @@ export class PredictionRepository extends BaseService<PredictionType> {
     }
     return query.exec();
   }
+
+  async bulkWrite(operations: any[]) {
+    if (!operations.length) return { modifiedCount: 0 };
+    return this.predictionModel.bulkWrite(operations);
+  }
 }

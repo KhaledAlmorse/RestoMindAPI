@@ -13,6 +13,7 @@ import {
   PurchaseOrderSourceEnum,
 } from 'src/Common/Types';
 import { PredictionRepository } from 'src/DB/Repositories/prediction.repository';
+import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 export interface UnassignedShortfall {
   ingredientId: string;
@@ -43,7 +44,16 @@ export class SupplierAutoDraftService {
     targetWeek: string,
     createdByUserId: Types.ObjectId,
   ) {
-    const targetWeekStart = new Date(`${targetWeek}T00:00:00.000Z`);
+    // `targetWeek` is a CAIRO calendar date (resolveTargetWeek), so a
+    // UTC-midnight literal named an instant 2-3h off the day it claims. This
+    // value is not merely a query bound: it gates `expiryDate: { $gt }` and
+    // `expectedDeliveryDate: { $lte }` against real batch/PO timestamps, AND is
+    // written to `expectedDeliveryDate` on the draft PO — where it is also one
+    // of the six clauses of the idempotency filter below. Read and write derive
+    // from this one expression, so idempotency held before and holds now; but
+    // the instant itself was wrong, and drafts written by the old code carry
+    // the old value (see the report's migration note).
+    const targetWeekStart = getBusinessDayRange(targetWeek).start;
 
     // 1. Get all stored predictions for targetWeek
     const predictions = await this.predictionRepository.findMany({
@@ -58,6 +68,7 @@ export class SupplierAutoDraftService {
       return {
         draftPurchaseOrders: [],
         unassignedShortfalls: [],
+        reusedExistingDrafts: 0,
         message: 'No predictions found for the specified target week.',
       };
     }
@@ -105,6 +116,7 @@ export class SupplierAutoDraftService {
       return {
         draftPurchaseOrders: [],
         unassignedShortfalls: [],
+        reusedExistingDrafts: 0,
         message: 'No ingredient demand derived from recipes.',
       };
     }
@@ -120,6 +132,29 @@ export class SupplierAutoDraftService {
         unitCost: number;
       }>
     >();
+
+    // Fetch sent POs ONCE. This used to run inside the per-ingredient loop,
+    // scanning the whole collection N times and filtering items in JS.
+    const sentPOs =
+      (await this.purchaseOrderRepository.findMany({
+        filters: {
+          restaurantId,
+          status: PurchaseOrderStatusEnum.SENT,
+          isDeleted: false,
+          expectedDeliveryDate: { $lte: targetWeekStart },
+        },
+      })) || [];
+
+    const incomingByIngredient = new Map<string, number>();
+    for (const po of sentPOs) {
+      for (const item of po.items || []) {
+        const key = item.ingredientId.toString();
+        incomingByIngredient.set(
+          key,
+          (incomingByIngredient.get(key) || 0) + (item.quantity || 0),
+        );
+      }
+    }
 
     for (const [ingIdStr, requiredQty] of ingredientDemandMap.entries()) {
       const ingredientId = new Types.ObjectId(ingIdStr);
@@ -139,6 +174,12 @@ export class SupplierAutoDraftService {
           isDeleted: false,
           expiryDate: { $gt: targetWeekStart },
         },
+        // `batches[0]` supplies unitCost below; without a sort that was
+        // whichever document Mongo happened to return first.
+        // Note: InventoryBatchRepository.findMany takes `sort` as a field
+        // name string plus a separate `order`, not an object.
+        sort: 'createdAt',
+        order: 'desc',
       });
 
       const currentBatchStock = batches.reduce(
@@ -146,24 +187,7 @@ export class SupplierAutoDraftService {
         0,
       );
 
-      const sentPOs = await this.purchaseOrderRepository.findMany({
-        filters: {
-          restaurantId,
-          status: PurchaseOrderStatusEnum.SENT,
-          isDeleted: false,
-          expectedDeliveryDate: { $lte: targetWeekStart },
-        },
-      });
-
-      let incomingPOStock = 0;
-      for (const po of sentPOs) {
-        for (const item of po.items) {
-          if (item.ingredientId.toString() === ingIdStr) {
-            incomingPOStock += item.quantity || 0;
-          }
-        }
-      }
-
+      const incomingPOStock = incomingByIngredient.get(ingIdStr) || 0;
       const usableAvailableStock = currentBatchStock + incomingPOStock;
       const shortfall = requiredQty - usableAvailableStock;
 
@@ -234,11 +258,35 @@ export class SupplierAutoDraftService {
       supplierItemsMap.set(supplierKey, itemsList);
     }
 
-    // 4. Create PurchaseOrders with status="draft" and source="ai_forecast"
+    // 4. Upsert one draft PO per supplier for this target week.
     const createdPOs: any[] = [];
+    let reusedExistingDrafts = 0;
 
     for (const [supIdStr, items] of supplierItemsMap.entries()) {
       const supplierId = new Types.ObjectId(supIdStr);
+
+      // Without this lookup every recalculation produced a fresh duplicate
+      // draft, while predictions themselves upsert.
+      const existingDraft = await this.purchaseOrderRepository.findOne({
+        filters: {
+          restaurantId,
+          supplierId,
+          status: PurchaseOrderStatusEnum.DRAFT,
+          source: PurchaseOrderSourceEnum.AI_FORECAST,
+          expectedDeliveryDate: targetWeekStart,
+          isDeleted: false,
+        },
+      });
+
+      if (existingDraft) {
+        const updated = await this.purchaseOrderRepository.update({
+          filters: { _id: existingDraft._id },
+          body: { items, createdBy: createdByUserId } as any,
+        });
+        reusedExistingDrafts++;
+        createdPOs.push(updated ?? existingDraft);
+        continue;
+      }
 
       const po = await this.purchaseOrderRepository.create({
         restaurantId,
@@ -256,6 +304,7 @@ export class SupplierAutoDraftService {
     return {
       draftPurchaseOrders: createdPOs,
       unassignedShortfalls,
+      reusedExistingDrafts,
     };
   }
 }

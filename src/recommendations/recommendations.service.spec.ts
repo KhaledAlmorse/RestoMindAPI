@@ -15,6 +15,7 @@ import {
 } from 'src/Common/Types';
 import {
   CategoryRepository,
+  DailyProductionPlanRepository,
   IngredientRepository,
   InventoryBatchRepository,
   OfferRepository,
@@ -28,6 +29,8 @@ import {
   WasteReportRepository,
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 describe('RecommendationsService', () => {
   let service: RecommendationsService;
@@ -44,6 +47,8 @@ describe('RecommendationsService', () => {
   let mockIngredientRepo: any;
   let mockRecipeRepo: any;
   let mockPredictionRepo: any;
+  let mockDailyProductionPlanRepo: any;
+  let planFor: (productId: Types.ObjectId, recommendedQty: number) => void;
 
   const mockUserId = new Types.ObjectId().toString();
   const mockRestaurantId = new Types.ObjectId();
@@ -153,9 +158,24 @@ describe('RecommendationsService', () => {
       findMany: jest.fn(),
     };
 
+    mockDailyProductionPlanRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    // A product is only scanned when there is a ready-to-sell source for it:
+    // today's production plan, else this week's prediction. `planFor` is the
+    // shorthand the no-prediction cases use.
+    planFor = (productId: Types.ObjectId, recommendedQty: number) =>
+      mockDailyProductionPlanRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+        items: [{ productId, recommendedQty, actualProducedQty: null }],
+      });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RecommendationsService,
+        AiClientService,
         { provide: RecommendationRepository, useValue: mockRecommendationRepo },
         { provide: WasteReportRepository, useValue: mockWasteReportRepo },
         { provide: ProductRepository, useValue: mockProductRepo },
@@ -168,6 +188,10 @@ describe('RecommendationsService', () => {
         { provide: IngredientRepository, useValue: mockIngredientRepo },
         { provide: RecipeRepository, useValue: mockRecipeRepo },
         { provide: PredictionRepository, useValue: mockPredictionRepo },
+        {
+          provide: DailyProductionPlanRepository,
+          useValue: mockDailyProductionPlanRepo,
+        },
       ],
     }).compile();
 
@@ -255,6 +279,65 @@ describe('RecommendationsService', () => {
         service.approveRecommendation(mockRecId.toString(), mockUserId, {}),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('scopes the overlapping-offer check to the caller restaurant', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        status: 'pending',
+        type: 'apply_discount',
+        suggestedValue: 20,
+      });
+      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockOfferRepo.findMany.mockResolvedValue([]);
+      mockOfferRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockRecommendationRepo.update.mockResolvedValue({});
+
+      await service.approveRecommendation(
+        new Types.ObjectId().toString(),
+        '507f1f77bcf86cd799439011',
+        {},
+      );
+
+      expect(mockOfferRepo.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({ restaurantId: mockRestaurantId }),
+        }),
+      );
+    });
+
+    it('clamps a runaway suggestedValue so the offer price stays positive', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        status: 'edited',
+        type: 'apply_discount',
+        suggestedValue: 500, // legacy row written before the DTO cap
+      });
+      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockOfferRepo.findMany.mockResolvedValue([]);
+      mockOfferRepo.create.mockImplementation((doc: any) =>
+        Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
+      );
+      mockRecommendationRepo.update.mockResolvedValue({});
+
+      const result = await service.approveRecommendation(
+        new Types.ObjectId().toString(),
+        '507f1f77bcf86cd799439011',
+        {},
+      );
+
+      expect(result.offer.discountPercentage).toBeLessThanOrEqual(100);
+      expect(result.offer.offerPrice).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('scanSurplus & validatePlan graceful AI failure', () => {
@@ -264,30 +347,34 @@ describe('RecommendationsService', () => {
 
       const result = await service.scanSurplus(mockUserId);
 
-      expect(result).toHaveProperty(
+      expect(result.data).toHaveProperty(
         'message',
-        'No products with recipes found for surplus scan',
+        'No products with a recipe and a ready-to-sell source found for surplus scan',
       );
-      expect(result).toHaveProperty('scannedCount', 0);
+      expect(result.data).toHaveProperty('scannedCount', 0);
+      expect(result.degraded).toBe(false);
     });
 
-    it('should throw ServiceUnavailableException when surplus scan AI service is unreachable', async () => {
+    it('should return a degraded response (not throw) when surplus scan AI service is unreachable', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
 
       global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
 
-      await expect(service.scanSurplus(mockUserId)).rejects.toThrow(
-        ServiceUnavailableException,
-      );
+      const result = await service.scanSurplus(mockUserId);
+
+      expect(result.degraded).toBe(true);
+      expect(result.degradedReason).toContain('Network error');
     });
 
     it('should send closeHour as integer 22 to AI service during scanSurplus', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
       mockWasteReportRepo.create.mockResolvedValue({
@@ -378,16 +465,19 @@ describe('RecommendationsService', () => {
 
       // Expected local calculations:
       // usableAvailableStock = 50 + 70 = 120
-      // expectedConsumption = 100 * 0.2 = 20
-      // expectedSurplus = 120 - 20 = 100
-      // surplusRatio = 100 / 120 = 0.833 -> riskLevel = HIGH (>= 0.7)
+      // predictedOrders is a WEEKLY total, so today's demand is 100/7 = 14.
+      // Multiplying the weekly figure by quantityPerPortion overstated one
+      // day's consumption sevenfold.
+      // expectedConsumption = 14 * 0.2 = 2.8
+      // expectedSurplus = 120 - 2.8 = 117.2
+      // surplusRatio = 117.2 / 120 = 0.977 -> riskLevel = HIGH (>= 0.7)
 
       expect(mockWasteReportRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           restaurantId: mockRestaurantId,
           usableAvailableStock: 120,
-          expectedConsumption: 20,
-          expectedSurplus: 100,
+          expectedConsumption: 2.8,
+          expectedSurplus: 117.2,
           riskLevel: RiskLevelEnum.HIGH,
         }),
       );
@@ -408,6 +498,7 @@ describe('RecommendationsService', () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 50);
       mockInventoryBatchRepo.findMany.mockResolvedValue([
         { quantityRemaining: 100 },
       ]);
@@ -548,8 +639,10 @@ describe('RecommendationsService', () => {
       const fetchCallBody = JSON.parse(
         (global.fetch as jest.Mock).mock.calls[0][1].body,
       );
-      // avgDailySales = round((10+15+20+10+15+20+10) / 7) = round(100/7) = 14
-      expect(fetchCallBody.stock[0].avgDailySales).toBe(14);
+      // avgDailySales = (10+15+20+10+15+20+10) / 7 = 100/7 = 14.29 (2dp).
+      // Deliberately NOT rounded to a whole unit: integer rounding is what
+      // sent 0 for every product forecast under 4 units/week.
+      expect(fetchCallBody.stock[0].avgDailySales).toBeCloseTo(14.29, 2);
     });
 
     it('should throw ServiceUnavailableException when validatePlan AI service is unreachable', async () => {
@@ -561,6 +654,180 @@ describe('RecommendationsService', () => {
           planned_quantity: 50,
         }),
       ).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('returns a degraded response instead of throwing when the AI is down', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Baklava', price: 50, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 2 },
+        ],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({ predictedOrders: 100 });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 500 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+
+      const result = await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      expect(result.degraded).toBe(true);
+      expect(result.degradedReason).toContain('ECONNREFUSED');
+      // The waste reports it already wrote must still be reported, not discarded.
+      expect(mockWasteReportRepo.create).toHaveBeenCalled();
+    });
+
+    it('scopes the prediction lookup to a targetWeek and sends the real category', async () => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        {
+          _id: mockProductId,
+          title: 'Croissant',
+          price: 18,
+          freshnessWindow: 2,
+          category: { name: 'معجنات' },
+        },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      const predFilters = mockPredictionRepo.findOne.mock.calls[0][0].filters;
+      expect(predFilters).toHaveProperty('targetWeek');
+      expect(predFilters.targetWeek).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+      expect(body.stock[0].category).toBe('معجنات');
+    });
+
+    it('links each waste report back to the prediction that drove it', async () => {
+      const predictionId = new Types.ObjectId();
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        _id: predictionId,
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      await service.scanSurplus('507f1f77bcf86cd799439011');
+
+      expect(mockWasteReportRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ predictionId }),
+      );
+    });
+
+    it('dedups waste reports over one CAIRO day, not the server local day', async () => {
+      // F6. `setHours(0,0,0,0)` / `setHours(23,59,59,999)` on a server-local
+      // Date meant that on a UTC container a scan at Cairo 01:00 and one at
+      // Cairo 10:00 the same Cairo day fell in different windows and wrote two
+      // reports per ingredient — double-counting getSummary's $sum on
+      // totalEstimatedWasteCost. Same assertion shape as the reconciliation
+      // window test in weekly-prediction.service.spec.ts.
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockProductRepo.findMany.mockResolvedValue([
+        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+      ]);
+      mockRecipeRepo.findOne.mockResolvedValue({
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 1 },
+        ],
+      });
+      mockPredictionRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        predictedOrders: 70,
+        dailyBreakdown: [],
+      });
+      mockInventoryBatchRepo.findMany.mockResolvedValue([
+        { quantityRemaining: 200 },
+      ]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+      }) as any;
+
+      // Frozen so the expected bounds can be written as absolute instants
+      // rather than recomputed with the same helpers the service uses (which
+      // would only prove self-consistency). 09:00Z is 12:00 in Cairo on
+      // 2026-07-29, comfortably inside the day from either zone's point of
+      // view, so the assertion is not a boundary special case.
+      jest.useFakeTimers({ now: new Date('2026-07-29T09:00:00.000Z') });
+      try {
+        await service.scanSurplus('507f1f77bcf86cd799439011');
+      } finally {
+        jest.useRealTimers();
+      }
+
+      const filters = mockWasteReportRepo.findOne.mock.calls[0][0].filters;
+
+      // The Cairo day 2026-07-29 is [2026-07-28T21:00Z, 2026-07-29T21:00Z) in
+      // summer (UTC+3). Written out rather than derived: under the suite's
+      // pinned TZ=UTC the server-local day would be
+      // [2026-07-29T00:00Z, 2026-07-30T00:00Z), so these literals discriminate
+      // between the two unconditionally — no `if` guard, on any machine.
+      expect(filters.createdAt.$gte.toISOString()).toBe(
+        '2026-07-28T21:00:00.000Z',
+      );
+      expect(filters.createdAt.$lt.toISOString()).toBe(
+        '2026-07-29T21:00:00.000Z',
+      );
+
+      // Half-open and exactly one Cairo day wide. The old code used an
+      // inclusive `$lte ...23:59:59.999` upper bound; this pins the shape too.
+      expect(Object.keys(filters.createdAt).sort()).toEqual(['$gte', '$lt']);
+
+      // Belt and braces: still agrees with the helper the service uses.
+      const { start, end } = getBusinessDayRange('2026-07-29');
+      expect(filters.createdAt).toEqual({ $gte: start, $lt: end });
     });
   });
 });

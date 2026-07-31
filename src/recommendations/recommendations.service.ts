@@ -8,6 +8,21 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
+import { AiClientService } from 'src/Common/Services/ai-client.service';
+import {
+  addDaysToDateString,
+  getBusinessDateString,
+  getBusinessDayOfWeek,
+  getBusinessDayRange,
+} from 'src/Common/Utils/date.util';
+import {
+  AVG_DAILY_SALES_LOOKBACK_DAYS,
+  resolveAvgDailySales,
+} from 'src/Common/Utils/sales-estimate.util';
+import {
+  degradationFields,
+  reportAiFailure,
+} from 'src/Common/Utils/ai-degradation.util';
 import {
   OfferSourceEnum,
   OfferStatusEnum,
@@ -40,6 +55,7 @@ export class RecommendationsService {
   private readonly logger = new Logger(RecommendationsService.name);
 
   constructor(
+    private readonly aiClient: AiClientService,
     private readonly recommendationRepository: RecommendationRepository,
     private readonly wasteReportRepository: WasteReportRepository,
     private readonly productRepository: ProductRepository,
@@ -130,31 +146,53 @@ export class RecommendationsService {
     });
   }
 
+  /**
+   * The week the surplus scan reasons about. Mirrors
+   * WeeklyPredictionService.resolveTargetWeek; duplicated deliberately rather
+   * than importing that service, to keep the two feature modules decoupled.
+   */
+  private currentTargetWeek(): string {
+    const today = getBusinessDateString();
+    const dayOfWeek = getBusinessDayOfWeek();
+    // The week in progress started on the most recent Sunday.
+    return addDaysToDateString(today, -dayOfWeek);
+  }
+
   async scanSurplus(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
+    const targetWeek = this.currentTargetWeek();
 
     // 1. Fetch active products for restaurant
     const products = await this.productRepository.findMany({
       filters: { restaurantId, isDeleted: false },
+      populationArray: [{ path: 'category' }],
     });
 
     if (!products || products.length === 0) {
       return {
-        message: 'No products found for surplus scan',
-        scannedCount: 0,
-        itemsAtRisk: [],
+        data: {
+          message: 'No products found for surplus scan',
+          scannedCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+        },
+        degraded: false,
       };
     }
 
-    // 2. Fetch today's DailyProductionPlan for restaurant (if available)
-    const todayStr = new Date().toISOString().split('T')[0];
+    // 2. Fetch today's DailyProductionPlan for restaurant (if available).
+    // `DailyProductionPlan.date` and `Prediction.dailyBreakdown[].date` are
+    // CAIRO calendar dates — `new Date().toISOString().split('T')[0]` is the
+    // UTC date, a day behind between Cairo 00:00 and 02:00, so a scan in that
+    // window looked up yesterday's plan and yesterday's breakdown row.
+    const todayStr = getBusinessDateString();
     const dailyProductionPlan =
       await this.dailyProductionPlanRepository.findOne({
         filters: { restaurantId, date: todayStr, isDeleted: false },
       });
 
     const wasteReportData: Array<{
-      predictionId?: Types.ObjectId;
+      predictionId: Types.ObjectId | null;
       productId: Types.ObjectId;
       ingredientId: Types.ObjectId;
       title: string;
@@ -167,11 +205,17 @@ export class RecommendationsService {
     const stockItems: Array<{
       productId: string;
       title: string;
-      category: string;
+      category: string | null;
       price: number;
       freshnessWindow: number;
       currentStock: number;
-      avgDailySales: number;
+      // `null`, NOT 0. The bridge reads 0 as "this product sells nothing" and
+      // scores it as pure surplus risk; it reads null as "no estimate given"
+      // and applies its category default. Typing this as `number` and seeding
+      // it to 0 collapsed the two, and the Python side's truthy
+      // `s.avg_daily_sales or DEFAULT_DAILY_LEVEL` then turned an honest 0
+      // into 40/day, so dead-slow stock was never flagged or discounted.
+      avgDailySales: number | null;
     }> = [];
 
     // Track which products have genuine surplus locally
@@ -184,19 +228,20 @@ export class RecommendationsService {
 
       if (!recipe?.ingredients?.length) continue;
 
-      // Get latest prediction once per product
-      const prodObjectId = new Types.ObjectId(product._id.toString());
-      const restObjectId = new Types.ObjectId(restaurantId.toString());
-      const predictions = await this.predictionRepository.findMany({
+      // Get this week's prediction once per product.
+      // Without a targetWeek filter this returned natural order — in practice
+      // the OLDEST prediction — so today's discount was driven by a months-old
+      // forecast. `{restaurantId, productId, targetWeek}` is the unique index
+      // on Prediction, so this is a single indexed hit rather than loading
+      // every prediction ever made for the product and taking element [0].
+      const prediction = await this.predictionRepository.findOne({
         filters: {
-          restaurantId: restObjectId,
-          productId: prodObjectId,
-          isDeleted: { $ne: true },
+          restaurantId,
+          productId: product._id,
+          targetWeek,
+          isDeleted: false,
         },
-        sort: { createdAt: -1 },
       });
-      const prediction =
-        predictions && predictions.length > 0 ? predictions[0] : null;
 
       // Find matching item in today's DailyProductionPlan (if present)
       const planItem = dailyProductionPlan?.items?.find(
@@ -260,8 +305,6 @@ export class RecommendationsService {
         todayPredictedOrders = readyToSellStock;
       }
 
-      const avgDailySales = todayPredictedOrders;
-
       for (const recipeIngredient of recipe.ingredients) {
         const nonExpiredBatches = await this.inventoryBatchRepository.findMany({
           filters: {
@@ -308,7 +351,7 @@ export class RecommendationsService {
           productsWithSurplus.add(product._id.toString());
 
           wasteReportData.push({
-            predictionId: prediction?._id,
+            predictionId: (prediction as any)?._id ?? null,
             productId: product._id,
             ingredientId: recipeIngredient.ingredientId,
             title: product.title,
@@ -320,10 +363,66 @@ export class RecommendationsService {
         }
       }
 
+      // Calculate avgDailySales from this week's forecast, else from history.
+      //
+      // Two defects lived here. (1) `Math.round(...)` to a whole unit meant any
+      // product forecast under 4 units/week became a flat 0 — an ordinary
+      // outcome, not a cold-start edge case. (2) the initial `0` and the
+      // `number` type meant "no signal at all" was sent as 0, which the bridge
+      // reads as a real zero-demand answer. Both now go through the same
+      // measured > owner estimate > null precedence the other two AI-feeding
+      // paths use.
+      let avgDailySales: number | null;
+      const predictedOrders = prediction?.predictedOrders;
+
+      if (predictedOrders !== undefined && predictedOrders !== null) {
+        const breakdown = prediction?.dailyBreakdown;
+        const days = breakdown?.length || 7;
+        const total = breakdown?.length
+          ? breakdown.reduce((sum, d) => sum + d.predictedQuantity, 0)
+          : predictedOrders;
+        // Two decimals, matching resolveAvgDailySales — never rounded to 0.
+        avgDailySales = Math.round((total / days) * 100) / 100;
+      } else {
+        const lookbackStart = new Date();
+        lookbackStart.setDate(
+          lookbackStart.getDate() - AVG_DAILY_SALES_LOOKBACK_DAYS,
+        );
+
+        const sales =
+          (await this.salesTransactionRepository.findMany({
+            filters: {
+              restaurantId,
+              productId: product._id,
+              isDeleted: false,
+              date: { $gte: lookbackStart },
+            },
+          })) || [];
+
+        const totalSold = sales.reduce(
+          (sum, s) => sum + (s.quantitySold || 0),
+          0,
+        );
+        avgDailySales = resolveAvgDailySales(
+          totalSold,
+          sales.length,
+          product as any,
+        );
+      }
+
+      const categoryName =
+        product.category &&
+        typeof product.category === 'object' &&
+        (product.category as any).name
+          ? (product.category as any).name
+          : null;
+
       stockItems.push({
         productId: product._id.toString(),
         title: product.title || 'Product',
-        category: 'General',
+        // 'General' matched no market-prior keyword, so every product resolved
+        // to neutral priors and surplus risk was never category-aware.
+        category: categoryName,
         price: product.price || 0,
         freshnessWindow: product.freshnessWindow || 2,
         currentStock: readyToSellStock,
@@ -333,28 +432,35 @@ export class RecommendationsService {
 
     if (stockItems.length === 0) {
       return {
-        message: 'No products with predictions found for surplus scan',
-        scannedCount: 0,
-        itemsAtRisk: [],
+        data: {
+          message:
+            'No products with a recipe and a ready-to-sell source found for surplus scan',
+          scannedCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+        },
+        degraded: false,
       };
     }
 
-    // 3. Upsert WasteReports ONLY for actual waste risk items
-    // Track waste report IDs per product to link only when naturally 1-to-1
-    const wasteReportsByProduct = new Map<string, Types.ObjectId[]>();
+    // 3. Upsert WasteReports for the ingredients that carry real surplus risk.
+    // The dedup window is one CAIRO day. `setHours(0,0,0,0)` used the server's
+    // local day, so on a UTC-timezone container a scan at Cairo 01:00 and one
+    // at Cairo 10:00 on the same Cairo day landed in different windows and
+    // wrote two reports per ingredient — double-counting getSummary's
+    // `$sum` on totalEstimatedWasteCost. Computed once, outside the loop.
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(todayStr);
+    // First report per product wins the link — a product's recommendation
+    // points at one waste report.
+    const wasteReportsByProduct = new Map<string, Types.ObjectId>();
 
     for (const data of wasteReportData) {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
-
       let wasteReport = await this.wasteReportRepository.findOne({
         filters: {
           restaurantId,
           ingredientId: data.ingredientId,
           isDeleted: false,
-          createdAt: { $gte: todayStart, $lte: todayEnd },
+          createdAt: { $gte: todayStart, $lt: todayEnd },
         },
       });
 
@@ -384,53 +490,60 @@ export class RecommendationsService {
 
       if (wasteReport) {
         const prodKey = data.productId.toString();
-        const list = wasteReportsByProduct.get(prodKey) || [];
-        list.push(wasteReport._id);
-        wasteReportsByProduct.set(prodKey, list);
+        if (!wasteReportsByProduct.has(prodKey)) {
+          wasteReportsByProduct.set(prodKey, wasteReport._id);
+        }
       }
     }
 
-    // 4. Call AI Microservice for recommendation suggestions
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/integration/restomind/surplus-offers`;
+    // 4. Ask the AI for discount suggestions. A failure here does NOT invalidate
+    // the waste reports we just wrote — report them as degraded instead of
+    // throwing on top of a committed write.
+    const aiResult = await this.aiClient.post<any>(
+      '/integration/restomind/surplus-offers',
+      {
+        restaurantId: restaurantId.toString(),
+        timestamp: new Date().toISOString(),
+        closeHour: 22,
+        stock: stockItems,
+      },
+      { retries: 2, timeoutMs: 8000 },
+    );
 
-    let aiData: any = null;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+    if (!aiResult.ok || !aiResult.data?.itemsAtRisk) {
+      // Branching on `ok` alone logged a never-retried 401 at WARN with the
+      // same wording as a real outage. Classify by KIND so a configuration
+      // fault is loud, and carry the kind into the response.
+      const degradation = aiResult.ok
+        ? {
+            kind: 'unavailable' as const,
+            reason: 'AI service returned no itemsAtRisk',
+          }
+        : reportAiFailure(
+            this.logger,
+            '/integration/restomind/surplus-offers',
+            aiResult,
+            `restaurant ${restaurantId.toString()}`,
+          );
 
-      const response = await fetch(aiEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          restaurantId: restaurantId.toString(),
-          timestamp: new Date().toISOString(),
-          closeHour: 22,
-          stock: stockItems,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        aiData = await response.json();
-      } else {
-        this.logger.warn(
-          `AI surplus-offers endpoint returned status ${response.status}`,
-        );
+      if (aiResult.ok) {
+        this.logger.warn(`Surplus scan degraded: ${degradation.reason}`);
       }
-    } catch (err: any) {
-      this.logger.warn(
-        `AI surplus-offers request failed: ${err?.message || err}`,
-      );
+
+      return {
+        data: {
+          message: 'Surplus scan completed without AI recommendations',
+          checkedAt: new Date().toISOString(),
+          itemsAtRiskCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+          wasteReportsWritten: wasteReportData.length,
+        },
+        ...degradationFields(degradation),
+      };
     }
 
-    if (!aiData || !aiData.itemsAtRisk) {
-      throw new ServiceUnavailableException(
-        'AI service temporarily unavailable — showing last computed report',
-      );
-    }
+    const aiData = aiResult.data;
 
     // 5. Create/update Recommendations using AI suggestions ONLY for products with backend-verified surplus
     const createdRecommendations: any[] = [];
@@ -451,9 +564,7 @@ export class RecommendationsService {
       verifiedItemsAtRisk.push(item);
       const prodObjectId = new Types.ObjectId(item.productId);
 
-      // Link wasteReportId to the primary generated WasteReport for this product
-      const reports = wasteReportsByProduct.get(prodKey);
-      const wasteReportId = reports && reports.length > 0 ? reports[0] : null;
+      const wasteReportId = wasteReportsByProduct.get(prodKey) ?? null;
 
       let rec = await this.recommendationRepository.findOne({
         filters: {
@@ -489,11 +600,15 @@ export class RecommendationsService {
     }
 
     return {
-      message: 'Surplus scan completed',
-      checkedAt: aiData.checkedAt || new Date().toISOString(),
-      itemsAtRiskCount: verifiedItemsAtRisk.length,
-      itemsAtRisk: verifiedItemsAtRisk,
-      recommendations: createdRecommendations,
+      data: {
+        message: 'Surplus scan completed',
+        checkedAt: aiData.checkedAt || new Date().toISOString(),
+        itemsAtRiskCount: verifiedItemsAtRisk.length,
+        itemsAtRisk: verifiedItemsAtRisk,
+        recommendations: createdRecommendations,
+        wasteReportsWritten: wasteReportData.length,
+      },
+      degraded: false,
     };
   }
 
@@ -596,9 +711,12 @@ export class RecommendationsService {
       );
     }
 
-    // 3. Overlapping-offer check (Phase 0B rule)
+    // 3. Overlapping-offer check (Phase 0B rule), scoped to THIS restaurant.
+    // Without restaurantId, another tenant's offer on the same product blocked
+    // approval here.
     const existingOffers = await this.offerRepository.findMany({
       filters: {
+        restaurantId,
         productId: rec.productId,
         isDeleted: false,
         status: { $in: [OfferStatusEnum.ACTIVE, OfferStatusEnum.SCHEDULED] },
@@ -613,8 +731,10 @@ export class RecommendationsService {
 
     // 4. Compute Offer values
     const originalPrice = product.price;
-    const discountPercentage =
-      dto.discountPercentage ?? rec.suggestedValue ?? 10;
+    const rawDiscount = dto.discountPercentage ?? rec.suggestedValue ?? 10;
+    // Clamp: rows written before EditRecommendationDto gained @Max(100) can
+    // still carry a value that would make offerPrice negative.
+    const discountPercentage = Math.min(100, Math.max(1, rawDiscount));
     const offerPrice =
       Math.round(originalPrice * (1 - discountPercentage / 100) * 100) / 100;
     const availableQuantity = dto.availableQuantity ?? 10;
@@ -623,6 +743,10 @@ export class RecommendationsService {
     const endDate = dto.endDate
       ? new Date(dto.endDate)
       : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    if (endDate <= startDate) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
 
     // 5. Create Offer
     const offer = await this.offerRepository.create({
@@ -661,37 +785,31 @@ export class RecommendationsService {
   async validatePlan(userId: string, dto: ValidatePlanDto) {
     await this.getManagerRestaurantId(userId);
 
-    const aiBaseUrl = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8200';
-    const aiEndpoint = `${aiBaseUrl.replace(/\/$/, '')}/alerts/waste-prevention`;
+    const result = await this.aiClient.post<any>(
+      '/alerts/waste-prevention',
+      {
+        sku: dto.sku,
+        date: dto.date || getBusinessDateString(),
+        planned_quantity: dto.planned_quantity,
+      },
+      { retries: 2, timeoutMs: 8000 },
+    );
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+    if (result.ok) {
+      return { data: result.data, degraded: false };
+    }
 
-      const response = await fetch(aiEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sku: dto.sku,
-          date: dto.date || new Date().toISOString().split('T')[0],
-          planned_quantity: dto.planned_quantity,
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (err: any) {
-      this.logger.warn(
-        `AI waste-prevention request failed: ${err?.message || err}`,
+    // A 4xx means the SKU is unknown — the service returns the valid list in
+    // `hint`. Surfacing that as a 503 outage hid a usable error message.
+    if (result.kind === 'client_error') {
+      const hint = (result.body as any)?.hint;
+      throw new BadRequestException(
+        hint ? `${result.message}. ${hint}` : result.message,
       );
     }
 
     throw new ServiceUnavailableException(
-      'AI service temporarily unavailable for plan validation',
+      `AI service unavailable for plan validation: ${result.message}`,
     );
   }
 }

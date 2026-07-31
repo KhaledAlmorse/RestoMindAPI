@@ -62,6 +62,15 @@ export class Product {
   @Prop({ type: Number, required: true })
   freshnessWindow!: number;
 
+  /**
+   * Owner's estimate of typical daily sales, captured at product creation and used
+   * for forecasting until 14 days of real history exist. Null means "no estimate",
+   * which the forecasting bridge answers with its own category default — distinct
+   * from 0, which means "this product sells nothing".
+   */
+  @Prop({ type: Number, default: null, min: 0 })
+  expectedDailySales?: number | null;
+
   @Prop({ type: [String], default: [] })
   tags!: string[];
 

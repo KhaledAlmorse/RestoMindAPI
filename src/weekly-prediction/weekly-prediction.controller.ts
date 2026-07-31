@@ -15,6 +15,7 @@ import { WeeklyPredictionService } from './weekly-prediction.service';
 import { RecalculatePredictionDto } from './dto/recalculate-prediction.dto';
 import { BatchRecalculateDto } from './dto/batch-recalculate.dto';
 import { QueryPredictionsDto } from './dto/query-predictions.dto';
+import { AiBackfillDto } from './dto/ai-backfill.dto';
 
 @Controller('predictions')
 export class WeeklyPredictionController {
@@ -79,5 +80,39 @@ export class WeeklyPredictionController {
     const userId = authUser.user._id.toString();
     const result = await this.weeklyPredictionService.getLearnedStatus(userId);
     res.status(HttpStatus.OK).json(result);
+  }
+
+  @Get('accuracy')
+  @Auth('manager')
+  async getAccuracy(
+    @Query('weeks') weeks: string | undefined,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const userId = authUser.user._id.toString();
+    const parsed = Number(weeks);
+    const window =
+      Number.isFinite(parsed) && parsed > 0 && parsed <= 52 ? parsed : 8;
+    const result = await this.weeklyPredictionService.getAccuracy(
+      userId,
+      window,
+    );
+    res.status(HttpStatus.OK).json({ data: result });
+  }
+
+  @Post('ai-backfill')
+  @HttpCode(HttpStatus.OK)
+  @Auth('manager')
+  async backfill(
+    @Body() body: AiBackfillDto,
+    @AuthUser() authUser: IAuthUser,
+    @Res() res: Response,
+  ) {
+    const userId = authUser.user._id.toString();
+    const result = await this.weeklyPredictionService.backfillAiHistory(
+      userId,
+      body?.days,
+    );
+    res.status(HttpStatus.OK).json({ data: result });
   }
 }

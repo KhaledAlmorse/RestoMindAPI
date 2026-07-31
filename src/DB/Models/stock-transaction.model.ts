@@ -33,6 +33,17 @@ export class StockTransaction {
   @Prop({ type: Date, required: true, default: Date.now })
   date!: Date;
 
+  /**
+   * What caused this movement, when it was generated rather than entered by
+   * hand. `referenceId` is the idempotency key for automatic consumption: an
+   * order that is marked DELIVERED twice must not deplete stock twice.
+   */
+  @Prop({ type: String, default: null })
+  referenceType?: string | null;
+
+  @Prop({ type: Types.ObjectId, default: null })
+  referenceId?: Types.ObjectId | null;
+
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
 
@@ -45,6 +56,8 @@ const StockTransactionSchema = SchemaFactory.createForClass(StockTransaction);
 StockTransactionSchema.index({ restaurantId: 1, date: -1 });
 StockTransactionSchema.index({ ingredientId: 1, date: -1 });
 StockTransactionSchema.index({ restaurantId: 1, transactionType: 1 });
+// Backs the "already consumed for this order?" idempotency lookup.
+StockTransactionSchema.index({ referenceId: 1, transactionType: 1 });
 
 export const StockTransactionModel = MongooseModule.forFeature([
   { name: StockTransaction.name, schema: StockTransactionSchema },

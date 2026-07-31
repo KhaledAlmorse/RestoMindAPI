@@ -1407,6 +1407,7 @@ export class OrdersService {
             restaurantId: restaurantIdObj,
             transactionType: StockTransactionTypeEnum.CONSUMPTION,
             referenceId: orderIdObj,
+            isDeleted: false,
           },
         },
       );
@@ -1418,33 +1419,25 @@ export class OrdersService {
         return;
       }
 
-      // Support Group Orders: collect all orders under the same group order if present
-      let ordersToProcess = [order];
-      if (order.groupOrderId) {
-        const siblingOrders = await this.orderRepository.findMany({
-          filters: { groupOrderId: order.groupOrderId },
-        });
-        if (siblingOrders && siblingOrders.length > 0) {
-          ordersToProcess = siblingOrders;
-        }
-      }
-
-      // Aggregate all products and quantities across orders
+      // Only THIS order's items. A group order is split one Order per
+      // restaurant (see checkout), each delivered on its own, so walking the
+      // siblings would charge other restaurants' recipes against this
+      // restaurant's batches — and charge them again for every sibling that
+      // reaches DELIVERED. The group is covered because each child order
+      // deducts its own items when it is delivered.
       const productQtyMap = new Map<
         string,
         { productId: Types.ObjectId; quantity: number }
       >();
 
-      for (const ord of ordersToProcess) {
-        for (const item of ord.items || []) {
-          const prodKey = item.productId.toString();
-          const existing = productQtyMap.get(prodKey) || {
-            productId: new Types.ObjectId(prodKey),
-            quantity: 0,
-          };
-          existing.quantity += item.quantity || 1;
-          productQtyMap.set(prodKey, existing);
-        }
+      for (const item of order.items || []) {
+        const prodKey = item.productId.toString();
+        const existing = productQtyMap.get(prodKey) || {
+          productId: new Types.ObjectId(prodKey),
+          quantity: 0,
+        };
+        existing.quantity += item.quantity || 1;
+        productQtyMap.set(prodKey, existing);
       }
 
       // Aggregate total ingredient requirements using product recipes
@@ -1536,6 +1529,14 @@ export class OrdersService {
             filters: { _id: batch._id },
             body: { quantityRemaining: newQty } as any,
           });
+        }
+
+        if (remainingNeeded > 0) {
+          // The ledger row says roundedQty was consumed; the batches could not
+          // cover it. Silence here means stock drifts above reality unnoticed.
+          this.logger.warn(
+            `Order ${orderIdObj.toString()}: only ${roundedQty - remainingNeeded} of ${roundedQty} ${ingredient?.unit || ''} of ingredient ${ingredientId.toString()} could be deducted — no unexpired batches left for the remainder`,
+          );
         }
       }
     } catch (err: any) {

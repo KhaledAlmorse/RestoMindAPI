@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from '../Common/Types';
+import { getBusinessDayRange } from '../Common/Utils/date.util';
 import { DailyProductionPlan } from '../DB/Models/daily-production-plan.model';
 import { DailyProductionPlanRepository } from '../DB/Repositories/daily-production-plan.repository';
 import { ProductRepository } from '../DB/Repositories/product.repository';
@@ -11,6 +12,7 @@ import { UserRepository } from '../DB/Repositories/user.repository';
 import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { ProductionPlanningService } from './production-planning.service';
+import { AiClientService } from '../Common/Services/ai-client.service';
 
 describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', () => {
   let service: ProductionPlanningService;
@@ -62,6 +64,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductionPlanningService,
+        AiClientService,
         { provide: DailyProductionPlanRepository, useValue: mockPlanRepo },
         { provide: ProductRepository, useValue: mockProductRepo },
         { provide: SalesTransactionRepository, useValue: mockSalesRepo },
@@ -180,6 +183,46 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     );
     expect(result.items[0].confidence).toBe(ConfidenceLevelEnum.LOW);
     expect(result.items[0].recommendedQty).toBe(20); // 280 / 14 = 20 avgDailySales fallback!
+  });
+
+  // ==========================================
+  // Owner cold-start estimate must survive the local naive fallback too.
+  // ==========================================
+  it('does not discard the owner estimate on the naive fallback path when AI is down and there is no yesterday plan', async () => {
+    const prodId = new Types.ObjectId();
+    const todayStr = service.getTodayDateString();
+
+    // No plan exists for today OR yesterday (both calls to findOne resolve
+    // null), so the fallback cannot borrow yesterday's recommendedQty.
+    mockPlanRepo.findOne.mockResolvedValue(null);
+    mockProductRepo.findMany.mockResolvedValue([
+      {
+        _id: prodId,
+        title: 'Brand New Item',
+        price: 18,
+        category: { name: 'Pastry' },
+        expectedDailySales: 25,
+      },
+    ]);
+    // No sales history at all for this cold-start product.
+    mockSalesRepo.findMany.mockResolvedValue([]);
+
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('AI down'));
+
+    mockPlanRepo.create.mockImplementation((data: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...data }),
+    );
+
+    const result = await service.generateProductionPlan(
+      mockRestaurantId,
+      todayStr,
+    );
+
+    expect(result.items[0].source).toBe(
+      ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+    );
+    // Must use the owner's estimate (25), not 0.
+    expect(result.items[0].recommendedQty).toBe(25);
   });
 
   // ==========================================
@@ -402,6 +445,123 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('reports which productIds were applied and which were not in the plan', async () => {
+      const inPlan = new Types.ObjectId();
+      const notInPlan = new Types.ObjectId();
+
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+      });
+      mockPlanRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        items: [{ productId: inPlan, recommendedQty: 10 }],
+      });
+      mockDailyProductionPlanModel.findOneAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({}),
+      });
+
+      const result = await service.recordActuals('507f1f77bcf86cd799439011', {
+        date: '2026-07-29',
+        items: [
+          { productId: inPlan.toString(), actualProducedQty: 8 },
+          { productId: notInPlan.toString(), actualProducedQty: 5 },
+        ],
+      });
+
+      expect(result.applied).toEqual([inPlan.toString()]);
+      expect(result.skipped).toEqual([notInPlan.toString()]);
+    });
+  });
+
+  it('builds the 14-day avgDailySales lookback from Cairo day boundaries', async () => {
+    // `new Date(`${dateStr}T00:00:00.000Z`)` was a UTC-midnight literal built
+    // from a Cairo date string, so the whole window sat 2-3h off the Cairo days
+    // it claimed to cover. July: Cairo is on DST (UTC+3) across the entire
+    // window, so the UTC-midnight version is a genuinely different instant.
+    const dateStr = '2026-07-29';
+
+    mockPlanRepo.findOne.mockResolvedValue(null);
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: new Types.ObjectId(), title: 'Croissant', price: 18 },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('AI down'));
+    mockPlanRepo.create.mockImplementation((data: any) =>
+      Promise.resolve({ _id: new Types.ObjectId(), ...data }),
+    );
+
+    await service.generateProductionPlan(mockRestaurantId, dateStr);
+
+    const expectedEnd = getBusinessDayRange(dateStr).start;
+    const expectedStart = getBusinessDayRange('2026-07-15').start; // 14 days back
+    const filters = mockSalesRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.date).toEqual({ $gte: expectedStart, $lt: expectedEnd });
+
+    // Exactly 14 Cairo days wide, and NOT the UTC-midnight pair.
+    expect(expectedEnd.getTime() - expectedStart.getTime()).toBe(
+      14 * 24 * 60 * 60 * 1000,
+    );
+    expect(filters.date.$lt).not.toEqual(new Date(`${dateStr}T00:00:00.000Z`));
+    expect(filters.date.$lt.toISOString()).toBe('2026-07-28T21:00:00.000Z');
+    expect(filters.date.$gte.toISOString()).toBe('2026-07-14T21:00:00.000Z');
+  });
+
+  it('reports a cached fallback plan as degraded, not as a healthy forecast', async () => {
+    // The cached branch: the plan is read straight from the DB, so no live AI
+    // failure occurred this request — but its rows were produced by the local
+    // fallback policy, and a caller must be able to tell.
+    const todayStr = service.getTodayDateString();
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(mockUserId),
+      restaurantId: mockRestaurantId,
+    });
+    mockPlanRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      date: todayStr,
+      items: [
+        {
+          productId: new Types.ObjectId(),
+          recommendedQty: 20,
+          source: ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
+        },
+      ],
+    });
+
+    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+
+    expect(result.success).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result.degradedReason).toMatch(/local fallback policy/i);
+  });
+
+  it('does not flag a cached AI-produced plan as degraded', async () => {
+    // Guards the test above from over-correcting into "every cached plan is
+    // degraded", which would make the flag meaningless.
+    const todayStr = service.getTodayDateString();
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(mockUserId),
+      restaurantId: mockRestaurantId,
+    });
+    mockPlanRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      date: todayStr,
+      items: [
+        {
+          productId: new Types.ObjectId(),
+          recommendedQty: 90,
+          source: ProductionPlanSourceEnum.AI_MODEL,
+        },
+      ],
+    });
+
+    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+
+    expect(result.degraded).toBe(false);
+    expect(result.degradedReason).toBeUndefined();
   });
 
   // ==========================================
@@ -426,6 +586,9 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     const yesterdayStr = service.getYesterdayDateString(todayStr);
     const prodId = new Types.ObjectId();
 
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: prodId, title: 'Baklava', category: { name: 'Dessert' } },
+    ]);
     mockSalesRepo.findMany.mockResolvedValue([
       {
         date: new Date(`${yesterdayStr}T12:00:00.000Z`),
@@ -446,7 +609,55 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
           salesQty: 50,
         },
       ],
-      products: [],
+      products: [
+        {
+          productId: prodId.toString(),
+          title: 'Baklava',
+          category: 'Dessert',
+        },
+      ],
     });
+  });
+
+  it('Case 7: nightly sync builds the query window from Cairo day boundaries, not UTC-labelled ones', async () => {
+    const todayStr = service.getTodayDateString();
+    const yesterdayStr = service.getYesterdayDateString(todayStr);
+
+    mockProductRepo.findMany.mockResolvedValue([]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+
+    await service.handleNightlyAiSync();
+
+    const { start, end } = getBusinessDayRange(yesterdayStr);
+    const filters = mockSalesRepo.findMany.mock.calls[0][0].filters;
+    expect(filters.date).toEqual({ $gte: start, $lt: end });
+  });
+
+  it('Case 8: nightly sync attributes a sale to the Cairo day it happened on, not the UTC date', async () => {
+    const prodId = new Types.ObjectId();
+    mockProductRepo.findMany.mockResolvedValue([]);
+    // 2026-01-15T22:30:00.000Z is 2026-01-16 00:30 in Cairo (winter, UTC+2) —
+    // a UTC .toISOString() split would mislabel this as the 15th.
+    mockSalesRepo.findMany.mockResolvedValue([
+      {
+        date: new Date('2026-01-15T22:30:00.000Z'),
+        productId: prodId,
+        quantitySold: 5,
+      },
+    ]);
+
+    await service.handleNightlyAiSync();
+
+    expect(mockAiIngestService.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        records: [
+          {
+            date: '2026-01-16',
+            productId: prodId.toString(),
+            salesQty: 5,
+          },
+        ],
+      }),
+    );
   });
 });
