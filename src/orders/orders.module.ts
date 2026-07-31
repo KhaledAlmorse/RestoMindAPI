@@ -8,6 +8,10 @@ import {
   ProductRepository,
   OfferRepository,
   SalesTransactionRepository,
+  RecipeRepository,
+  IngredientRepository,
+  InventoryBatchRepository,
+  StockTransactionRepository,
 } from 'src/DB/Repositories';
 import {
   OrderModel,
@@ -16,6 +20,10 @@ import {
   ProductModel,
   OfferModel,
   SalesTransactionModel,
+  RecipeModel,
+  IngredientModel,
+  InventoryBatchModel,
+  StockTransactionModel,
 } from 'src/DB/Models';
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
 import { OffersModule } from 'src/offers/offers.module';
@@ -28,6 +36,10 @@ import { OffersModule } from 'src/offers/offers.module';
     ProductModel,
     OfferModel,
     SalesTransactionModel,
+    RecipeModel,
+    IngredientModel,
+    InventoryBatchModel,
+    StockTransactionModel,
     RestaurantModule,
     OffersModule,
   ],
@@ -40,6 +52,10 @@ import { OffersModule } from 'src/offers/offers.module';
     ProductRepository,
     OfferRepository,
     SalesTransactionRepository,
+    RecipeRepository,
+    IngredientRepository,
+    InventoryBatchRepository,
+    StockTransactionRepository,
   ],
   exports: [OrdersService, OrderRepository, OrderGroupRepository],
 })

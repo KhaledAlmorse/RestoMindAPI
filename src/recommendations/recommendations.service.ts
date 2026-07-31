@@ -32,6 +32,7 @@ import {
 } from 'src/Common/Types';
 import {
   CategoryRepository,
+  DailyProductionPlanRepository,
   IngredientRepository,
   InventoryBatchRepository,
   OfferRepository,
@@ -67,6 +68,7 @@ export class RecommendationsService {
     private readonly ingredientRepository: IngredientRepository,
     private readonly recipeRepository: RecipeRepository,
     private readonly predictionRepository: PredictionRepository,
+    private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
   ) {}
 
   private validateObjectId(id: string) {
@@ -178,8 +180,19 @@ export class RecommendationsService {
       };
     }
 
-    // 2. Process each product: resolve recipe, calculate ingredient-level data
+    // 2. Fetch today's DailyProductionPlan for restaurant (if available).
+    // `DailyProductionPlan.date` and `Prediction.dailyBreakdown[].date` are
+    // CAIRO calendar dates — `new Date().toISOString().split('T')[0]` is the
+    // UTC date, a day behind between Cairo 00:00 and 02:00, so a scan in that
+    // window looked up yesterday's plan and yesterday's breakdown row.
+    const todayStr = getBusinessDateString();
+    const dailyProductionPlan =
+      await this.dailyProductionPlanRepository.findOne({
+        filters: { restaurantId, date: todayStr, isDeleted: false },
+      });
+
     const wasteReportData: Array<{
+      predictionId: Types.ObjectId | null;
       productId: Types.ObjectId;
       ingredientId: Types.ObjectId;
       title: string;
@@ -187,7 +200,6 @@ export class RecommendationsService {
       expectedConsumption: number;
       expectedSurplus: number;
       riskLevel: RiskLevelEnum;
-      predictionId: Types.ObjectId | null;
     }> = [];
 
     const stockItems: Array<{
@@ -206,6 +218,9 @@ export class RecommendationsService {
       avgDailySales: number | null;
     }> = [];
 
+    // Track which products have genuine surplus locally
+    const productsWithSurplus = new Set<string>();
+
     for (const product of products) {
       const recipe = await this.recipeRepository.findOne({
         filters: { productId: product._id, isDeleted: false },
@@ -213,12 +228,12 @@ export class RecommendationsService {
 
       if (!recipe?.ingredients?.length) continue;
 
-      let productTotalStock = 0;
-
-      // Get prediction once per product
+      // Get this week's prediction once per product.
       // Without a targetWeek filter this returned natural order — in practice
       // the OLDEST prediction — so today's discount was driven by a months-old
-      // forecast.
+      // forecast. `{restaurantId, productId, targetWeek}` is the unique index
+      // on Prediction, so this is a single indexed hit rather than loading
+      // every prediction ever made for the product and taking element [0].
       const prediction = await this.predictionRepository.findOne({
         filters: {
           restaurantId,
@@ -227,6 +242,68 @@ export class RecommendationsService {
           isDeleted: false,
         },
       });
+
+      // Find matching item in today's DailyProductionPlan (if present)
+      const planItem = dailyProductionPlan?.items?.find(
+        (item) => item.productId.toString() === product._id.toString(),
+      );
+
+      // Determine today's predicted orders from dailyBreakdown (YYYY-MM-DD) or fallback to daily average
+      let todayPredictedOrders = 0;
+      if (prediction && prediction.predictedOrders > 0) {
+        const todayBreakdownItem = prediction.dailyBreakdown?.find(
+          (d) => d.date && d.date.substring(0, 10) === todayStr,
+        );
+
+        if (todayBreakdownItem && todayBreakdownItem.predictedQuantity > 0) {
+          todayPredictedOrders = todayBreakdownItem.predictedQuantity;
+        } else if (prediction.dailyBreakdown?.length) {
+          const totalPredicted = prediction.dailyBreakdown.reduce(
+            (sum, d) => sum + d.predictedQuantity,
+            0,
+          );
+          todayPredictedOrders = Math.round(
+            totalPredicted / prediction.dailyBreakdown.length,
+          );
+        } else {
+          todayPredictedOrders = Math.round(prediction.predictedOrders / 7);
+        }
+      }
+
+      // Determine Ready-To-Sell Quantity by priority:
+      // Priority 1: actualProducedQty (from today's DailyProductionPlan)
+      // Priority 2: recommendedQty (from today's DailyProductionPlan)
+      // Priority 3: todayPredictedOrders (from Prediction fallback)
+      // Priority 4: Abort scan for product if no source is available
+      let readyToSellStock = 0;
+      if (
+        planItem &&
+        planItem.actualProducedQty !== undefined &&
+        planItem.actualProducedQty !== null &&
+        planItem.actualProducedQty > 0
+      ) {
+        readyToSellStock = planItem.actualProducedQty;
+      } else if (
+        planItem &&
+        planItem.recommendedQty !== undefined &&
+        planItem.recommendedQty !== null &&
+        planItem.recommendedQty > 0
+      ) {
+        readyToSellStock = planItem.recommendedQty;
+      } else if (todayPredictedOrders > 0) {
+        readyToSellStock = todayPredictedOrders;
+      } else {
+        this.logger.log(
+          `Skipping surplus scan for product ${product.title} (${product._id.toString()}) — no ready-to-sell stock source (production plan / prediction) available`,
+        );
+        continue;
+      }
+
+      // If todayPredictedOrders is 0 (e.g. prediction absent but production plan present),
+      // use readyToSellStock as today's target demand to ensure expectedConsumption is correctly computed
+      if (todayPredictedOrders <= 0 && readyToSellStock > 0) {
+        todayPredictedOrders = readyToSellStock;
+      }
 
       for (const recipeIngredient of recipe.ingredients) {
         const nonExpiredBatches = await this.inventoryBatchRepository.findMany({
@@ -243,36 +320,47 @@ export class RecommendationsService {
           0,
         );
 
-        const predictedOrders = prediction?.predictedOrders ?? 0;
-        const quantityPerPortion = recipeIngredient.quantityPerPortion;
-        const expectedConsumption = predictedOrders * quantityPerPortion;
-        const expectedSurplus = Math.max(
-          0,
-          usableAvailableStock - expectedConsumption,
-        );
+        // Account for recipe yieldPercentage
+        const yieldFactor = (recipeIngredient.yieldPercentage || 100) / 100;
+        const rawQuantityPerPortion =
+          yieldFactor > 0
+            ? recipeIngredient.quantityPerPortion / yieldFactor
+            : recipeIngredient.quantityPerPortion;
+
+        const expectedConsumption =
+          Math.round(todayPredictedOrders * rawQuantityPerPortion * 100) / 100;
+        const expectedSurplus =
+          Math.round(
+            Math.max(0, usableAvailableStock - expectedConsumption) * 100,
+          ) / 100;
 
         const surplusRatio =
           usableAvailableStock > 0 ? expectedSurplus / usableAvailableStock : 0;
 
         let riskLevel = RiskLevelEnum.LOW;
-        if (surplusRatio >= 0.7) {
-          riskLevel = RiskLevelEnum.HIGH;
-        } else if (surplusRatio >= 0.4) {
-          riskLevel = RiskLevelEnum.MEDIUM;
+        if (expectedSurplus > 0) {
+          if (surplusRatio >= 0.7) {
+            riskLevel = RiskLevelEnum.HIGH;
+          } else if (surplusRatio >= 0.4) {
+            riskLevel = RiskLevelEnum.MEDIUM;
+          }
         }
 
-        wasteReportData.push({
-          productId: product._id,
-          ingredientId: recipeIngredient.ingredientId,
-          title: product.title,
-          usableAvailableStock,
-          expectedConsumption,
-          expectedSurplus,
-          riskLevel,
-          predictionId: (prediction as any)?._id ?? null,
-        });
+        // Only include in waste reports if there is actual expected surplus / risk
+        if (expectedSurplus > 0 && riskLevel !== RiskLevelEnum.LOW) {
+          productsWithSurplus.add(product._id.toString());
 
-        productTotalStock += usableAvailableStock;
+          wasteReportData.push({
+            predictionId: (prediction as any)?._id ?? null,
+            productId: product._id,
+            ingredientId: recipeIngredient.ingredientId,
+            title: product.title,
+            usableAvailableStock,
+            expectedConsumption,
+            expectedSurplus,
+            riskLevel,
+          });
+        }
       }
 
       // Calculate avgDailySales from this week's forecast, else from history.
@@ -337,7 +425,7 @@ export class RecommendationsService {
         category: categoryName,
         price: product.price || 0,
         freshnessWindow: product.freshnessWindow || 2,
-        currentStock: productTotalStock,
+        currentStock: readyToSellStock,
         avgDailySales,
       });
     }
@@ -345,7 +433,8 @@ export class RecommendationsService {
     if (stockItems.length === 0) {
       return {
         data: {
-          message: 'No products with recipes found for surplus scan',
+          message:
+            'No products with a recipe and a ready-to-sell source found for surplus scan',
           scannedCount: 0,
           itemsAtRisk: [],
           recommendations: [],
@@ -354,15 +443,15 @@ export class RecommendationsService {
       };
     }
 
-    // 3. Upsert WasteReports with locally calculated values.
+    // 3. Upsert WasteReports for the ingredients that carry real surplus risk.
     // The dedup window is one CAIRO day. `setHours(0,0,0,0)` used the server's
     // local day, so on a UTC-timezone container a scan at Cairo 01:00 and one
     // at Cairo 10:00 on the same Cairo day landed in different windows and
     // wrote two reports per ingredient — double-counting getSummary's
     // `$sum` on totalEstimatedWasteCost. Computed once, outside the loop.
-    const { start: todayStart, end: todayEnd } = getBusinessDayRange(
-      getBusinessDateString(),
-    );
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(todayStr);
+    // First report per product wins the link — a product's recommendation
+    // points at one waste report.
     const wasteReportsByProduct = new Map<string, Types.ObjectId>();
 
     for (const data of wasteReportData) {
@@ -456,13 +545,26 @@ export class RecommendationsService {
 
     const aiData = aiResult.data;
 
-    // 5. Create/update Recommendations using AI suggestions
+    // 5. Create/update Recommendations using AI suggestions ONLY for products with backend-verified surplus
     const createdRecommendations: any[] = [];
+    const verifiedItemsAtRisk: any[] = [];
+
     for (const item of aiData.itemsAtRisk) {
       this.validateObjectId(item.productId);
+      const prodKey = item.productId.toString();
+
+      // BACKEND BUSINESS VALIDATION: Ensure recommendation is created ONLY if surplus exists locally
+      if (!productsWithSurplus.has(prodKey)) {
+        this.logger.log(
+          `Skipping AI recommendation for product ${prodKey} — no local surplus risk detected`,
+        );
+        continue;
+      }
+
+      verifiedItemsAtRisk.push(item);
       const prodObjectId = new Types.ObjectId(item.productId);
 
-      const wasteReportId = wasteReportsByProduct.get(item.productId);
+      const wasteReportId = wasteReportsByProduct.get(prodKey) ?? null;
 
       let rec = await this.recommendationRepository.findOne({
         filters: {
@@ -501,8 +603,8 @@ export class RecommendationsService {
       data: {
         message: 'Surplus scan completed',
         checkedAt: aiData.checkedAt || new Date().toISOString(),
-        itemsAtRiskCount: aiData.itemsAtRisk.length,
-        itemsAtRisk: aiData.itemsAtRisk,
+        itemsAtRiskCount: verifiedItemsAtRisk.length,
+        itemsAtRisk: verifiedItemsAtRisk,
         recommendations: createdRecommendations,
         wasteReportsWritten: wasteReportData.length,
       },

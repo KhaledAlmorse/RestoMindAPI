@@ -9,6 +9,10 @@ import {
   RestaurantRepository,
   OfferRepository,
   SalesTransactionRepository,
+  RecipeRepository,
+  IngredientRepository,
+  InventoryBatchRepository,
+  StockTransactionRepository,
 } from 'src/DB/Repositories';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
@@ -20,6 +24,10 @@ describe('OrdersService', () => {
   let service: OrdersService;
   let orderGroupRepo: jest.Mocked<any>;
   let orderRepo: jest.Mocked<any>;
+  let recipeRepo: jest.Mocked<any>;
+  let ingredientRepo: jest.Mocked<any>;
+  let inventoryBatchRepo: jest.Mocked<any>;
+  let stockTransactionRepo: jest.Mocked<any>;
 
   beforeEach(async () => {
     orderGroupRepo = {
@@ -35,6 +43,13 @@ describe('OrdersService', () => {
       update: jest.fn(),
       findManyPaginated: jest.fn(),
     };
+    recipeRepo = { findOne: jest.fn() };
+    ingredientRepo = { findOne: jest.fn().mockResolvedValue({ unit: 'kg' }) };
+    inventoryBatchRepo = { findMany: jest.fn(), update: jest.fn() };
+    stockTransactionRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -47,6 +62,10 @@ describe('OrdersService', () => {
         { provide: RestaurantRepository, useValue: {} },
         { provide: OfferRepository, useValue: {} },
         { provide: SalesTransactionRepository, useValue: {} },
+        { provide: RecipeRepository, useValue: recipeRepo },
+        { provide: IngredientRepository, useValue: ingredientRepo },
+        { provide: InventoryBatchRepository, useValue: inventoryBatchRepo },
+        { provide: StockTransactionRepository, useValue: stockTransactionRepo },
         {
           provide: OffersService,
           useValue: { restockFromCancelledOrderItem: jest.fn() },
@@ -289,6 +308,79 @@ describe('OrdersService', () => {
         'restaurant_For_Manager2',
       );
       expect(result.totalItems).toBe(1);
+    });
+  });
+
+  describe('deductInventoryForDeliveredOrder', () => {
+    const restaurantId = new Types.ObjectId();
+    const otherRestaurantId = new Types.ObjectId();
+    const productId = new Types.ObjectId();
+    const siblingProductId = new Types.ObjectId();
+    const ingredientId = new Types.ObjectId();
+
+    const deliveredOrder = {
+      _id: new Types.ObjectId(),
+      restaurantId,
+      groupOrderId: new Types.ObjectId(),
+      items: [{ productId, quantity: 3 }],
+    };
+
+    const deduct = () =>
+      (service as any).deductInventoryForDeliveredOrder(deliveredOrder);
+
+    beforeEach(() => {
+      recipeRepo.findOne.mockResolvedValue({
+        ingredients: [
+          { ingredientId, quantityPerPortion: 0.5, yieldPercentage: 100 },
+        ],
+      });
+      inventoryBatchRepo.findMany.mockResolvedValue([
+        { _id: new Types.ObjectId(), quantityRemaining: 10 },
+      ]);
+    });
+
+    it('deducts only this order, never its group siblings', async () => {
+      // A group order is split one Order per restaurant. Walking the siblings
+      // charged another restaurant's recipes against this restaurant's batches,
+      // and did it again for every sibling that reached DELIVERED.
+      orderRepo.findMany.mockResolvedValue([
+        deliveredOrder,
+        {
+          _id: new Types.ObjectId(),
+          restaurantId: otherRestaurantId,
+          items: [{ productId: siblingProductId, quantity: 5 }],
+        },
+      ]);
+
+      await deduct();
+
+      expect(recipeRepo.findOne).toHaveBeenCalledTimes(1);
+      expect(recipeRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({ productId }),
+        }),
+      );
+      // 3 portions * 0.5 per portion, this order alone.
+      expect(stockTransactionRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ quantity: 1.5, referenceId: deliveredOrder._id }),
+      );
+      expect(inventoryBatchRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({ body: { quantityRemaining: 8.5 } }),
+      );
+    });
+
+    it('is a no-op when this order was already consumed', async () => {
+      // The idempotency key only works because StockTransaction persists
+      // referenceId — an unmapped field would be dropped on write and this
+      // lookup would never match, letting a re-delivery deplete stock twice.
+      stockTransactionRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
+
+      await deduct();
+
+      expect(stockTransactionRepo.create).not.toHaveBeenCalled();
+      expect(inventoryBatchRepo.update).not.toHaveBeenCalled();
     });
   });
 });

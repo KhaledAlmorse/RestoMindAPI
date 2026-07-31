@@ -16,6 +16,10 @@ import {
   RestaurantRepository,
   OfferRepository,
   SalesTransactionRepository,
+  RecipeRepository,
+  IngredientRepository,
+  InventoryBatchRepository,
+  StockTransactionRepository,
 } from 'src/DB/Repositories';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QueryOrderListingDto } from './dto/query-order-listing.dto';
@@ -25,6 +29,7 @@ import {
   OrderStatusEnum,
   RolesEnum,
   SalesSourceEnum,
+  StockTransactionTypeEnum,
 } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
 import { OffersService } from 'src/offers/offers.service';
@@ -42,6 +47,10 @@ export class OrdersService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly offerRepository: OfferRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
+    private readonly recipeRepository: RecipeRepository,
+    private readonly ingredientRepository: IngredientRepository,
+    private readonly inventoryBatchRepository: InventoryBatchRepository,
+    private readonly stockTransactionRepository: StockTransactionRepository,
     private readonly offersService: OffersService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -1001,6 +1010,9 @@ export class OrdersService {
             orderId: order._id,
           });
         }
+
+        // Trigger automatic recipe-based inventory depletion
+        await this.deductInventoryForDeliveredOrder(order);
       } catch (err: any) {
         this.logger.warn(
           `Failed to sync sales transaction for delivered order ${id}: ${err.message}`,
@@ -1381,5 +1393,156 @@ export class OrdersService {
       hasNextPage: currentPage < Math.ceil(paginatedResult.total / pageSize),
       hasPreviousPage: currentPage > 1,
     };
+  }
+
+  private async deductInventoryForDeliveredOrder(order: any) {
+    try {
+      const orderIdObj = new Types.ObjectId(order._id.toString());
+      const restaurantIdObj = new Types.ObjectId(order.restaurantId.toString());
+
+      // Idempotency check: see if StockTransaction CONSUMPTION for this order already exists
+      const existingConsumption = await this.stockTransactionRepository.findOne(
+        {
+          filters: {
+            restaurantId: restaurantIdObj,
+            transactionType: StockTransactionTypeEnum.CONSUMPTION,
+            referenceId: orderIdObj,
+            isDeleted: false,
+          },
+        },
+      );
+
+      if (existingConsumption) {
+        this.logger.log(
+          `Inventory deduction already performed for order ${order._id.toString()}`,
+        );
+        return;
+      }
+
+      // Only THIS order's items. A group order is split one Order per
+      // restaurant (see checkout), each delivered on its own, so walking the
+      // siblings would charge other restaurants' recipes against this
+      // restaurant's batches — and charge them again for every sibling that
+      // reaches DELIVERED. The group is covered because each child order
+      // deducts its own items when it is delivered.
+      const productQtyMap = new Map<
+        string,
+        { productId: Types.ObjectId; quantity: number }
+      >();
+
+      for (const item of order.items || []) {
+        const prodKey = item.productId.toString();
+        const existing = productQtyMap.get(prodKey) || {
+          productId: new Types.ObjectId(prodKey),
+          quantity: 0,
+        };
+        existing.quantity += item.quantity || 1;
+        productQtyMap.set(prodKey, existing);
+      }
+
+      // Aggregate total ingredient requirements using product recipes
+      const ingredientDemandMap = new Map<
+        string,
+        { ingredientId: Types.ObjectId; totalRequiredQty: number }
+      >();
+
+      for (const { productId, quantity } of productQtyMap.values()) {
+        const recipe = await this.recipeRepository.findOne({
+          filters: { productId, isDeleted: false },
+        });
+
+        if (!recipe || !recipe.ingredients || recipe.ingredients.length === 0) {
+          continue;
+        }
+
+        for (const recipeIng of recipe.ingredients) {
+          const ingKey = recipeIng.ingredientId.toString();
+          const yieldFactor = (recipeIng.yieldPercentage || 100) / 100;
+          const rawQuantityPerPortion =
+            yieldFactor > 0
+              ? recipeIng.quantityPerPortion / yieldFactor
+              : recipeIng.quantityPerPortion;
+
+          const requiredForProduct = quantity * rawQuantityPerPortion;
+
+          const existingIng = ingredientDemandMap.get(ingKey) || {
+            ingredientId: new Types.ObjectId(ingKey),
+            totalRequiredQty: 0,
+          };
+          existingIng.totalRequiredQty += requiredForProduct;
+          ingredientDemandMap.set(ingKey, existingIng);
+        }
+      }
+
+      // Create StockTransactions and deduct from InventoryBatches using FEFO
+      for (const {
+        ingredientId,
+        totalRequiredQty,
+      } of ingredientDemandMap.values()) {
+        if (totalRequiredQty <= 0) continue;
+
+        const roundedQty = Math.round(totalRequiredQty * 100) / 100;
+
+        const ingredient = await this.ingredientRepository.findOne({
+          filters: {
+            _id: ingredientId,
+            restaurantId: restaurantIdObj,
+            isDeleted: false,
+          },
+        });
+
+        // 1. Create StockTransaction audit ledger entry
+        await this.stockTransactionRepository.create({
+          restaurantId: restaurantIdObj,
+          ingredientId,
+          transactionType: StockTransactionTypeEnum.CONSUMPTION,
+          quantity: roundedQty,
+          unit: ingredient?.unit || 'piece',
+          date: new Date(),
+          referenceType: 'ORDER',
+          referenceId: orderIdObj,
+        } as any);
+
+        // 2. Perform FEFO inventory batch stock deduction
+        const now = new Date();
+        const activeBatches = await this.inventoryBatchRepository.findMany({
+          filters: {
+            restaurantId: restaurantIdObj,
+            ingredientId,
+            isDeleted: false,
+            quantityRemaining: { $gt: 0 },
+            expiryDate: { $gte: now },
+          },
+          sort: 'expiryDate',
+          order: 'asc',
+        });
+
+        let remainingNeeded = roundedQty;
+        for (const batch of activeBatches || []) {
+          if (remainingNeeded <= 0) break;
+          const currentQty = batch.quantityRemaining || 0;
+          const deductAmount = Math.min(currentQty, remainingNeeded);
+          const newQty = Math.round((currentQty - deductAmount) * 100) / 100;
+          remainingNeeded -= deductAmount;
+
+          await this.inventoryBatchRepository.update({
+            filters: { _id: batch._id },
+            body: { quantityRemaining: newQty } as any,
+          });
+        }
+
+        if (remainingNeeded > 0) {
+          // The ledger row says roundedQty was consumed; the batches could not
+          // cover it. Silence here means stock drifts above reality unnoticed.
+          this.logger.warn(
+            `Order ${orderIdObj.toString()}: only ${roundedQty - remainingNeeded} of ${roundedQty} ${ingredient?.unit || ''} of ingredient ${ingredientId.toString()} could be deducted — no unexpired batches left for the remainder`,
+          );
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to deduct inventory for delivered order ${order._id}: ${err.message}`,
+      );
+    }
   }
 }

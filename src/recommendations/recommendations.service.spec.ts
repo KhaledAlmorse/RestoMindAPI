@@ -15,6 +15,7 @@ import {
 } from 'src/Common/Types';
 import {
   CategoryRepository,
+  DailyProductionPlanRepository,
   IngredientRepository,
   InventoryBatchRepository,
   OfferRepository,
@@ -46,6 +47,8 @@ describe('RecommendationsService', () => {
   let mockIngredientRepo: any;
   let mockRecipeRepo: any;
   let mockPredictionRepo: any;
+  let mockDailyProductionPlanRepo: any;
+  let planFor: (productId: Types.ObjectId, recommendedQty: number) => void;
 
   const mockUserId = new Types.ObjectId().toString();
   const mockRestaurantId = new Types.ObjectId();
@@ -155,6 +158,20 @@ describe('RecommendationsService', () => {
       findMany: jest.fn(),
     };
 
+    mockDailyProductionPlanRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+    };
+
+    // A product is only scanned when there is a ready-to-sell source for it:
+    // today's production plan, else this week's prediction. `planFor` is the
+    // shorthand the no-prediction cases use.
+    planFor = (productId: Types.ObjectId, recommendedQty: number) =>
+      mockDailyProductionPlanRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+        items: [{ productId, recommendedQty, actualProducedQty: null }],
+      });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RecommendationsService,
@@ -171,6 +188,10 @@ describe('RecommendationsService', () => {
         { provide: IngredientRepository, useValue: mockIngredientRepo },
         { provide: RecipeRepository, useValue: mockRecipeRepo },
         { provide: PredictionRepository, useValue: mockPredictionRepo },
+        {
+          provide: DailyProductionPlanRepository,
+          useValue: mockDailyProductionPlanRepo,
+        },
       ],
     }).compile();
 
@@ -328,7 +349,7 @@ describe('RecommendationsService', () => {
 
       expect(result.data).toHaveProperty(
         'message',
-        'No products with recipes found for surplus scan',
+        'No products with a recipe and a ready-to-sell source found for surplus scan',
       );
       expect(result.data).toHaveProperty('scannedCount', 0);
       expect(result.degraded).toBe(false);
@@ -338,6 +359,7 @@ describe('RecommendationsService', () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
 
       global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
@@ -352,6 +374,7 @@ describe('RecommendationsService', () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
       mockWasteReportRepo.create.mockResolvedValue({
@@ -442,16 +465,19 @@ describe('RecommendationsService', () => {
 
       // Expected local calculations:
       // usableAvailableStock = 50 + 70 = 120
-      // expectedConsumption = 100 * 0.2 = 20
-      // expectedSurplus = 120 - 20 = 100
-      // surplusRatio = 100 / 120 = 0.833 -> riskLevel = HIGH (>= 0.7)
+      // predictedOrders is a WEEKLY total, so today's demand is 100/7 = 14.
+      // Multiplying the weekly figure by quantityPerPortion overstated one
+      // day's consumption sevenfold.
+      // expectedConsumption = 14 * 0.2 = 2.8
+      // expectedSurplus = 120 - 2.8 = 117.2
+      // surplusRatio = 117.2 / 120 = 0.977 -> riskLevel = HIGH (>= 0.7)
 
       expect(mockWasteReportRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           restaurantId: mockRestaurantId,
           usableAvailableStock: 120,
-          expectedConsumption: 20,
-          expectedSurplus: 100,
+          expectedConsumption: 2.8,
+          expectedSurplus: 117.2,
           riskLevel: RiskLevelEnum.HIGH,
         }),
       );
@@ -472,6 +498,7 @@ describe('RecommendationsService', () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 50);
       mockInventoryBatchRepo.findMany.mockResolvedValue([
         { quantityRemaining: 100 },
       ]);
