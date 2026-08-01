@@ -63,7 +63,10 @@ export class AiClientService implements OnModuleInit {
     return this.request<T>('POST', path, body, opts);
   }
 
-  async get<T>(path: string, opts: AiCallOptions = {}): Promise<AiCallResult<T>> {
+  async get<T>(
+    path: string,
+    opts: AiCallOptions = {},
+  ): Promise<AiCallResult<T>> {
     return this.request<T>('GET', path, undefined, opts);
   }
 
