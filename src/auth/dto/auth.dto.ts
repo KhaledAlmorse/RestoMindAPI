@@ -217,3 +217,15 @@ export class UpdateAddressDto {
   @IsOptional()
   isDefault?: boolean;
 }
+
+export class SetupAccountDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  password!: string;
+}
+

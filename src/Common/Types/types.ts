@@ -141,3 +141,20 @@ export enum RecommendationStatusEnum {
   EDITED = 'edited',
   DISMISSED = 'dismissed',
 }
+
+export enum BusinessTypeEnum {
+  RESTAURANT = 'restaurant',
+  BAKERY = 'bakery',
+  CAFE = 'cafe',
+  CATERING = 'catering',
+  SUPERMARKET = 'supermarket',
+}
+
+export enum PartnershipApplicationStatusEnum {
+  PENDING = 'PENDING',
+  UNDER_REVIEW = 'UNDER_REVIEW',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  ONBOARDED = 'ONBOARDED',
+}
+

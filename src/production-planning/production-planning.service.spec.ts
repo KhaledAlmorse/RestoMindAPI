@@ -298,8 +298,10 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         },
       );
 
-      expect(result.data.items[0].actualProducedQty).toBe(50);
-      expect(result.data.items[0].productId.title).toBe('Chicken Sandwich');
+      expect((result.data as any).items[0].actualProducedQty).toBe(50);
+      expect((result.data as any).items[0].productId.title).toBe(
+        'Chicken Sandwich',
+      );
     });
 
     it('✅ Update multiple products actual quantities -> atomic arrayFilters handles all items in single update', async () => {
@@ -366,8 +368,8 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         },
       );
 
-      expect(result.data.items[0].actualProducedQty).toBe(50);
-      expect(result.data.items[1].actualProducedQty).toBe(60);
+      expect((result.data as any).items[0].actualProducedQty).toBe(50);
+      expect((result.data as any).items[1].actualProducedQty).toBe(60);
     });
 
     it('✅ Ensure other products remain unchanged when performing partial update', async () => {
@@ -424,8 +426,8 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         },
       );
 
-      expect(result.data.items[0].actualProducedQty).toBe(50);
-      expect(result.data.items[1].actualProducedQty).toBeNull();
+      expect((result.data as any).items[0].actualProducedQty).toBe(50);
+      expect((result.data as any).items[1].actualProducedQty).toBeNull();
     });
 
     it('✅ Invalid productId handling -> throws BadRequestException', async () => {

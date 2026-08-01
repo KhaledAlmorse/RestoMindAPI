@@ -25,6 +25,7 @@ import { ProductionPlanningModule } from './production-planning/production-plann
 import { WeeklyPredictionModule } from './weekly-prediction/weekly-prediction.module';
 import { WasteReportsModule } from './waste-reports/waste-reports.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
+import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
 
 @Module({
   imports: [
@@ -52,7 +53,9 @@ import { RecommendationsModule } from './recommendations/recommendations.module'
     WeeklyPredictionModule,
     WasteReportsModule,
     RecommendationsModule,
+    PartnershipApplicationsModule,
   ],
+
 
   controllers: [AppController],
   providers: [AppService],

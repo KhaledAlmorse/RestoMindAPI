@@ -32,6 +32,7 @@ export class Restaurant {
     type: {
       street: { type: String, required: false },
       city: { type: String, required: false },
+      district: { type: String, required: false },
       country: { type: String, required: false },
     },
     _id: false,
@@ -40,8 +41,10 @@ export class Restaurant {
   address?: {
     street?: string;
     city?: string;
+    district?: string;
     country?: string;
   };
+
 
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;

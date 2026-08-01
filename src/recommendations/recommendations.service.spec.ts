@@ -292,7 +292,10 @@ describe('RecommendationsService', () => {
         type: 'apply_discount',
         suggestedValue: 20,
       });
-      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockProductRepo.findOne.mockResolvedValue({
+        _id: mockProductId,
+        price: 100,
+      });
       mockOfferRepo.findMany.mockResolvedValue([]);
       mockOfferRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
       mockRecommendationRepo.update.mockResolvedValue({});
@@ -322,7 +325,10 @@ describe('RecommendationsService', () => {
         type: 'apply_discount',
         suggestedValue: 500, // legacy row written before the DTO cap
       });
-      mockProductRepo.findOne.mockResolvedValue({ _id: mockProductId, price: 100 });
+      mockProductRepo.findOne.mockResolvedValue({
+        _id: mockProductId,
+        price: 100,
+      });
       mockOfferRepo.findMany.mockResolvedValue([]);
       mockOfferRepo.create.mockImplementation((doc: any) =>
         Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
@@ -367,7 +373,7 @@ describe('RecommendationsService', () => {
       const result = await service.scanSurplus(mockUserId);
 
       expect(result.degraded).toBe(true);
-      expect(result.degradedReason).toContain('Network error');
+      expect((result as any).degradedReason).toContain('Network error');
     });
 
     it('should send closeHour as integer 22 to AI service during scanSurplus', async () => {
@@ -670,16 +676,23 @@ describe('RecommendationsService', () => {
         ],
       });
       mockPredictionRepo.findOne.mockResolvedValue({ predictedOrders: 100 });
-      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 500 }]);
+      mockInventoryBatchRepo.findMany.mockResolvedValue([
+        { quantityRemaining: 500 },
+      ]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
-      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
 
-      global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('ECONNREFUSED')) as any;
 
       const result = await service.scanSurplus('507f1f77bcf86cd799439011');
 
       expect(result.degraded).toBe(true);
-      expect(result.degradedReason).toContain('ECONNREFUSED');
+      expect((result as any).degradedReason).toContain('ECONNREFUSED');
+
       // The waste reports it already wrote must still be reported, not discarded.
       expect(mockWasteReportRepo.create).toHaveBeenCalled();
     });
@@ -699,20 +712,26 @@ describe('RecommendationsService', () => {
         },
       ]);
       mockRecipeRepo.findOne.mockResolvedValue({
-        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 1 },
+        ],
       });
       mockPredictionRepo.findOne.mockResolvedValue({
         predictedOrders: 70,
         dailyBreakdown: [],
       });
-      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockInventoryBatchRepo.findMany.mockResolvedValue([
+        { quantityRemaining: 200 },
+      ]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
-      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+        json: () => Promise.resolve({ checkedAt: 'now', itemsAtRisk: [] }),
       }) as any;
 
       await service.scanSurplus('507f1f77bcf86cd799439011');
@@ -721,7 +740,9 @@ describe('RecommendationsService', () => {
       expect(predFilters).toHaveProperty('targetWeek');
       expect(predFilters.targetWeek).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-      const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+      const body = JSON.parse(
+        (global.fetch as jest.Mock).mock.calls[0][1].body,
+      );
       expect(body.stock[0].category).toBe('معجنات');
     });
 
@@ -732,24 +753,35 @@ describe('RecommendationsService', () => {
         restaurantId: mockRestaurantId,
       });
       mockProductRepo.findMany.mockResolvedValue([
-        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+        {
+          _id: mockProductId,
+          title: 'Croissant',
+          price: 18,
+          freshnessWindow: 2,
+        },
       ]);
       mockRecipeRepo.findOne.mockResolvedValue({
-        ingredients: [{ ingredientId: new Types.ObjectId(), quantityPerPortion: 1 }],
+        ingredients: [
+          { ingredientId: new Types.ObjectId(), quantityPerPortion: 1 },
+        ],
       });
       mockPredictionRepo.findOne.mockResolvedValue({
         _id: predictionId,
         predictedOrders: 70,
         dailyBreakdown: [],
       });
-      mockInventoryBatchRepo.findMany.mockResolvedValue([{ quantityRemaining: 200 }]);
+      mockInventoryBatchRepo.findMany.mockResolvedValue([
+        { quantityRemaining: 200 },
+      ]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
-      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+        json: () => Promise.resolve({ checkedAt: 'now', itemsAtRisk: [] }),
       }) as any;
 
       await service.scanSurplus('507f1f77bcf86cd799439011');
@@ -771,7 +803,12 @@ describe('RecommendationsService', () => {
         restaurantId: mockRestaurantId,
       });
       mockProductRepo.findMany.mockResolvedValue([
-        { _id: mockProductId, title: 'Croissant', price: 18, freshnessWindow: 2 },
+        {
+          _id: mockProductId,
+          title: 'Croissant',
+          price: 18,
+          freshnessWindow: 2,
+        },
       ]);
       mockRecipeRepo.findOne.mockResolvedValue({
         ingredients: [
@@ -787,12 +824,14 @@ describe('RecommendationsService', () => {
         { quantityRemaining: 200 },
       ]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
-      mockWasteReportRepo.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+      });
 
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ checkedAt: 'now', itemsAtRisk: [] }),
+        json: () => Promise.resolve({ checkedAt: 'now', itemsAtRisk: [] }),
       }) as any;
 
       // Frozen so the expected bounds can be written as absolute instants

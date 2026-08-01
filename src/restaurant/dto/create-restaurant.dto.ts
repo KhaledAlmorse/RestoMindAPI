@@ -19,8 +19,13 @@ export class RestaurantAddressDto {
 
   @IsString()
   @IsOptional()
+  district?: string;
+
+  @IsString()
+  @IsOptional()
   country?: string;
 }
+
 
 export class CreateRestaurantDto {
   @IsString()
