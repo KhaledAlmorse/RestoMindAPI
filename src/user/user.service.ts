@@ -63,22 +63,17 @@ export class UserService {
 
     // Role-based validations
     if (currentUser.role === RolesEnum.MANAGER) {
-      if (body.role === RolesEnum.ADMIN || body.role === RolesEnum.MANAGER) {
+      if (body.role !== RolesEnum.STAFF) {
         throw new ForbiddenException(
-          'Managers cannot create admin or manager users',
+          'Managers can only create Staff accounts.',
         );
       }
-      if (
-        body.restaurantId &&
-        body.restaurantId !== currentUser.restaurantId?.toString()
-      ) {
+      if (!currentUser.restaurantId) {
         throw new ForbiddenException(
-          'Managers can only assign users to their own restaurant',
+          'No restaurant is assigned to your account',
         );
       }
-      if (body.role === RolesEnum.STAFF) {
-        body.restaurantId = currentUser.restaurantId?.toString();
-      }
+      body.restaurantId = currentUser.restaurantId.toString();
     }
 
     if (body.restaurantId) {
