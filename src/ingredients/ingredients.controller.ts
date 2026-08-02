@@ -37,7 +37,7 @@ export class IngredientsController {
   }
 
   @Get()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getIngredients(
     @Query() query: QueryIngredientDto,
     @AuthUser() authUser: IAuthUser,
@@ -51,7 +51,7 @@ export class IngredientsController {
   }
 
   @Get(':id')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getIngredientById(
     @Param('id') id: string,
     @AuthUser() authUser: IAuthUser,

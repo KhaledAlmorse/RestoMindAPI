@@ -11,7 +11,8 @@ export class DailyBreakdownItem {
   predictedQuantity!: number;
 }
 
-const DailyBreakdownItemSchema = SchemaFactory.createForClass(DailyBreakdownItem);
+const DailyBreakdownItemSchema =
+  SchemaFactory.createForClass(DailyBreakdownItem);
 
 @Schema({ timestamps: true, suppressReservedKeysWarning: true })
 export class Prediction {
@@ -65,7 +66,10 @@ export class Prediction {
 
 const PredictionSchema = SchemaFactory.createForClass(Prediction);
 
-PredictionSchema.index({ restaurantId: 1, productId: 1, targetWeek: 1 }, { unique: true });
+PredictionSchema.index(
+  { restaurantId: 1, productId: 1, targetWeek: 1 },
+  { unique: true },
+);
 PredictionSchema.index({ restaurantId: 1, targetWeek: 1 });
 PredictionSchema.index({ restaurantId: 1, productId: 1 });
 

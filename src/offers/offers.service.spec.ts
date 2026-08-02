@@ -105,7 +105,7 @@ describe('OffersService', () => {
         endDate: '2999-01-09',
       };
 
-      const result = await service.createOffer(dto as any, userId);
+      const result = await service.createOffer(dto, userId);
       expect(result.data).toBeDefined();
       expect(offerRepo.create).toHaveBeenCalled();
     });
@@ -119,10 +119,7 @@ describe('OffersService', () => {
         ...doc,
       }));
 
-      const result = await service.createOffer(
-        baseCreateDto() as any,
-        userId,
-      );
+      const result = await service.createOffer(baseCreateDto(), userId);
       expect((result.data as any).offerPrice).toBe(80);
       expect((result.data as any).discountPercentage).toBe(20);
     });
@@ -141,7 +138,7 @@ describe('OffersService', () => {
         offerPrice: 75,
       };
 
-      const result = await service.createOffer(dto as any, userId);
+      const result = await service.createOffer(dto, userId);
       expect((result.data as any).offerPrice).toBe(75);
       expect((result.data as any).discountPercentage).toBe(25);
       expect((result.data as any).discountType).toBe(
@@ -153,18 +150,18 @@ describe('OffersService', () => {
       offerRepo.findOne.mockResolvedValueOnce(null);
       const dto = { ...baseCreateDto(), offerPrice: 75 };
 
-      await expect(
-        service.createOffer(dto as any, userId),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.createOffer(dto as any, userId)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('rejects providing neither discountPercentage nor offerPrice', async () => {
       offerRepo.findOne.mockResolvedValueOnce(null);
       const dto = { ...baseCreateDto(), discountPercentage: undefined };
 
-      await expect(
-        service.createOffer(dto as any, userId),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.createOffer(dto as any, userId)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -179,9 +176,9 @@ describe('OffersService', () => {
         status: OfferStatusEnum.DRAFT,
       };
 
-      await expect(
-        service.createOffer(dto as any, userId),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.createOffer(dto as any, userId)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('rejects an explicit SCHEDULED status with a startDate already in the past', async () => {
@@ -194,9 +191,9 @@ describe('OffersService', () => {
         status: OfferStatusEnum.SCHEDULED,
       };
 
-      await expect(
-        service.createOffer(dto as any, userId),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.createOffer(dto as any, userId)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('still allows a past startDate when it derives an immediately-ACTIVE offer', async () => {
@@ -213,7 +210,7 @@ describe('OffersService', () => {
         endDate: '2999-01-05',
       };
 
-      const result = await service.createOffer(dto as any, userId);
+      const result = await service.createOffer(dto, userId);
       expect((result.data as any).status).toBe(OfferStatusEnum.ACTIVE);
     });
   });
@@ -303,7 +300,7 @@ describe('OffersService', () => {
 
       const result = await service.updateOffer(
         new Types.ObjectId().toString(),
-        { status: OfferStatusEnum.CANCELLED } as any,
+        { status: OfferStatusEnum.CANCELLED },
         userId,
       );
       expect((result.data as any).status).toBe(OfferStatusEnum.CANCELLED);
@@ -372,7 +369,7 @@ describe('OffersService', () => {
 
       const result = await service.updateOffer(
         soldOutOffer._id.toString(),
-        { availableQuantity: 15 } as any,
+        { availableQuantity: 15 },
         userId,
       );
 
@@ -401,10 +398,7 @@ describe('OffersService', () => {
         .mockResolvedValueOnce({ ...offer, status: OfferStatusEnum.CANCELLED });
       offerRepo.update.mockResolvedValue(undefined);
 
-      const result = await service.cancelOffer(
-        offer._id.toString(),
-        userId,
-      );
+      const result = await service.cancelOffer(offer._id.toString(), userId);
       expect((result.data as any).status).toBe(OfferStatusEnum.CANCELLED);
     });
 

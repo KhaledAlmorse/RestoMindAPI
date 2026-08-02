@@ -96,7 +96,7 @@ async function migrate() {
       : 'Running in DRY RUN mode — nothing will be written. Pass --apply to commit.',
   );
 
-  await mongoose.connect(DB_URL as string);
+  await mongoose.connect(DB_URL);
   const db = mongoose.connection.db;
   if (!db) {
     console.error('Database connection failed.');

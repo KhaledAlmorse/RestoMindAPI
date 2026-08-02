@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -13,16 +14,23 @@ import {
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUserDto } from './dto/query-user.dto';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { RolesEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
+import { TokenService } from 'src/Common/Services';
+import { sendEmail } from 'src/Common/Utils/send-email.utils';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly offerRepository: OfferRepository,
+    private readonly tokenService: TokenService,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -87,7 +95,51 @@ export class UserService {
     if (body.restaurantId) {
       createData.restaurantId = new Types.ObjectId(body.restaurantId);
     }
+
+    if (body.role === RolesEnum.STAFF) {
+      createData.isActive = false;
+      if (!createData.password) {
+        createData.password = randomBytes(16).toString('hex');
+      }
+    }
+
     const newUser = await this.userRepository.create(createData);
+
+    if (body.role === RolesEnum.STAFF) {
+      const setupToken = this.tokenService.generate(
+        {
+          id: newUser._id.toString(),
+          email: newUser.email.toLowerCase(),
+          tokenType: 'setup',
+        },
+        {
+          secret: process.env.ACCESS_TOKEN_SECRET,
+          expiresIn: '72h',
+        },
+      );
+
+      const setupUrl = `${
+        process.env.FRONTEND_URL || 'https://restomind.com'
+      }/setup-account?token=${setupToken}`;
+
+      sendEmail({
+        to: newUser.email,
+        subject: 'RestoMind Staff Invitation — Complete Your Account Setup',
+        html: `
+          <h3>Welcome to RestoMind!</h3>
+          <p>Dear ${newUser.firstName},</p>
+          <p>You have been invited to join RestoMind as a staff member.</p>
+          <p>Please click the link below to set your account password and activate your account:</p>
+          <p><a href="${setupUrl}">${setupUrl}</a></p>
+          <p>This setup link is valid for 72 hours.</p>
+          <p>Best regards,<br/>RestoMind Team</p>
+        `,
+      }).catch((err) => {
+        this.logger.error(
+          `Failed to send staff setup email to ${newUser.email}: ${err?.message}`,
+        );
+      });
+    }
 
     return { data: newUser };
   }
@@ -396,5 +448,177 @@ export class UserService {
     });
 
     return { message: 'User deleted successfully' };
+  }
+
+  // ─── PATCH /users/:id/status ───────────────────────────────────────────────
+
+  async updateStatus(
+    id: string,
+    body: UpdateUserStatusDto,
+    currentUser: UserType,
+  ) {
+    this.validateObjectId(id);
+
+    const user = await this.userRepository.findOne({
+      filters: { _id: id, isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (currentUser.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
+      if (
+        user.role !== RolesEnum.STAFF ||
+        !user.restaurantId ||
+        user.restaurantId.toString() !== currentUser.restaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'Managers can only update status of staff belonging to their own restaurant',
+        );
+      }
+    }
+
+    const updated = await this.userRepository.update({
+      filters: { _id: id },
+      body: {
+        isActive: body.isActive,
+        employmentStatus: body.isActive ? 'active' : 'inactive',
+      } as any,
+    });
+
+    return { data: updated };
+  }
+
+  // ─── POST /users/:id/resend-setup-email ───────────────────────────────────
+
+  async resendSetupEmail(id: string, currentUser: UserType) {
+    this.validateObjectId(id);
+
+    const user = await this.userRepository.findOne({
+      filters: { _id: id, isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (currentUser.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
+      if (
+        user.role !== RolesEnum.STAFF ||
+        !user.restaurantId ||
+        user.restaurantId.toString() !== currentUser.restaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'Managers can only manage staff belonging to their own restaurant',
+        );
+      }
+    }
+
+    if (user.isActive) {
+      throw new BadRequestException(
+        'User account is already active and setup completed.',
+      );
+    }
+
+    const setupToken = this.tokenService.generate(
+      {
+        id: user._id.toString(),
+        email: user.email.toLowerCase(),
+        tokenType: 'setup',
+      },
+      {
+        secret: process.env.ACCESS_TOKEN_SECRET,
+        expiresIn: '72h',
+      },
+    );
+
+    const setupUrl = `${
+      process.env.FRONTEND_URL || 'https://restomind.com'
+    }/setup-account?token=${setupToken}`;
+
+    await sendEmail({
+      to: user.email,
+      subject: 'RestoMind Staff Invitation — Resent Setup Link',
+      html: `
+        <h3>Welcome to RestoMind!</h3>
+        <p>Dear ${user.firstName},</p>
+        <p>Here is your new setup link to activate your RestoMind staff account:</p>
+        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p>This setup link is valid for 72 hours.</p>
+        <p>Best regards,<br/>RestoMind Team</p>
+      `,
+    });
+
+    return { message: 'Setup email resent successfully.' };
+  }
+
+  // ─── POST /users/:id/reset-password ───────────────────────────────────────
+
+  async resetPassword(id: string, currentUser: UserType) {
+    this.validateObjectId(id);
+
+    const user = await this.userRepository.findOne({
+      filters: { _id: id, isDeleted: false },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (currentUser.role === RolesEnum.MANAGER) {
+      if (!currentUser.restaurantId) {
+        throw new ForbiddenException(
+          'No restaurant is assigned to your account',
+        );
+      }
+      if (
+        user.role !== RolesEnum.STAFF ||
+        !user.restaurantId ||
+        user.restaurantId.toString() !== currentUser.restaurantId.toString()
+      ) {
+        throw new ForbiddenException(
+          'Managers can only reset passwords for staff belonging to their own restaurant',
+        );
+      }
+    }
+
+    const setupToken = this.tokenService.generate(
+      {
+        id: user._id.toString(),
+        email: user.email.toLowerCase(),
+        tokenType: 'setup',
+      },
+      {
+        secret: process.env.ACCESS_TOKEN_SECRET,
+        expiresIn: '72h',
+      },
+    );
+
+    const setupUrl = `${
+      process.env.FRONTEND_URL || 'https://restomind.com'
+    }/setup-account?token=${setupToken}`;
+
+    await sendEmail({
+      to: user.email,
+      subject: 'RestoMind Staff Account — Password Reset Requested',
+      html: `
+        <h3>Hello ${user.firstName},</h3>
+        <p>Your manager has requested a password reset for your RestoMind staff account.</p>
+        <p>Please click the link below to set your new password:</p>
+        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p>This link is valid for 72 hours.</p>
+        <p>Best regards,<br/>RestoMind Team</p>
+      `,
+    });
+
+    return { message: 'Password reset link sent to staff email successfully.' };
   }
 }

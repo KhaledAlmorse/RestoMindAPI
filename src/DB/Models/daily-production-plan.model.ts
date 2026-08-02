@@ -1,6 +1,9 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { ConfidenceLevelEnum, ProductionPlanSourceEnum } from 'src/Common/Types';
+import {
+  ConfidenceLevelEnum,
+  ProductionPlanSourceEnum,
+} from 'src/Common/Types';
 
 @Schema({ _id: false })
 export class ProductionPlanItem {
@@ -37,7 +40,8 @@ export class ProductionPlanItem {
   actualProducedQty?: number | null;
 }
 
-const ProductionPlanItemSchema = SchemaFactory.createForClass(ProductionPlanItem);
+const ProductionPlanItemSchema =
+  SchemaFactory.createForClass(ProductionPlanItem);
 
 @Schema({ timestamps: true, suppressReservedKeysWarning: true })
 export class DailyProductionPlan {
@@ -57,7 +61,8 @@ export class DailyProductionPlan {
   isDeleted!: boolean;
 }
 
-const DailyProductionPlanSchema = SchemaFactory.createForClass(DailyProductionPlan);
+const DailyProductionPlanSchema =
+  SchemaFactory.createForClass(DailyProductionPlan);
 
 DailyProductionPlanSchema.index({ restaurantId: 1, date: 1 }, { unique: true });
 DailyProductionPlanSchema.index({ restaurantId: 1, createdAt: -1 });
@@ -66,4 +71,5 @@ export const DailyProductionPlanModel = MongooseModule.forFeature([
   { name: DailyProductionPlan.name, schema: DailyProductionPlanSchema },
 ]);
 
-export type DailyProductionPlanType = HydratedDocument<DailyProductionPlan> & Document;
+export type DailyProductionPlanType = HydratedDocument<DailyProductionPlan> &
+  Document;

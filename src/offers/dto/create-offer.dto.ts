@@ -57,6 +57,8 @@ export class CreateOfferDto {
   featured?: boolean;
 
   @IsOptional()
-  @IsEnum(OfferStatusEnum, { message: 'status must be a valid OfferStatusEnum' })
+  @IsEnum(OfferStatusEnum, {
+    message: 'status must be a valid OfferStatusEnum',
+  })
   status?: OfferStatusEnum;
 }

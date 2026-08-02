@@ -47,7 +47,10 @@ describe('OfferRulesService', () => {
 
   describe('assertActiveConflict', () => {
     it('returns the conflicting active offer when one exists', async () => {
-      const conflict = { _id: new Types.ObjectId(), status: OfferStatusEnum.ACTIVE };
+      const conflict = {
+        _id: new Types.ObjectId(),
+        status: OfferStatusEnum.ACTIVE,
+      };
       offerRepo.findOne.mockResolvedValueOnce(conflict);
 
       const result = await service.assertActiveConflict(productId);

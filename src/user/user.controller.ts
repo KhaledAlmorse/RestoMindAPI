@@ -18,6 +18,8 @@ import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type Response } from 'express';
 import { type IAuthUser } from 'src/Common/Types';
 
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
@@ -72,6 +74,46 @@ export class UserController {
     @Res() res: Response,
   ) {
     const result = await this.userService.updateUser(id, body, user.user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  // ─── PATCH /users/:id/status ─────────────────────────────────────────────────
+
+  @Patch(':id/status')
+  @Auth('admin', 'manager')
+  async updateStatus(
+    @AuthUser() user: IAuthUser,
+    @Param('id') id: string,
+    @Body() body: UpdateUserStatusDto,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.updateStatus(id, body, user.user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  // ─── POST /users/:id/resend-setup-email ─────────────────────────────────────
+
+  @Post(':id/resend-setup-email')
+  @Auth('admin', 'manager')
+  async resendSetupEmail(
+    @AuthUser() user: IAuthUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.resendSetupEmail(id, user.user);
+    res.status(HttpStatus.OK).json(result);
+  }
+
+  // ─── POST /users/:id/reset-password ─────────────────────────────────────────
+
+  @Post(':id/reset-password')
+  @Auth('admin', 'manager')
+  async resetPassword(
+    @AuthUser() user: IAuthUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const result = await this.userService.resetPassword(id, user.user);
     res.status(HttpStatus.OK).json(result);
   }
 

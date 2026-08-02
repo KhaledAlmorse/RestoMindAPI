@@ -128,7 +128,7 @@ export class ProductionPlanningService {
     // Check if plan exists (populated)
     let plan = await this.dailyProductionPlanRepository.findOne({
       filters: { restaurantId, date: dateStr, isDeleted: false },
-      populationArray: PRODUCT_POPULATION_OPTIONS as any,
+      populationArray: PRODUCT_POPULATION_OPTIONS,
     });
 
     if (!plan) {
@@ -147,7 +147,7 @@ export class ProductionPlanningService {
       // Re-fetch populated plan
       plan = await this.dailyProductionPlanRepository.findOne({
         filters: { restaurantId, date: dateStr, isDeleted: false },
-        populationArray: PRODUCT_POPULATION_OPTIONS as any,
+        populationArray: PRODUCT_POPULATION_OPTIONS,
       });
     }
 
@@ -240,7 +240,7 @@ export class ProductionPlanningService {
     // Return populated plan freshly fetched from DB
     const populatedPlan = await this.dailyProductionPlanRepository.findOne({
       filters: { _id: plan._id },
-      populationArray: PRODUCT_POPULATION_OPTIONS as any,
+      populationArray: PRODUCT_POPULATION_OPTIONS,
     });
 
     return { success: true, data: populatedPlan, applied, skipped };
@@ -279,7 +279,7 @@ export class ProductionPlanningService {
         totalRecommendedQty: 0,
         items: [],
       });
-      return emptyPlan as DailyProductionPlanType;
+      return emptyPlan;
     }
 
     // 3. Compute 14-day avgDailySales per product.
@@ -324,7 +324,11 @@ export class ProductionPlanningService {
       // estimate > null (cold start, no signal at all). Sending 0 for a
       // brand-new product with no history would forecast zero and make
       // supplier-auto-draft skip it entirely.
-      const avgDailySales = resolveAvgDailySales(totalSold, salesRowCount, prod);
+      const avgDailySales = resolveAvgDailySales(
+        totalSold,
+        salesRowCount,
+        prod,
+      );
       const categoryName =
         prod.category && typeof prod.category === 'object' && prod.category.name
           ? prod.category.name
@@ -350,9 +354,10 @@ export class ProductionPlanningService {
       },
     );
 
-    const aiResponse = aiResult.ok && aiResult.data?.items ? aiResult.data : null;
+    const aiResponse =
+      aiResult.ok && aiResult.data?.items ? aiResult.data : null;
 
-    let planItems: any[] = [];
+    const planItems: any[] = [];
     let totalRecommendedQty = 0;
 
     if (aiResponse && aiResponse.items) {
@@ -448,7 +453,7 @@ export class ProductionPlanningService {
         totalRecommendedQty,
         items: planItems,
       });
-      return created as DailyProductionPlanType;
+      return created;
     } catch (err: any) {
       if (err?.code === 11000) {
         // Compound index duplicate key error

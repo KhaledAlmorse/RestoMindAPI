@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PartnershipApplicationsService } from './partnership-applications.service';
 import {
   PartnershipApplicationRepository,
@@ -213,11 +217,9 @@ describe('PartnershipApplicationsService', () => {
       } as any);
 
       await expect(
-        service.rejectApplication(
-          mockApplication._id.toString(),
-          mockAdminId,
-          { reason: 'Invalid' },
-        ),
+        service.rejectApplication(mockApplication._id.toString(), mockAdminId, {
+          reason: 'Invalid',
+        }),
       ).rejects.toThrow(ConflictException);
     });
   });

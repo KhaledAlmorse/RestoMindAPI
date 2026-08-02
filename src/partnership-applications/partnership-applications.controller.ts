@@ -19,7 +19,6 @@ import { RejectPartnershipApplicationDto } from './dto/reject-partnership-applic
 import { CheckApplicationStatusDto } from './dto/check-application-status.dto';
 import { SetupAccountDto } from 'src/auth/dto/auth.dto';
 
-
 @Controller()
 export class PartnershipApplicationsController {
   constructor(
@@ -46,7 +45,6 @@ export class PartnershipApplicationsController {
     return this.partnershipApplicationsService.setupAccount(dto);
   }
 
-
   // ─── Admin Routes ──────────────────────────────────────────────────────────
 
   @Get('admin/partnership-applications')
@@ -65,10 +63,7 @@ export class PartnershipApplicationsController {
   @Auth('admin')
   async markUnderReview(@Param('id') id: string, @Req() req: any) {
     const adminUserId = req.user.user._id.toString();
-    return this.partnershipApplicationsService.markUnderReview(
-      id,
-      adminUserId,
-    );
+    return this.partnershipApplicationsService.markUnderReview(id, adminUserId);
   }
 
   @Post('admin/partnership-applications/:id/reject')
@@ -102,4 +97,3 @@ export class PartnershipApplicationsController {
     return this.partnershipApplicationsService.resendApprovalEmail(id);
   }
 }
-

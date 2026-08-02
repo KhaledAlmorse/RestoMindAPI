@@ -126,6 +126,12 @@ export class AuthService {
       throw new ConflictException('Invalid Email or password');
     }
 
+    if (user.isActive === false) {
+      throw new UnauthorizedException(
+        'Account is deactivated. Please contact your manager.',
+      );
+    }
+
     if (!user.isEmailVerified) {
       throw new BadRequestException('Please confirm your email first');
     }

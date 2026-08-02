@@ -38,7 +38,11 @@ describe('AiClientService', () => {
 
     const result = await service.post('/x', {});
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ ok: false, kind: 'client_error', status: 404 });
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'client_error',
+      status: 404,
+    });
     expect((result as any).body).toEqual({
       error: 'not_found',
       hint: 'Known SKUs: A, B',
@@ -46,17 +50,25 @@ describe('AiClientService', () => {
   });
 
   it('retries a 5xx up to the retry limit then reports unavailable', async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ ok: false, status: 503, json: async () => ({}) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    }) as any;
 
     const result = await service.post('/x', {}, { retries: 3 });
     expect(global.fetch).toHaveBeenCalledTimes(3);
-    expect(result).toMatchObject({ ok: false, kind: 'unavailable', status: 503 });
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'unavailable',
+      status: 503,
+    });
   });
 
   it('retries a network failure then reports unavailable', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+    global.fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('ECONNREFUSED')) as any;
 
     const result = await service.post('/x', {}, { retries: 3 });
     expect(global.fetch).toHaveBeenCalledTimes(3);
@@ -68,7 +80,11 @@ describe('AiClientService', () => {
     global.fetch = jest
       .fn()
       .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ v: 1 }) }) as any;
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ v: 1 }),
+      }) as any;
 
     const result = await service.post<{ v: number }>('/x', {});
     expect(result).toEqual({ ok: true, data: { v: 1 } });
@@ -77,9 +93,11 @@ describe('AiClientService', () => {
 
   it('builds the URL from AI_SERVICE_URL without a double slash', async () => {
     process.env.AI_SERVICE_URL = 'http://ai.internal:8200/';
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    }) as any;
 
     await service.post('/integration/restomind/predict', {});
     expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe(
@@ -90,9 +108,11 @@ describe('AiClientService', () => {
 
   it('attaches the shared secret header when configured', async () => {
     process.env.AI_SHARED_SECRET = 's3cret';
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({}) }) as any;
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    }) as any;
 
     await service.post('/integration/restomind/predict', {});
 

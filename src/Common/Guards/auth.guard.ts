@@ -58,6 +58,10 @@ export class AuthGuard implements CanActivate {
         throw new NotFoundException('User not found, please Login ');
       }
 
+      if (user.isActive === false) {
+        throw new UnauthorizedException('User account is deactivated');
+      }
+
       if (user.passwordChangedAt) {
         const passwordChangedTime = Math.floor(
           new Date(user.passwordChangedAt).getTime() / 1000,

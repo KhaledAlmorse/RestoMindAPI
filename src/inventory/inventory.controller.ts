@@ -25,7 +25,7 @@ export class InventoryController {
   // --- Batches ---
 
   @Post('batches')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createBatch(
     @Body() body: CreateBatchDto | CreateBatchesDto | CreateBatchDto[],
     @AuthUser() authUser: IAuthUser,
@@ -39,7 +39,7 @@ export class InventoryController {
   }
 
   @Get('batches')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getBatches(
     @Query() query: QueryBatchDto,
     @AuthUser() authUser: IAuthUser,
@@ -55,7 +55,7 @@ export class InventoryController {
   // --- Stock Transactions ---
 
   @Post('transactions')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createStockTransaction(
     @Body() body: CreateStockTransactionDto,
     @AuthUser() authUser: IAuthUser,
@@ -63,13 +63,13 @@ export class InventoryController {
   ) {
     const result = await this.inventoryService.createStockTransaction(
       body,
-      authUser.user._id.toString(),
+      authUser.user,
     );
     res.status(HttpStatus.CREATED).json(result);
   }
 
   @Get('transactions')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getStockTransactions(
     @Query() query: QueryStockTransactionDto,
     @AuthUser() authUser: IAuthUser,
@@ -85,7 +85,7 @@ export class InventoryController {
   // --- Waste Events ---
 
   @Post('waste-events')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createWasteEvent(
     @Body() body: CreateWasteEventDto,
     @AuthUser() authUser: IAuthUser,
@@ -99,7 +99,7 @@ export class InventoryController {
   }
 
   @Get('waste-events')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getWasteEvents(
     @Query() query: QueryWasteEventDto,
     @AuthUser() authUser: IAuthUser,

@@ -20,8 +20,14 @@ import { WeeklyPredictionService } from '../weekly-prediction/weekly-prediction.
  */
 const SCHEDULE_CRON_OPTIONS = 'SCHEDULE_CRON_OPTIONS';
 
-function cronOf(target: any, method: string): { cronTime: string; timeZone?: string } {
-  const meta = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, target.prototype[method]);
+function cronOf(
+  target: any,
+  method: string,
+): { cronTime: string; timeZone?: string } {
+  const meta = Reflect.getMetadata(
+    SCHEDULE_CRON_OPTIONS,
+    target.prototype[method],
+  );
   if (!meta) throw new Error(`${method} is not decorated with @Cron`);
   return meta;
 }
@@ -76,14 +82,20 @@ describe('AI cron schedule', () => {
         const key = `${day}:${hour}:${minute}`;
         const clash = slots.get(key);
         expect(clash).toBeUndefined();
-        if (clash === undefined) slots.set(key, label as string);
+        if (clash === undefined) slots.set(key, label);
       }
     }
   });
 
   it('keeps the daily production-plan sync clear of Sunday midnight', () => {
-    const daily = cronOf(ProductionPlanningService, 'handleDailyPlanGeneration');
-    const weekly = cronOf(WeeklyPredictionService, 'handleWeeklyPredictionCron');
+    const daily = cronOf(
+      ProductionPlanningService,
+      'handleDailyPlanGeneration',
+    );
+    const weekly = cronOf(
+      WeeklyPredictionService,
+      'handleWeeklyPredictionCron',
+    );
     expect(daily.cronTime).not.toBe('0 0 * * *');
     expect(daily.cronTime.split(' ').slice(0, 2)).not.toEqual(
       weekly.cronTime.split(' ').slice(0, 2),

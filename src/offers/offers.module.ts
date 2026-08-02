@@ -20,12 +20,7 @@ import {
 } from 'src/DB/Models';
 
 @Module({
-  imports: [
-    OfferModel,
-    ProductModel,
-    RestaurantModel,
-    UserModel,
-  ],
+  imports: [OfferModel, ProductModel, RestaurantModel, UserModel],
   controllers: [OffersController],
   providers: [
     OffersService,

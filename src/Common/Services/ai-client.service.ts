@@ -119,8 +119,8 @@ export class AiClientService implements OnModuleInit {
             kind: 'client_error',
             status: response.status,
             message:
-              (parsed as any)?.detail ||
-              (parsed as any)?.message ||
+              parsed?.detail ||
+              parsed?.message ||
               `AI service rejected the request (HTTP ${response.status})`,
             body: parsed,
           };

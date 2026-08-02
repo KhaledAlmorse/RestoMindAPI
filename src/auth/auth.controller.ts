@@ -52,7 +52,7 @@ export class AuthController {
   }
 
   @Get('me')
-  @Auth('admin', 'customer', 'manager')
+  @Auth('admin', 'customer', 'manager', 'staff')
   @UseInterceptors(performanceInterceptor)
   async getMe(@AuthUser() user: IAuthUser, @Res() res: Response) {
     const result = await this.authService.getProfileData(user);
@@ -69,7 +69,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  @Auth('admin', 'customer', 'manager')
+  @Auth('admin', 'customer', 'manager', 'staff')
   async logoutHandler(@AuthUser() user: IAuthUser, @Res() res: Response) {
     await this.authService.logout(user);
     res.status(HttpStatus.OK).json({ message: 'Logout successfully' });
@@ -94,7 +94,7 @@ export class AuthController {
 
   @Post('generate-access-token')
   @Auth({
-    roles: ['admin', 'customer', 'manager'],
+    roles: ['admin', 'customer', 'manager', 'staff'],
     tokenType: 'refresh',
   })
   async generateAccessTokenHandler(
@@ -125,7 +125,7 @@ export class AuthController {
   }
 
   @Patch('update-me')
-  @Auth('admin', 'customer', 'manager')
+  @Auth('admin', 'customer', 'manager', 'staff')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateMeHandler(
     @AuthUser() user: IAuthUser,

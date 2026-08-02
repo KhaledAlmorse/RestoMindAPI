@@ -36,7 +36,7 @@ export class PurchaseOrdersController {
   }
 
   @Get()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getPurchaseOrders(
     @Query() query: QueryPurchaseOrderDto,
     @AuthUser() authUser: IAuthUser,
@@ -50,7 +50,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/receive')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async receivePurchaseOrder(
     @Param('id') id: string,
     @AuthUser() authUser: IAuthUser,

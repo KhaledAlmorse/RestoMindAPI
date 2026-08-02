@@ -49,4 +49,28 @@ export class UpdateUserDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  isActive?: boolean;
+
+  @IsOptional()
+  @IsString()
+  employeeCode?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  hireDate?: Date;
+
+  @IsOptional()
+  @IsEnum(['active', 'inactive', 'terminated'])
+  employmentStatus?: 'active' | 'inactive' | 'terminated';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

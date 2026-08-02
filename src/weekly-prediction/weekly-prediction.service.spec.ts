@@ -369,7 +369,9 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.predictedOrders).toBe(100);
     expect(
       warn.mock.calls.some((call) =>
-        /dailyBreakdown sum \(100\) != predictedOrders \(140\)/.test(String(call[0])),
+        /dailyBreakdown sum \(100\) != predictedOrders \(140\)/.test(
+          String(call[0]),
+        ),
       ),
     ).toBe(true);
   });
@@ -543,9 +545,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(lastWeek.date.$gte).not.toEqual(
       new Date('2026-07-20T00:00:00.000Z'),
     );
-    expect(lastWeek.date.$lt).not.toEqual(
-      new Date('2026-07-27T00:00:00.000Z'),
-    );
+    expect(lastWeek.date.$lt).not.toEqual(new Date('2026-07-27T00:00:00.000Z'));
   });
 
   it('backfills sales history to the AI with product metadata attached', async () => {
@@ -557,17 +557,30 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       { _id: mockProductId, title: 'Croissant', category: { name: 'معجنات' } },
     ]);
     mockSalesRepo.findMany.mockResolvedValue([
-      { productId: mockProductId, date: new Date('2026-06-01T10:00:00Z'), quantitySold: 12 },
-      { productId: mockProductId, date: new Date('2026-06-02T10:00:00Z'), quantitySold: 15 },
+      {
+        productId: mockProductId,
+        date: new Date('2026-06-01T10:00:00Z'),
+        quantitySold: 12,
+      },
+      {
+        productId: mockProductId,
+        date: new Date('2026-06-02T10:00:00Z'),
+        quantitySold: 15,
+      },
     ]);
 
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ learnedLevels: { [mockProductId.toString()]: 13.5 } }),
+      json: async () => ({
+        learnedLevels: { [mockProductId.toString()]: 13.5 },
+      }),
     }) as any;
 
-    const result = await service.backfillAiHistory('507f1f77bcf86cd799439011', 90);
+    const result = await service.backfillAiHistory(
+      '507f1f77bcf86cd799439011',
+      90,
+    );
 
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.records).toHaveLength(2);
@@ -598,7 +611,11 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     // the same derivation the nightly sync uses, since both feed the same
     // AI registry and dedupe/group on (date, productId).
     mockSalesRepo.findMany.mockResolvedValue([
-      { productId: mockProductId, date: new Date('2026-07-15T22:30:00.000Z'), quantitySold: 4 },
+      {
+        productId: mockProductId,
+        date: new Date('2026-07-15T22:30:00.000Z'),
+        quantitySold: 4,
+      },
     ]);
 
     global.fetch = jest.fn().mockResolvedValue({
@@ -664,7 +681,9 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     ]);
     mockSalesRepo.countDocuments.mockResolvedValue(0);
     mockPredictionRepo.findMany.mockResolvedValue([]);
-    global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED')) as any;
+    global.fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('ECONNREFUSED')) as any;
 
     const result = await service.getLearnedStatus('507f1f77bcf86cd799439011');
 
@@ -687,7 +706,9 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       { productId: p1, quantitySold: 50 },
       { productId: p2, quantitySold: 60 },
     ]);
-    mockPredictionRepo.bulkWrite = jest.fn().mockResolvedValue({ modifiedCount: 2 });
+    mockPredictionRepo.bulkWrite = jest
+      .fn()
+      .mockResolvedValue({ modifiedCount: 2 });
 
     const result = await service.reconcilePredictionAccuracy(
       mockRestaurantId,
@@ -696,12 +717,16 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
 
     expect(result.reconciled).toBe(2);
     const ops = mockPredictionRepo.bulkWrite.mock.calls[0][0];
-    const first = ops.find((o: any) => String(o.updateOne.filter._id) === String(pred1));
+    const first = ops.find(
+      (o: any) => String(o.updateOne.filter._id) === String(pred1),
+    );
     expect(first.updateOne.update.$set).toEqual({
       actualOrders: 90,
       errorAbs: 10,
     });
-    const second = ops.find((o: any) => String(o.updateOne.filter._id) === String(pred2));
+    const second = ops.find(
+      (o: any) => String(o.updateOne.filter._id) === String(pred2),
+    );
     expect(second.updateOne.update.$set).toEqual({
       actualOrders: 60,
       errorAbs: 10,
@@ -826,7 +851,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
         targetWeek: 'stub',
         reconciled: 0,
         mape: null,
-      } as any);
+      });
 
     await service.handleAccuracyReconciliationCron();
 
@@ -865,7 +890,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
         if (restaurantId.toString() === r2.toString()) {
           throw new Error('mongo unavailable');
         }
-        return { targetWeek: 'stub', reconciled: 0, mape: null } as any;
+        return { targetWeek: 'stub', reconciled: 0, mape: null };
       });
 
     // The whole point of the try/catch: one bad restaurant must not abort the
@@ -969,7 +994,9 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     );
 
     // null, NOT 0 — the bridge distinguishes "no estimate" from "sells nothing".
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).avgDailySales).toBeNull();
+    expect(
+      JSON.parse(fetchMock.mock.calls[0][1].body).avgDailySales,
+    ).toBeNull();
   });
 
   it('prefers measured history over the owner estimate once sales exist', async () => {
@@ -1122,9 +1149,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     // No HTTP status: there was no error status, the 200 was the problem.
     expect(result.degradedStatus).toBeUndefined();
     // The wire now agrees with what was persisted.
-    expect(result.data.featuresUsed.fallbackReason).toBe(
-      result.degradedReason,
-    );
+    expect(result.data.featuresUsed.fallbackReason).toBe(result.degradedReason);
   });
 
   it('batchRecalculate also reports a contract-violating AI 200 as degraded', async () => {
@@ -1248,7 +1273,11 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
               message: 'Invalid X-RestoMind-Key',
               body: { detail: 'Invalid X-RestoMind-Key' },
             }
-          : { ok: false, kind: 'unavailable', message: 'timed out after 10000ms' },
+          : {
+              ok: false,
+              kind: 'unavailable',
+              message: 'timed out after 10000ms',
+            },
       );
 
     const result: any = await service.batchRecalculate(

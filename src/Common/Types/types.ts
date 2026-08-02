@@ -157,4 +157,3 @@ export enum PartnershipApplicationStatusEnum {
   REJECTED = 'REJECTED',
   ONBOARDED = 'ONBOARDED',
 }
-

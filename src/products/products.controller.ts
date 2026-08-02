@@ -78,7 +78,7 @@ export class ProductsController {
   }
 
   @Patch(':id/availability')
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   async changeAvailability(
     @Param('id') id: string,
     @Body() body: UpdateProductAvailabilityDto,
@@ -94,7 +94,7 @@ export class ProductsController {
   }
 
   @Get()
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   async getAllProducts(
     @Query() query: QueryProductDto,
     @AuthUser() authUser: IAuthUser,
@@ -105,7 +105,7 @@ export class ProductsController {
   }
 
   @Get(':id')
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   async getProductDetails(
     @Param('id') id: string,
     @AuthUser() authUser: IAuthUser,
@@ -132,7 +132,7 @@ export class ProductsController {
   }
 
   @Get(':productId/recipe')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getRecipe(
     @Param('productId') productId: string,
     @AuthUser() authUser: IAuthUser,

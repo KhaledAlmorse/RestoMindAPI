@@ -60,9 +60,9 @@ export class OrdersController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  // 3. GET /orders/:id - Get child order by ID (Client, Manager, Admin)
+  // 3. GET /orders/:id - Get child order by ID (Client, Manager, Admin, Staff)
   @Get(':id')
-  @Auth('customer', 'manager', 'admin')
+  @Auth('customer', 'manager', 'admin', 'staff')
   async getChildOrderById(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
@@ -72,9 +72,9 @@ export class OrdersController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  // 4. PATCH /orders/:id/status - Update child order status (Manager, Admin)
+  // 4. PATCH /orders/:id/status - Update child order status (Manager, Admin, Staff)
   @Patch(':id/status')
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   async updateOrderStatus(
     @Param('id') id: string,
     @Body() body: UpdateOrderStatusDto,
@@ -89,9 +89,9 @@ export class OrdersController {
     res.status(HttpStatus.OK).json(result);
   }
 
-  // 5. GET /orders - Get all orders role-aware (Client, Manager, Admin)
+  // 5. GET /orders - Get all orders role-aware (Client, Manager, Admin, Staff)
   @Get()
-  @Auth('customer', 'manager', 'admin')
+  @Auth('customer', 'manager', 'admin', 'staff')
   async getAllOrders(
     @Query() query: QueryOrderListingDto,
     @AuthUser() user: IAuthUser,

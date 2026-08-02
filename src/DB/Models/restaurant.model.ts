@@ -45,7 +45,6 @@ export class Restaurant {
     country?: string;
   };
 
-
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 

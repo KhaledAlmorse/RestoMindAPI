@@ -33,7 +33,7 @@ export class SuppliersController {
   }
 
   @Get()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getSuppliers(
     @Query() query: QuerySupplierDto,
     @AuthUser() authUser: IAuthUser,

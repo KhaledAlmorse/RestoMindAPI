@@ -53,21 +53,38 @@ export class CsvParsingService {
       const lower = header.toLowerCase().replace(/[^a-z0-9]/g, '');
 
       if (importType === ImportTypeEnum.MENU_ITEMS) {
-        if (['title', 'name', 'productname', 'itemname', 'producttitle'].includes(lower)) {
+        if (
+          ['title', 'name', 'productname', 'itemname', 'producttitle'].includes(
+            lower,
+          )
+        ) {
           mapping[header] = 'title';
-        } else if (['price', 'sellingprice', 'unitprice', 'cost'].includes(lower)) {
+        } else if (
+          ['price', 'sellingprice', 'unitprice', 'cost'].includes(lower)
+        ) {
           mapping[header] = 'price';
         } else if (['category', 'categoryname', 'cat'].includes(lower)) {
           mapping[header] = 'category';
-        } else if (['freshnesswindow', 'freshness', 'shelflife', 'freshnessdays'].includes(lower)) {
+        } else if (
+          [
+            'freshnesswindow',
+            'freshness',
+            'shelflife',
+            'freshnessdays',
+          ].includes(lower)
+        ) {
           mapping[header] = 'freshnessWindow';
         } else if (['description', 'desc'].includes(lower)) {
           mapping[header] = 'description';
         }
       } else if (importType === ImportTypeEnum.INGREDIENTS) {
-        if (['name', 'ingredientname', 'itemname', 'ingredient'].includes(lower)) {
+        if (
+          ['name', 'ingredientname', 'itemname', 'ingredient'].includes(lower)
+        ) {
           mapping[header] = 'name';
-        } else if (['ingredientcode', 'code', 'itemcode', 'sku'].includes(lower)) {
+        } else if (
+          ['ingredientcode', 'code', 'itemcode', 'sku'].includes(lower)
+        ) {
           mapping[header] = 'ingredientCode';
         } else if (['unit', 'uom', 'measurementunit'].includes(lower)) {
           mapping[header] = 'unit';
@@ -79,11 +96,36 @@ export class CsvParsingService {
           mapping[header] = 'safetyStock';
         }
       } else if (importType === ImportTypeEnum.RECIPES) {
-        if (['productid', 'product', 'producttitle', 'item', 'title', 'sku'].includes(lower)) {
+        if (
+          [
+            'productid',
+            'product',
+            'producttitle',
+            'item',
+            'title',
+            'sku',
+          ].includes(lower)
+        ) {
           mapping[header] = 'productId';
-        } else if (['ingredientid', 'ingredient', 'ingredientcode', 'ingredientname', 'rawmaterial'].includes(lower)) {
+        } else if (
+          [
+            'ingredientid',
+            'ingredient',
+            'ingredientcode',
+            'ingredientname',
+            'rawmaterial',
+          ].includes(lower)
+        ) {
           mapping[header] = 'ingredientId';
-        } else if (['quantityperportion', 'quantity', 'qty', 'portionqty', 'amount'].includes(lower)) {
+        } else if (
+          [
+            'quantityperportion',
+            'quantity',
+            'qty',
+            'portionqty',
+            'amount',
+          ].includes(lower)
+        ) {
           mapping[header] = 'quantityPerPortion';
         } else if (['unit', 'uom', 'measurementunit'].includes(lower)) {
           mapping[header] = 'unit';
@@ -91,11 +133,23 @@ export class CsvParsingService {
           mapping[header] = 'yieldPercentage';
         }
       } else if (importType === ImportTypeEnum.INVENTORY_TRANSACTIONS) {
-        if (['ingredientid', 'ingredient', 'ingredientcode', 'ingredientname', 'rawmaterial'].includes(lower)) {
+        if (
+          [
+            'ingredientid',
+            'ingredient',
+            'ingredientcode',
+            'ingredientname',
+            'rawmaterial',
+          ].includes(lower)
+        ) {
           mapping[header] = 'ingredientId';
-        } else if (['batchnumber', 'batch', 'batchno', 'batchlot', 'lot'].includes(lower)) {
+        } else if (
+          ['batchnumber', 'batch', 'batchno', 'batchlot', 'lot'].includes(lower)
+        ) {
           mapping[header] = 'batchNumber';
-        } else if (['quantity', 'qty', 'quantityremaining', 'amount'].includes(lower)) {
+        } else if (
+          ['quantity', 'qty', 'quantityremaining', 'amount'].includes(lower)
+        ) {
           mapping[header] = 'quantity';
         } else if (['unitcost', 'cost', 'priceperunit'].includes(lower)) {
           mapping[header] = 'unitCost';
@@ -182,7 +236,8 @@ export class CsvParsingService {
     const ingredientMap = new Map<string, any>();
     ingredients.forEach((ing) => {
       if (ing._id) ingredientMap.set(ing._id.toString(), ing);
-      if (ing.ingredientCode) ingredientMap.set(ing.ingredientCode.trim().toLowerCase(), ing);
+      if (ing.ingredientCode)
+        ingredientMap.set(ing.ingredientCode.trim().toLowerCase(), ing);
       if (ing.name) ingredientMap.set(ing.name.trim().toLowerCase(), ing);
     });
 
@@ -212,7 +267,12 @@ export class CsvParsingService {
 
         // Price validation
         const priceNum = Number(mappedRow.price);
-        if (mappedRow.price === undefined || mappedRow.price === '' || isNaN(priceNum) || priceNum < 0) {
+        if (
+          mappedRow.price === undefined ||
+          mappedRow.price === '' ||
+          isNaN(priceNum) ||
+          priceNum < 0
+        ) {
           errors.push({
             row: displayRow,
             column: 'price',
@@ -225,7 +285,8 @@ export class CsvParsingService {
 
         // Optional freshness window
         const freshNum = Number(mappedRow.freshnessWindow);
-        mappedRow.freshnessWindow = !isNaN(freshNum) && freshNum > 0 ? freshNum : 2;
+        mappedRow.freshnessWindow =
+          !isNaN(freshNum) && freshNum > 0 ? freshNum : 2;
 
         if (!hasError) {
           validRows.push(mappedRow);
@@ -251,7 +312,7 @@ export class CsvParsingService {
         const validUnits = Object.values(IngredientUnitEnum);
         if (
           mappedRow.unit &&
-          !validUnits.includes(mappedRow.unit.toLowerCase() as any)
+          !validUnits.includes(mappedRow.unit.toLowerCase())
         ) {
           errors.push({
             row: displayRow,
@@ -339,7 +400,12 @@ export class CsvParsingService {
 
         // Quantity per portion validation
         const qtyNum = Number(mappedRow.quantityPerPortion);
-        if (mappedRow.quantityPerPortion === undefined || mappedRow.quantityPerPortion === '' || isNaN(qtyNum) || qtyNum <= 0) {
+        if (
+          mappedRow.quantityPerPortion === undefined ||
+          mappedRow.quantityPerPortion === '' ||
+          isNaN(qtyNum) ||
+          qtyNum <= 0
+        ) {
           errors.push({
             row: displayRow,
             column: 'quantityPerPortion',
@@ -351,11 +417,15 @@ export class CsvParsingService {
         }
 
         // Unit resolution (default to ingredient's unit if not specified)
-        mappedRow.unit = mappedRow.unit || mappedRow.ingredientRef?.unit || IngredientUnitEnum.KG;
+        mappedRow.unit =
+          mappedRow.unit ||
+          mappedRow.ingredientRef?.unit ||
+          IngredientUnitEnum.KG;
 
         // Yield percentage (default 100)
         const yieldNum = Number(mappedRow.yieldPercentage);
-        mappedRow.yieldPercentage = !isNaN(yieldNum) && yieldNum > 0 && yieldNum <= 100 ? yieldNum : 100;
+        mappedRow.yieldPercentage =
+          !isNaN(yieldNum) && yieldNum > 0 && yieldNum <= 100 ? yieldNum : 100;
 
         if (!hasError) {
           validRows.push(mappedRow);
@@ -390,7 +460,12 @@ export class CsvParsingService {
 
         // Quantity validation
         const qtyNum = Number(mappedRow.quantity);
-        if (mappedRow.quantity === undefined || mappedRow.quantity === '' || isNaN(qtyNum) || qtyNum <= 0) {
+        if (
+          mappedRow.quantity === undefined ||
+          mappedRow.quantity === '' ||
+          isNaN(qtyNum) ||
+          qtyNum <= 0
+        ) {
           errors.push({
             row: displayRow,
             column: 'quantity',
@@ -402,13 +477,18 @@ export class CsvParsingService {
         }
 
         // Unit resolution
-        mappedRow.unit = mappedRow.unit || mappedRow.ingredientRef?.unit || IngredientUnitEnum.KG;
+        mappedRow.unit =
+          mappedRow.unit ||
+          mappedRow.ingredientRef?.unit ||
+          IngredientUnitEnum.KG;
 
         // Optional Unit Cost & Expiry Date
         const costNum = Number(mappedRow.unitCost);
         mappedRow.unitCost = !isNaN(costNum) && costNum >= 0 ? costNum : 0;
         mappedRow.batchNumber = mappedRow.batchNumber || `BATCH-${Date.now()}`;
-        mappedRow.expiryDate = mappedRow.expiryDate ? new Date(mappedRow.expiryDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        mappedRow.expiryDate = mappedRow.expiryDate
+          ? new Date(mappedRow.expiryDate)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
         if (!hasError) {
           validRows.push(mappedRow);

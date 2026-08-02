@@ -1,4 +1,10 @@
-import { IsOptional, IsEnum, IsMongoId, IsString, IsDateString } from 'class-validator';
+import {
+  IsOptional,
+  IsEnum,
+  IsMongoId,
+  IsString,
+  IsDateString,
+} from 'class-validator';
 import { OfferStatusEnum, OfferSourceEnum } from 'src/Common/Types';
 
 export class QueryOfferDto {

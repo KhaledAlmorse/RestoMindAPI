@@ -314,7 +314,9 @@ export class WeeklyPredictionService {
           const parsed = Number(raw);
           return {
             date: item?.date || dailyDates[idx] || targetWeekStr,
-            predictedQuantity: Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0,
+            predictedQuantity: Number.isFinite(parsed)
+              ? Math.max(0, Math.round(parsed))
+              : 0,
           };
         });
 

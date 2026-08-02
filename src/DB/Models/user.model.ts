@@ -106,6 +106,28 @@ export class User {
   @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: false })
   restaurantId?: Types.ObjectId;
 
+  @Prop({ type: Boolean, default: true })
+  isActive?: boolean;
+
+  @Prop({ type: String, required: false })
+  employeeCode?: string;
+
+  @Prop({ type: String, required: false })
+  department?: string;
+
+  @Prop({ type: Date, required: false })
+  hireDate?: Date;
+
+  @Prop({
+    type: String,
+    enum: ['active', 'inactive', 'terminated'],
+    default: 'active',
+  })
+  employmentStatus?: 'active' | 'inactive' | 'terminated';
+
+  @Prop({ type: String, required: false })
+  notes?: string;
+
   @Prop({ type: [UserAddressSchema], default: [] })
   addresses!: UserAddress[];
 }

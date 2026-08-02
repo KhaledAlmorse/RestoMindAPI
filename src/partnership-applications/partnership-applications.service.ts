@@ -484,6 +484,8 @@ export class PartnershipApplicationsService {
         password: hashedPassword,
         passwordChangedAt: now,
         isEmailVerified: true,
+        isActive: true,
+        employmentStatus: 'active',
       } as any,
     });
 

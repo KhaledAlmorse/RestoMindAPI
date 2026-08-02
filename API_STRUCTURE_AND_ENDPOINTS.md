@@ -22,7 +22,16 @@ This document is the **single source of truth** for the **RestoMindApi** backend
    - [4.10 Favorites Module (`/favorites`)](#410-favorites-module-favorites)
    - [4.11 Sales Module (`/sales`)](#411-sales-module-sales)
    - [4.12 Dashboard Module (`/dashboard`)](#412-dashboard-module-dashboard)
-   - [4.13 App Root Module (`/`)](#413-app-root-module-)
+   - [4.13 Inventory Module (`/inventory`)](#413-inventory-module-inventory)
+   - [4.14 Suppliers Module (`/suppliers`)](#414-suppliers-module-suppliers)
+   - [4.15 Purchase Orders Module (`/purchase-orders`)](#415-purchase-orders-module-purchase-orders)
+   - [4.16 Production Planning Module (`/predictions/production-plan`)](#416-production-planning-module-predictionsproduction-plan)
+   - [4.17 Waste Reports Module (`/waste-reports`)](#417-waste-reports-module-waste-reports)
+   - [4.18 Weekly Prediction Module (`/predictions`)](#418-weekly-prediction-module-predictions)
+   - [4.19 Recommendations Module (`/recommendations`)](#419-recommendations-module-recommendations)
+   - [4.20 Partnership Applications Module (`/partnership-applications`)](#420-partnership-applications-module-partnership-applications)
+   - [4.21 Imports Module (`/imports`)](#421-imports-module-imports)
+   - [4.22 App Root Module (`/`)](#422-app-root-module-)
 
 ---
 
@@ -856,8 +865,8 @@ Or for paginated lists:
 
 #### 5. Get All Products (Paginated & Filtered)
 - **Route**: `GET /products`
-- **Auth Required**: No (Public)
-- **Allowed Roles**: Public
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`
 - **Query Parameters**:
   - `page`: string (default `1`)
   - `limit`: string (default `10`)
@@ -886,8 +895,8 @@ Or for paginated lists:
 
 #### 6. Get Product By Id or Slug
 - **Route**: `GET /products/:id`
-- **Auth Required**: No (Public)
-- **Allowed Roles**: Public
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`
 - **Path Parameters**: `id` (can be Mongo ObjectId or product slug)
 - **Success Response** (200 OK):
   ```json
@@ -1666,7 +1675,25 @@ Or for paginated lists:
 
 ---
 
-#### 8. Get Order Group By Id (`/order-groups`)
+#### 8. Cancel Order Group
+- **Route**: `PATCH /orders/group/:id/cancel`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Path Parameters**: `id` (Order Group ObjectId)
+- **Security Check**: Customer can only cancel their own order group if it is still in `Pending` state.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "orderGroupId": "669fc999888777abcdef999",
+      "overallStatus": "Cancelled"
+    }
+  }
+  ```
+
+---
+
+#### 9. Get Order Group By Id (`/order-groups`)
 - **Route**: `GET /order-groups/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -1675,6 +1702,79 @@ Or for paginated lists:
   ```json
   {
     "data": { ... }
+  }
+  ```
+
+---
+
+### 4.10 Favorites Module (`/favorites`)
+
+#### 1. Add Favorite Offer
+- **Route**: `POST /favorites/:offerId`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Path Parameters**: `offerId` (Mongo ObjectId string)
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": {
+      "_id": "669fc777666555abcdef111",
+      "userId": "669fc1234567890abcdef123",
+      "offerId": "669fc0000000000abcdef777"
+    }
+  }
+  ```
+
+---
+
+#### 2. Remove Favorite Offer
+- **Route**: `DELETE /favorites/:offerId`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Path Parameters**: `offerId` (Mongo ObjectId string)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Favorite removed successfully"
+  }
+  ```
+
+---
+
+#### 3. Get User Favorites
+- **Route**: `GET /favorites`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [
+      {
+        "_id": "669fc777666555abcdef111",
+        "offer": {
+          "_id": "669fc0000000000abcdef777",
+          "offerPrice": 10.39,
+          "originalPrice": 12.99,
+          "product": {
+            "title": "Margherita Pizza"
+          }
+        }
+      }
+    ]
+  }
+  ```
+
+---
+
+#### 4. Check Favorite Status
+- **Route**: `GET /favorites/:offerId/status`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Path Parameters**: `offerId` (Mongo ObjectId string)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "isFavorite": true
   }
   ```
 
@@ -1912,12 +2012,1008 @@ Or for paginated lists:
 
 ---
 
-### 4.13 App Root Module (`/`)
+### 4.13 Inventory Module (`/inventory`)
+
+#### 1. Create Batch (Single or Bulk)
+- **Route**: `POST /inventory/batches`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**: Accepts single `CreateBatchDto`, array of `CreateBatchDto`, or `CreateBatchesDto` object `{ "batches": [...] }`.
+  ```json
+  {
+    "ingredientId": "669fc2222222222abcdef555",
+    "batchNumber": "BATCH-2026-001",
+    "quantityRemaining": 5000,
+    "unitCost": 2.50,
+    "expiryDate": "2026-12-31T00:00:00.000Z",
+    "receivedDate": "2026-08-01T00:00:00.000Z"
+  }
+  ```
+- **Validation Rules**:
+  - `ingredientId`: Mongo ObjectId string, required
+  - `batchNumber`: string, required
+  - `quantityRemaining`: number, required, min 0
+  - `unitCost`: number, required, min 0
+  - `expiryDate`: ISO date string, required
+  - `receivedDate`: ISO date string, optional
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": {
+      "_id": "669fc555444333abcdef111",
+      "restaurantId": "669fc8888888888abcdef222",
+      "ingredientId": "669fc2222222222abcdef555",
+      "batchNumber": "BATCH-2026-001",
+      "quantityRemaining": 5000,
+      "unitCost": 2.50
+    }
+  }
+  ```
+
+---
+
+#### 2. Get Batches (Paginated & Filtered)
+- **Route**: `GET /inventory/batches`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `ingredientId`: Mongo ObjectId string
+  - `isExpired`: boolean string (`true`, `false`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 10,
+    "page": 1,
+    "limit": 10,
+    "totalPages": 1
+  }
+  ```
+
+---
+
+#### 3. Create Stock Transaction
+- **Route**: `POST /inventory/transactions`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "ingredientId": "669fc2222222222abcdef555",
+    "type": "in",
+    "quantity": 1000,
+    "unitCost": 2.50,
+    "reason": "Restock shipment",
+    "batchId": "669fc555444333abcdef111"
+  }
+  ```
+- **Validation Rules**:
+  - `ingredientId`: Mongo ObjectId string, required
+  - `type`: enum required (`in`, `out`, `adjustment`, `waste`)
+  - `quantity`: number, required, min 0.001
+  - `unitCost`: number, optional
+  - `reason`: string, optional
+  - `batchId`: Mongo ObjectId string, optional
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": { ... }
+  }
+  ```
+
+---
+
+#### 4. Get Stock Transactions
+- **Route**: `GET /inventory/transactions`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `ingredientId`: Mongo ObjectId string
+  - `type`: enum string (`in`, `out`, `adjustment`, `waste`)
+  - `startDate`: ISO date string
+  - `endDate`: ISO date string
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 5,
+    "page": 1,
+    "limit": 10
+  }
+  ```
+
+---
+
+#### 5. Create Waste Event
+- **Route**: `POST /inventory/waste-events`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "ingredientId": "669fc2222222222abcdef555",
+    "quantity": 250,
+    "reason": "spoiled",
+    "batchId": "669fc555444333abcdef111",
+    "notes": "Expired due to refrigeration fault"
+  }
+  ```
+- **Validation Rules**:
+  - `ingredientId`: Mongo ObjectId string, required
+  - `quantity`: number, required, min 0.001
+  - `reason`: enum required (`expired`, `spoiled`, `damaged`, `prep_waste`, `other`)
+  - `batchId`: Mongo ObjectId string, optional
+  - `notes`: string, optional
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": { ... }
+  }
+  ```
+
+---
+
+#### 6. Get Waste Events
+- **Route**: `GET /inventory/waste-events`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `ingredientId`: Mongo ObjectId string
+  - `reason`: enum string (`expired`, `spoiled`, `damaged`, `prep_waste`, `other`)
+  - `startDate`: ISO date string
+  - `endDate`: ISO date string
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 3
+  }
+  ```
+
+---
+
+### 4.14 Suppliers Module (`/suppliers`)
+
+#### 1. Create Supplier
+- **Route**: `POST /suppliers`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "name": "Fresh Dairy Co.",
+    "contactPerson": "Alice Smith",
+    "email": "alice@freshdairy.com",
+    "phone": "+18885551234",
+    "leadTimeDays": 2,
+    "paymentTerms": "Net 30"
+  }
+  ```
+- **Validation Rules**:
+  - `name`: string, required
+  - `contactPerson`, `email`, `phone`, `paymentTerms`: optional strings
+  - `leadTimeDays`: number, optional, min 0
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": {
+      "_id": "669fc666555444abcdef222",
+      "restaurantId": "669fc8888888888abcdef222",
+      "name": "Fresh Dairy Co.",
+      "leadTimeDays": 2
+    }
+  }
+  ```
+
+---
+
+#### 2. Get Suppliers
+- **Route**: `GET /suppliers`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `search`: string (matches supplier name or contact person)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 5
+  }
+  ```
+
+---
+
+### 4.15 Purchase Orders Module (`/purchase-orders`)
+
+#### 1. Create Purchase Order
+- **Route**: `POST /purchase-orders`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "supplierId": "669fc666555444abcdef222",
+    "items": [
+      {
+        "ingredientId": "669fc2222222222abcdef555",
+        "quantityOrdered": 50,
+        "unitCost": 3.00
+      }
+    ],
+    "notes": "Urgent delivery required"
+  }
+  ```
+- **Validation Rules**:
+  - `supplierId`: Mongo ObjectId string, required
+  - `items`: array required (min 1 item, each containing `ingredientId`, `quantityOrdered`, `unitCost`)
+  - `notes`: optional string
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": {
+      "_id": "669fc777666555abcdef333",
+      "poNumber": "PO-2026-0001",
+      "status": "draft",
+      "totalCost": 150.00
+    }
+  }
+  ```
+
+---
+
+#### 2. Get Purchase Orders
+- **Route**: `GET /purchase-orders`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `supplierId`: Mongo ObjectId string
+  - `status`: enum string (`draft`, `ordered`, `received`, `cancelled`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 4
+  }
+  ```
+
+---
+
+#### 3. Receive Purchase Order
+- **Route**: `PATCH /purchase-orders/:id/receive`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Path Parameters**: `id` (PO Mongo ObjectId)
+- **Side Effects**: Automatically updates inventory stock levels and creates inventory batches/stock transactions for received items.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc777666555abcdef333",
+      "status": "received",
+      "receivedDate": "2026-08-02T14:00:00.000Z"
+    }
+  }
+  ```
+
+---
+
+#### 4. Update Purchase Order Status
+- **Route**: `PATCH /purchase-orders/:id/status`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Path Parameters**: `id`
+- **Request Body**:
+  ```json
+  {
+    "status": "ordered"
+  }
+  ```
+- **Validation Rules**:
+  - `status`: enum string required (`draft`, `ordered`, `received`, `cancelled`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc777666555abcdef333",
+      "status": "ordered"
+    }
+  }
+  ```
+
+---
+
+### 4.16 Production Planning Module (`/predictions/production-plan`)
+
+#### 1. Get Daily Production Plan
+- **Route**: `GET /predictions/production-plan`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `date`: ISO date string (YYYY-MM-DD, e.g. `2026-08-02`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "date": "2026-08-02",
+      "restaurantId": "669fc8888888888abcdef222",
+      "items": [
+        {
+          "productId": "669fc3333333333abcdef444",
+          "productName": "Margherita Pizza",
+          "predictedDemand": 45,
+          "plannedProduction": 48,
+          "bufferPercentage": 6.67
+        }
+      ]
+    }
+  }
+  ```
+
+---
+
+#### 2. Record Actual Production / Sales
+- **Route**: `POST /predictions/production-plan/actuals`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "date": "2026-08-02",
+    "actuals": [
+      {
+        "productId": "669fc3333333333abcdef444",
+        "actualQuantity": 42
+      }
+    ]
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Actuals recorded successfully"
+  }
+  ```
+
+---
+
+### 4.17 Waste Reports Module (`/waste-reports`)
+
+#### 1. Get Waste Reports List
+- **Route**: `GET /waste-reports`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `startDate`: ISO date string
+  - `endDate`: ISO date string
+  - `reason`: enum string (`expired`, `spoiled`, `damaged`, `prep_waste`, `other`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 8
+  }
+  ```
+
+---
+
+#### 2. Get Waste Reports Summary
+- **Route**: `GET /waste-reports/summary`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "totalWasteEvents": 12,
+      "totalWasteCost": 345.50,
+      "byReason": {
+        "expired": 150.00,
+        "spoiled": 120.00,
+        "prep_waste": 75.50
+      }
+    }
+  }
+  ```
+
+---
+
+### 4.18 Weekly Prediction Module (`/predictions`)
+
+#### 1. Recalculate Single Product Prediction
+- **Route**: `POST /predictions/recalculate`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "productId": "669fc3333333333abcdef444",
+    "targetWeek": "2026-W32"
+  }
+  ```
+- **Validation Rules**:
+  - `productId`: Mongo ObjectId string, required
+  - `targetWeek`: ISO week string (e.g. `2026-W32`), required
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "productId": "669fc3333333333abcdef444",
+      "targetWeek": "2026-W32",
+      "predictedDemand": 280,
+      "confidenceScore": 0.92
+    }
+  }
+  ```
+
+---
+
+#### 2. Batch Recalculate Predictions
+- **Route**: `POST /predictions/batch-recalculate`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "targetWeek": "2026-W32"
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Batch predictions recalculated successfully",
+    "processedCount": 24
+  }
+  ```
+
+---
+
+#### 3. Get Predictions Listing
+- **Route**: `GET /predictions`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `targetWeek`: ISO week string
+  - `productId`: Mongo ObjectId string
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ]
+  }
+  ```
+
+---
+
+#### 4. Get AI Learned Status
+- **Route**: `GET /predictions/learned-status`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "isTrained": true,
+    "lastTrainedAt": "2026-08-01T12:00:00.000Z",
+    "totalHistoricalDays": 90,
+    "modelAccuracy": 0.89
+  }
+  ```
+
+---
+
+#### 5. Get Prediction Accuracy Metrics
+- **Route**: `GET /predictions/accuracy`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `weeks`: string number (range 1-52, default `8`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "windowWeeks": 8,
+      "overallAccuracy": 91.5,
+      "mape": 8.5,
+      "weeklyTrends": [ ... ]
+    }
+  }
+  ```
+
+---
+
+#### 6. Trigger AI Backfill
+- **Route**: `POST /predictions/ai-backfill`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "days": 60
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "backfilledDays": 60,
+      "status": "completed"
+    }
+  }
+  ```
+
+---
+
+### 4.19 Recommendations Module (`/recommendations`)
+
+#### 1. Get Active AI Recommendations
+- **Route**: `GET /recommendations`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Query Parameters**:
+  - `status`: enum string (`pending`, `approved`, `edited`, `dismissed`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [
+      {
+        "_id": "669fc888777666abcdef444",
+        "type": "surplus_discount",
+        "ingredientId": "669fc2222222222abcdef555",
+        "productId": "669fc3333333333abcdef444",
+        "suggestedDiscount": 25,
+        "suggestedQuantity": 30,
+        "status": "pending"
+      }
+    ]
+  }
+  ```
+
+---
+
+#### 2. Scan Surplus Inventory
+- **Route**: `POST /recommendations/scan-surplus`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Surplus scan complete",
+    "newRecommendationsGenerated": 3
+  }
+  ```
+
+---
+
+#### 3. Approve Recommendation
+- **Route**: `PATCH /recommendations/:id/approve`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Path Parameters**: `id` (Recommendation ObjectId)
+- **Request Body**:
+  ```json
+  {
+    "autoPublishOffer": true
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc888777666abcdef444",
+      "status": "approved",
+      "createdOfferId": "669fc0000000000abcdef777"
+    }
+  }
+  ```
+
+---
+
+#### 4. Edit Recommendation
+- **Route**: `PATCH /recommendations/:id/edit`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Path Parameters**: `id`
+- **Request Body**:
+  ```json
+  {
+    "discountPercentage": 30,
+    "quantity": 25
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc888777666abcdef444",
+      "status": "edited"
+    }
+  }
+  ```
+
+---
+
+#### 5. Dismiss Recommendation
+- **Route**: `PATCH /recommendations/:id/dismiss`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc888777666abcdef444",
+      "status": "dismissed"
+    }
+  }
+  ```
+
+---
+
+#### 6. Validate Plan (`/predictions/validate-plan`)
+- **Route**: `POST /predictions/validate-plan`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`
+- **Request Body**:
+  ```json
+  {
+    "date": "2026-08-03",
+    "productionPlan": [
+      {
+        "productId": "669fc3333333333abcdef444",
+        "quantity": 50
+      }
+    ]
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "isValid": true,
+    "stockDeficits": [],
+    "warnings": []
+  }
+  ```
+
+---
+
+### 4.20 Partnership Applications Module (`/partnership-applications`)
+
+#### 1. Submit Partnership Application (Public)
+- **Route**: `POST /partnership-applications`
+- **Auth Required**: No (Public)
+- **Allowed Roles**: Public
+- **Request Body**:
+  ```json
+  {
+    "restaurantName": "Luigi's Bistro",
+    "ownerFirstName": "Luigi",
+    "ownerLastName": "Mario",
+    "email": "luigi@bistro.com",
+    "phone": "+15559998888",
+    "commercialRegister": "CR-99887766",
+    "taxNumber": "TAX-11223344",
+    "address": {
+      "street": "777 Mushroom Way",
+      "city": "Metropolis",
+      "country": "USA"
+    }
+  }
+  ```
+- **Validation Rules**:
+  - `restaurantName`, `ownerFirstName`, `ownerLastName`, `email`, `phone`: required strings
+  - `commercialRegister`, `taxNumber`: optional strings
+- **Success Response** (201 Created):
+  ```json
+  {
+    "message": "Partnership application submitted successfully",
+    "applicationId": "669fc999000111abcdef555"
+  }
+  ```
+
+---
+
+#### 2. Check Application Status (Public)
+- **Route**: `GET /partnership-applications/status/:id`
+- **Auth Required**: No (Public)
+- **Allowed Roles**: Public
+- **Path Parameters**: `id` (Application ObjectId)
+- **Query Parameters**:
+  - `email`: string, required
+- **Success Response** (200 OK):
+  ```json
+  {
+    "status": "under_review",
+    "submittedAt": "2026-08-01T10:00:00.000Z"
+  }
+  ```
+
+---
+
+#### 3. Setup Approved Partner Account (`/auth/setup-account`)
+- **Route**: `POST /auth/setup-account`
+- **Auth Required**: No (Public with Token)
+- **Allowed Roles**: Public
+- **Request Body**:
+  ```json
+  {
+    "token": "eyJhbGciOiJIUzI1Ni...",
+    "password": "SecurePassword123"
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Account setup successfully. You can now log in as manager."
+  }
+  ```
+
+---
+
+#### 4. Get All Applications (Admin)
+- **Route**: `GET /admin/partnership-applications`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Query Parameters**:
+  - `status`: enum string (`pending`, `under_review`, `approved`, `rejected`)
+  - `search`: string
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 5
+  }
+  ```
+
+---
+
+#### 5. Get Application By Id (Admin)
+- **Route**: `GET /admin/partnership-applications/:id`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": { ... }
+  }
+  ```
+
+---
+
+#### 6. Mark Application Under Review (Admin)
+- **Route**: `PATCH /admin/partnership-applications/:id/review`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc999000111abcdef555",
+      "status": "under_review"
+    }
+  }
+  ```
+
+---
+
+#### 7. Reject Application (Admin)
+- **Route**: `POST /admin/partnership-applications/:id/reject`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Path Parameters**: `id`
+- **Request Body**:
+  ```json
+  {
+    "rejectionReason": "Incomplete commercial documentation"
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc999000111abcdef555",
+      "status": "rejected"
+    }
+  }
+  ```
+
+---
+
+#### 8. Approve Application (Admin)
+- **Route**: `POST /admin/partnership-applications/:id/approve`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Path Parameters**: `id`
+- **Side Effects**: Automatically creates Manager User profile and Restaurant document in system, sends setup email with registration token.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc999000111abcdef555",
+      "status": "approved",
+      "createdRestaurantId": "669fc8888888888abcdef222"
+    }
+  }
+  ```
+
+---
+
+#### 9. Resend Approval Email (Admin)
+- **Route**: `POST /admin/partnership-applications/:id/resend-approval-email`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Approval setup email resent successfully"
+  }
+  ```
+
+---
+
+### 4.21 Imports Module (`/imports`)
+
+#### 1. Upload File for Import
+- **Route**: `POST /imports`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Content-Type**: `multipart/form-data`
+- **Request Body**:
+  ```text
+  file: <binary .csv or .xlsx file>
+  type: "sales_history"
+  ```
+- **Validation Rules**:
+  - `file`: required upload field (Multer file)
+  - `type`: enum required (`sales_history`, `inventory_initial`, `products_catalog`)
+- **Success Response** (201 Created):
+  ```json
+  {
+    "data": {
+      "_id": "669fc111222333abcdef999",
+      "filename": "sales_july_2026.csv",
+      "detectedColumns": ["Date", "Item Name", "Qty", "Price"],
+      "status": "uploaded"
+    }
+  }
+  ```
+
+---
+
+#### 2. Preview Import Column Mapping
+- **Route**: `POST /imports/:id/preview`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Path Parameters**: `id` (Import Job ObjectId)
+- **Request Body**:
+  ```json
+  {
+    "columnMapping": {
+      "Date": "date",
+      "Item Name": "productName",
+      "Qty": "quantity",
+      "Price": "unitPrice"
+    }
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "validRows": 150,
+      "invalidRows": 2,
+      "previewRows": [ ... ]
+    }
+  }
+  ```
+
+---
+
+#### 3. Confirm & Process Import Job
+- **Route**: `POST /imports/:id/confirm`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Path Parameters**: `id`
+- **Request Body**:
+  ```json
+  {
+    "columnMapping": {
+      "Date": "date",
+      "Item Name": "productName",
+      "Qty": "quantity",
+      "Price": "unitPrice"
+    }
+  }
+  ```
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc111222333abcdef999",
+      "status": "completed",
+      "importedRecordsCount": 150
+    }
+  }
+  ```
+
+---
+
+#### 4. Get Import Jobs Listing
+- **Route**: `GET /imports`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Query Parameters**:
+  - `status`: enum string (`uploaded`, `previewed`, `processing`, `completed`, `failed`)
+  - `page`: number (default `1`)
+  - `limit`: number (default `10`)
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": [ ... ],
+    "total": 5
+  }
+  ```
+
+---
+
+#### 5. Get Import Job By Id
+- **Route**: `GET /imports/:id`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc111222333abcdef999",
+      "filename": "sales_july_2026.csv",
+      "status": "completed",
+      "importedRecordsCount": 150
+    }
+  }
+  ```
+
+---
+
+#### 6. Retry AI Ingestion for Import Job
+- **Route**: `POST /imports/:id/retry-ai-ingest`
+- **Auth Required**: Yes
+- **Allowed Roles**: `manager`, `admin`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "AI Ingest retry initiated successfully"
+  }
+  ```
+
+---
+
+### 4.22 App Root Module (`/`)
 
 #### 1. Health / Root Hello
 - **Route**: `GET /`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
 - **Success Response** (200 OK): `"Hello World!"`
+
 
 

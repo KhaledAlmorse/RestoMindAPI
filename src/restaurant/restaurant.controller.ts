@@ -51,7 +51,7 @@ export class RestaurantController {
   }
 
   @Get('me')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getMyRestaurant(@AuthUser() user: IAuthUser, @Res() res: Response) {
     if (!user.user.restaurantId) {
       throw new BadRequestException(

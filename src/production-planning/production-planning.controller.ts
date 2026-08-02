@@ -22,7 +22,7 @@ export class ProductionPlanningController {
   ) {}
 
   @Get()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getProductionPlan(
     @Query() query: QueryProductionPlanDto,
     @AuthUser() authUser: IAuthUser,
@@ -37,7 +37,7 @@ export class ProductionPlanningController {
   }
 
   @Post('actuals')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async recordActuals(
     @Body() body: RecordActualsDto,
     @AuthUser() authUser: IAuthUser,

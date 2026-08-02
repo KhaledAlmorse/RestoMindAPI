@@ -187,7 +187,9 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       { productId: new Types.ObjectId(), predictedOrders: 100 },
     ]);
     mockRecipeRepo.findOne.mockResolvedValue({
-      ingredients: [{ ingredientId, quantityPerPortion: 2, yieldPercentage: 100 }],
+      ingredients: [
+        { ingredientId, quantityPerPortion: 2, yieldPercentage: 100 },
+      ],
     });
     mockIngredientRepo.findOne.mockResolvedValue({
       _id: ingredientId,
@@ -204,7 +206,10 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       supplierId,
       items: [],
     });
-    mockPurchaseOrderRepo.update.mockResolvedValue({ _id: existingPoId, items: [] });
+    mockPurchaseOrderRepo.update.mockResolvedValue({
+      _id: existingPoId,
+      items: [],
+    });
 
     const result = await service.generateAutoDrafts(
       mockRestaurantId,
@@ -224,7 +229,7 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       ([{ filters }]: any) => filters?.status === PurchaseOrderStatusEnum.DRAFT,
     );
     expect(idempotencyCall).toBeDefined();
-    const [{ filters: idempotencyFilters }] = idempotencyCall as any;
+    const [{ filters: idempotencyFilters }] = idempotencyCall;
     expect(idempotencyFilters).toEqual(
       expect.objectContaining({
         restaurantId: mockRestaurantId,
@@ -284,7 +289,7 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
     const lookupCall = mockPurchaseOrderRepo.findOne.mock.calls.find(
       ([{ filters }]: any) => filters?.status === PurchaseOrderStatusEnum.DRAFT,
     );
-    const [{ filters: lookupFilters }] = lookupCall as any;
+    const [{ filters: lookupFilters }] = lookupCall;
     const created = mockPurchaseOrderRepo.create.mock.calls[0][0];
 
     expect(created.expectedDeliveryDate.toISOString()).toBe(
@@ -306,7 +311,9 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
       { productId: new Types.ObjectId(), predictedOrders: 100 },
     ]);
     mockRecipeRepo.findOne.mockResolvedValue({
-      ingredients: [{ ingredientId, quantityPerPortion: 2, yieldPercentage: 100 }],
+      ingredients: [
+        { ingredientId, quantityPerPortion: 2, yieldPercentage: 100 },
+      ],
     });
     mockIngredientRepo.findOne.mockResolvedValue({
       _id: ingredientId,
@@ -328,7 +335,10 @@ describe('SupplierAutoDraftService - Phase 6 Business Logic Tests', () => {
           : null,
       ),
     );
-    mockPurchaseOrderRepo.update.mockResolvedValue({ _id: existingPoId, items: [] });
+    mockPurchaseOrderRepo.update.mockResolvedValue({
+      _id: existingPoId,
+      items: [],
+    });
 
     const result = await service.generateAutoDrafts(
       mockRestaurantId,

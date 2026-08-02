@@ -26,7 +26,6 @@ export class RestaurantAddressDto {
   country?: string;
 }
 
-
 export class CreateRestaurantDto {
   @IsString()
   @IsNotEmpty()

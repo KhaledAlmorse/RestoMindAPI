@@ -228,4 +228,3 @@ export class SetupAccountDto {
   @MinLength(6)
   password!: string;
 }
-

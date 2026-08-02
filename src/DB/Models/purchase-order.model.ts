@@ -1,6 +1,10 @@
 import { MongooseModule, Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
-import { IngredientUnitEnum, PurchaseOrderStatusEnum, PurchaseOrderSourceEnum } from 'src/Common/Types';
+import {
+  IngredientUnitEnum,
+  PurchaseOrderStatusEnum,
+  PurchaseOrderSourceEnum,
+} from 'src/Common/Types';
 
 @Schema({ _id: false })
 export class PurchaseOrderItem {
@@ -21,8 +25,7 @@ export class PurchaseOrderItem {
   unitCost!: number;
 }
 
-const PurchaseOrderItemSchema =
-  SchemaFactory.createForClass(PurchaseOrderItem);
+const PurchaseOrderItemSchema = SchemaFactory.createForClass(PurchaseOrderItem);
 
 @Schema({ timestamps: true })
 export class PurchaseOrder {

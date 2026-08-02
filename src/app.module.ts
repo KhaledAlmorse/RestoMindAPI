@@ -56,7 +56,6 @@ import { PartnershipApplicationsModule } from './partnership-applications/partne
     PartnershipApplicationsModule,
   ],
 
-
   controllers: [AppController],
   providers: [AppService],
 })

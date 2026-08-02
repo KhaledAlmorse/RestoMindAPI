@@ -362,7 +362,10 @@ describe('OrdersService', () => {
       );
       // 3 portions * 0.5 per portion, this order alone.
       expect(stockTransactionRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ quantity: 1.5, referenceId: deliveredOrder._id }),
+        expect.objectContaining({
+          quantity: 1.5,
+          referenceId: deliveredOrder._id,
+        }),
       );
       expect(inventoryBatchRepo.update).toHaveBeenCalledWith(
         expect.objectContaining({ body: { quantityRemaining: 8.5 } }),

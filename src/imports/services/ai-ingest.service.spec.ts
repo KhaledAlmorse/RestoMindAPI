@@ -37,7 +37,9 @@ describe('AiIngestService', () => {
     });
 
     it('should retry up to maxRetries on failure and return success false when exhausted', async () => {
-      global.fetch = jest.fn().mockRejectedValue(new Error('Connection refused'));
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('Connection refused'));
 
       const payload = {
         restaurantId: '665f0a1b2c3d4e5f00000001',

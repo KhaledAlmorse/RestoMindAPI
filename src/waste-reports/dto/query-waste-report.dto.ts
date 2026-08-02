@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsMongoId, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsMongoId,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 import { RiskLevelEnum } from 'src/Common/Types';
 
 export class QueryWasteReportDto {

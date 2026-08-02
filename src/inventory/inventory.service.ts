@@ -19,7 +19,11 @@ import { CreateStockTransactionDto } from './dto/create-stock-transaction.dto';
 import { QueryStockTransactionDto } from './dto/query-stock-transaction.dto';
 import { CreateWasteEventDto } from './dto/create-waste-event.dto';
 import { QueryWasteEventDto } from './dto/query-waste-event.dto';
-import { StockTransactionTypeEnum, WasteReasonEnum } from 'src/Common/Types';
+import {
+  RolesEnum,
+  StockTransactionTypeEnum,
+  WasteReasonEnum,
+} from 'src/Common/Types';
 
 @Injectable()
 export class InventoryService {
@@ -79,8 +83,8 @@ export class InventoryService {
 
     if (Array.isArray(dto)) {
       batchItems = dto;
-    } else if ('batches' in dto && Array.isArray((dto as CreateBatchesDto).batches)) {
-      batchItems = (dto as CreateBatchesDto).batches;
+    } else if ('batches' in dto && Array.isArray(dto.batches)) {
+      batchItems = dto.batches;
     } else {
       batchItems = [dto as CreateBatchDto];
       isSingleInput = true;
@@ -165,7 +169,25 @@ export class InventoryService {
 
   // --- Stock Transactions ---
 
-  async createStockTransaction(dto: CreateStockTransactionDto, userId: string) {
+  async createStockTransaction(
+    dto: CreateStockTransactionDto,
+    userOrUserId: any,
+  ) {
+    const userId =
+      typeof userOrUserId === 'string'
+        ? userOrUserId
+        : userOrUserId._id?.toString() || userOrUserId.id;
+
+    if (
+      typeof userOrUserId === 'object' &&
+      userOrUserId.role === RolesEnum.STAFF &&
+      (dto.transactionType as string) === 'adjustment'
+    ) {
+      throw new ForbiddenException(
+        'Staff members cannot record stock adjustment transactions. Adjustments are restricted to managers.',
+      );
+    }
+
     const restaurantId = await this.getManagerRestaurantId(userId);
     this.validateObjectId(dto.ingredientId);
 

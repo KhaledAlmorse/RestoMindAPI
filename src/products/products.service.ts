@@ -324,7 +324,10 @@ export class ProductsService {
       throw new NotFoundException('Product not found');
     }
 
-    if (authUser.user.role === RolesEnum.MANAGER) {
+    if (
+      authUser.user.role === RolesEnum.MANAGER ||
+      authUser.user.role === RolesEnum.STAFF
+    ) {
       const managerRestaurantId = await this.getManagerRestaurantId(
         authUser.user._id.toString(),
       );
@@ -366,7 +369,10 @@ export class ProductsService {
       isDeleted: false,
     };
 
-    if (authUser?.user?.role === RolesEnum.MANAGER) {
+    if (
+      authUser?.user?.role === RolesEnum.MANAGER ||
+      authUser?.user?.role === RolesEnum.STAFF
+    ) {
       const managerRestaurantId = await this.getManagerRestaurantId(
         authUser.user._id.toString(),
       );
@@ -427,7 +433,10 @@ export class ProductsService {
       throw new NotFoundException('Product not found');
     }
 
-    if (authUser?.user?.role === RolesEnum.MANAGER) {
+    if (
+      authUser?.user?.role === RolesEnum.MANAGER ||
+      authUser?.user?.role === RolesEnum.STAFF
+    ) {
       const managerRestaurantId = await this.getManagerRestaurantId(
         authUser.user._id.toString(),
       );

@@ -31,10 +31,11 @@ export class CreateUserDto {
   @IsNotEmpty()
   email!: string;
 
+  @ValidateIf((o) => o.role !== RolesEnum.STAFF)
   @IsString()
   @IsNotEmpty()
   @MinLength(6)
-  password!: string;
+  password?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -44,16 +45,37 @@ export class CreateUserDto {
   @IsEnum(RolesEnum)
   role!: RolesEnum;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsEnum(GenderEnum)
-  gender!: GenderEnum;
+  gender?: GenderEnum;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsDate()
   @Type(() => Date)
-  DOB!: Date;
+  DOB?: Date;
 
   @IsOptional()
   @IsMongoId()
   restaurantId?: string;
+
+  @IsOptional()
+  @IsString()
+  employeeCode?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  hireDate?: Date;
+
+  @IsOptional()
+  @IsEnum(['active', 'inactive', 'terminated'])
+  employmentStatus?: 'active' | 'inactive' | 'terminated';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

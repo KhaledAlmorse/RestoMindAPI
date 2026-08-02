@@ -23,4 +23,3 @@ export * from './prediction.model';
 export * from './waste-report.model';
 export * from './recommendation.model';
 export * from './partnership-application.model';
-

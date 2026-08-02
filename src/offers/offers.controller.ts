@@ -61,7 +61,7 @@ export class OffersController {
   }
 
   @Get()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getOffers(
     @Query() query: QueryOfferDto,
     @AuthUser() authUser: IAuthUser,
@@ -75,7 +75,7 @@ export class OffersController {
   }
 
   @Get(':id')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async getOfferById(
     @Param('id') id: string,
     @AuthUser() authUser: IAuthUser,

@@ -262,7 +262,10 @@ export class ImportsService {
           } as any);
         }
 
-        const productSlug = slugify(`${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`, { lower: true });
+        const productSlug = slugify(
+          `${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          { lower: true },
+        );
         const defaultImage = {
           public_id: 'default_product',
           secure_url:
@@ -276,8 +279,12 @@ export class ImportsService {
               price: row.price,
               freshnessWindow: row.freshnessWindow,
               category: category._id,
-              description: row.description || existingProduct.description || row.title,
-              longDescription: row.longDescription || existingProduct.longDescription || row.title,
+              description:
+                row.description || existingProduct.description || row.title,
+              longDescription:
+                row.longDescription ||
+                existingProduct.longDescription ||
+                row.title,
             },
           });
         } else {
@@ -286,7 +293,8 @@ export class ImportsService {
             title: row.title,
             slug: productSlug,
             description: row.description || row.title,
-            longDescription: row.longDescription || row.description || row.title,
+            longDescription:
+              row.longDescription || row.description || row.title,
             price: row.price,
             freshnessWindow: row.freshnessWindow,
             category: category._id,
@@ -296,7 +304,10 @@ export class ImportsService {
         createdCount++;
       }
 
-      finalStatus = validRows.length > 0 ? ImportJobStatusEnum.COMPLETED : ImportJobStatusEnum.FAILED;
+      finalStatus =
+        validRows.length > 0
+          ? ImportJobStatusEnum.COMPLETED
+          : ImportJobStatusEnum.FAILED;
 
       const updatedJob = await this.importJobRepository.findOneAndUpdate({
         filters: { _id: job._id },
@@ -336,7 +347,11 @@ export class ImportsService {
 
       for (const row of validRows) {
         let existingIngredient = await this.ingredientRepository.findOne({
-          filters: { restaurantId, ingredientCode: row.ingredientCode, isDeleted: false },
+          filters: {
+            restaurantId,
+            ingredientCode: row.ingredientCode,
+            isDeleted: false,
+          },
         });
 
         if (!existingIngredient && row.name) {
@@ -370,7 +385,10 @@ export class ImportsService {
         createdCount++;
       }
 
-      finalStatus = validRows.length > 0 ? ImportJobStatusEnum.COMPLETED : ImportJobStatusEnum.FAILED;
+      finalStatus =
+        validRows.length > 0
+          ? ImportJobStatusEnum.COMPLETED
+          : ImportJobStatusEnum.FAILED;
 
       const updatedJob = await this.importJobRepository.findOneAndUpdate({
         filters: { _id: job._id },
@@ -405,7 +423,8 @@ export class ImportsService {
         const guardError = {
           row: 0,
           column: 'productId',
-          message: 'Cannot import recipes before onboarding menu items. Please import menu_items first.',
+          message:
+            'Cannot import recipes before onboarding menu items. Please import menu_items first.',
         };
 
         const updatedJob = await this.importJobRepository.findOneAndUpdate({
@@ -437,7 +456,8 @@ export class ImportsService {
         const guardError = {
           row: 0,
           column: 'ingredientId',
-          message: 'Cannot import recipes before onboarding ingredients. Please import ingredients first.',
+          message:
+            'Cannot import recipes before onboarding ingredients. Please import ingredients first.',
         };
 
         const updatedJob = await this.importJobRepository.findOneAndUpdate({
@@ -508,7 +528,10 @@ export class ImportsService {
         createdCount++;
       }
 
-      finalStatus = validRows.length > 0 ? ImportJobStatusEnum.COMPLETED : ImportJobStatusEnum.FAILED;
+      finalStatus =
+        validRows.length > 0
+          ? ImportJobStatusEnum.COMPLETED
+          : ImportJobStatusEnum.FAILED;
 
       const updatedJob = await this.importJobRepository.findOneAndUpdate({
         filters: { _id: job._id },
@@ -543,7 +566,8 @@ export class ImportsService {
         const guardError = {
           row: 0,
           column: 'ingredientId',
-          message: 'Cannot import inventory transactions before onboarding ingredients. Please import ingredients first.',
+          message:
+            'Cannot import inventory transactions before onboarding ingredients. Please import ingredients first.',
         };
 
         const updatedJob = await this.importJobRepository.findOneAndUpdate({
@@ -604,7 +628,10 @@ export class ImportsService {
         createdCount++;
       }
 
-      finalStatus = validRows.length > 0 ? ImportJobStatusEnum.COMPLETED : ImportJobStatusEnum.FAILED;
+      finalStatus =
+        validRows.length > 0
+          ? ImportJobStatusEnum.COMPLETED
+          : ImportJobStatusEnum.FAILED;
 
       const updatedJob = await this.importJobRepository.findOneAndUpdate({
         filters: { _id: job._id },
@@ -640,7 +667,8 @@ export class ImportsService {
         const guardError = {
           row: 0,
           column: 'productId',
-          message: 'Cannot import sales history before onboarding menu items. Please import menu_items first.',
+          message:
+            'Cannot import sales history before onboarding menu items. Please import menu_items first.',
         };
 
         const updatedJob = await this.importJobRepository.findOneAndUpdate({

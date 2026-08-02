@@ -36,10 +36,7 @@ export class AiIngestService {
    * microservice is unreachable or returns error, logs at ERROR level and
    * returns failure status without rolling back already written DB transactions.
    */
-  async ingest(
-    payload: IngestPayload,
-    maxRetries = 3,
-  ): Promise<IngestResult> {
+  async ingest(payload: IngestPayload, maxRetries = 3): Promise<IngestResult> {
     this.logger.log(
       `Triggering AI ingest for restaurant ${payload.restaurantId} (${payload.records.length} records)`,
     );

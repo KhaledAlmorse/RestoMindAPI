@@ -325,7 +325,7 @@ async function seed() {
 
   console.log('\n--- Seeding Recipes ---');
   if (productsMap['كرواسون بالزبده']) {
-    let recipeCroissant = await recipesColl.findOne({
+    const recipeCroissant = await recipesColl.findOne({
       productId: productsMap['كرواسون بالزبده'],
       isDeleted: false,
     });
@@ -539,7 +539,7 @@ async function seed() {
   }
 
   console.log('\n--- Seeding Offers ---');
-  let offer = await offersColl.findOne({ restaurantId, isDeleted: false });
+  const offer = await offersColl.findOne({ restaurantId, isDeleted: false });
   if (!offer && productsMap['كنافة بالمكسرات']) {
     await offersColl.insertOne({
       _id: new Types.ObjectId(),

@@ -45,10 +45,6 @@ import { OffersModule } from 'src/offers/offers.module';
     IngredientRepository,
     UserRepository,
   ],
-  exports: [
-    ProductsService,
-    ProductRepository,
-    RecipeRepository,
-  ],
+  exports: [ProductsService, ProductRepository, RecipeRepository],
 })
 export class ProductsModule {}

@@ -75,17 +75,17 @@ describe('CartService', () => {
     it('rejects when cart does not exist', async () => {
       cartRepo.findOne.mockResolvedValue(null);
 
-      await expect(
-        service.updateQuantity(userId, offerId, 3),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.updateQuantity(userId, offerId, 3)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('rejects when item is not found in cart', async () => {
       cartRepo.findOne.mockResolvedValue(buildCart([]));
 
-      await expect(
-        service.updateQuantity(userId, offerId, 3),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.updateQuantity(userId, offerId, 3)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('allows increasing quantity (diff > 0) within limits', async () => {
@@ -110,9 +110,9 @@ describe('CartService', () => {
       offerRepo.findOne.mockResolvedValue(offer);
       orderRepo.findMany.mockResolvedValue([]);
 
-      await expect(
-        service.updateQuantity(userId, offerId, 6),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.updateQuantity(userId, offerId, 6)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('rejects increasing quantity when maxPerCustomer exceeded (diff > 0)', async () => {
@@ -123,9 +123,9 @@ describe('CartService', () => {
       offerRepo.findOne.mockResolvedValue(offer);
       orderRepo.findMany.mockResolvedValue([]);
 
-      await expect(
-        service.updateQuantity(userId, offerId, 6),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.updateQuantity(userId, offerId, 6)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('allows decreasing quantity (diff < 0) without validation', async () => {
