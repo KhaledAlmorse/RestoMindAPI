@@ -12,4 +12,12 @@ export class QueryBatchDto {
   @IsMongoId()
   @IsOptional()
   ingredientId?: string;
+
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  restaurantId?: string;
 }

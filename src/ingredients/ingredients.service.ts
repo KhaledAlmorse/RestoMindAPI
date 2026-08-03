@@ -110,7 +110,10 @@ export class IngredientsService {
   }
 
   async getIngredients(query: QueryIngredientDto, userId: string) {
-    const restaurantId = await this.getManagerRestaurantId(userId);
+    let restaurantId = await this.getManagerRestaurantId(userId);
+    if (!restaurantId && query.restaurantId) {
+      restaurantId = new Types.ObjectId(query.restaurantId);
+    }
     const { page = '1', limit = '10', search } = query;
 
     const parsedPage = parseInt(page, 10);

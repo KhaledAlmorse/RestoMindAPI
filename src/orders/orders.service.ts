@@ -848,13 +848,27 @@ export class OrdersService {
     this.validateObjectId(id);
     const targetId = new Types.ObjectId(id);
 
-    const order = await this.orderRepository.findOne({
+    let order = await this.orderRepository.findOne({
       filters: { _id: targetId },
       populationArray: [
         { path: 'userId', select: '-password' },
         { path: 'restaurantId' },
       ],
     });
+
+    if (!order) {
+      const filters: Record<string, any> = { groupOrderId: targetId };
+      if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
+        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+      }
+      order = await this.orderRepository.findOne({
+        filters,
+        populationArray: [
+          { path: 'userId', select: '-password' },
+          { path: 'restaurantId' },
+        ],
+      });
+    }
 
     if (!order) {
       throw new NotFoundException('Child order not found');
@@ -896,9 +910,17 @@ export class OrdersService {
     this.validateObjectId(id);
     const targetObjId = new Types.ObjectId(id);
 
-    const order = await this.orderRepository.findOne({
+    let order = await this.orderRepository.findOne({
       filters: { _id: targetObjId },
     });
+
+    if (!order) {
+      const filters: Record<string, any> = { groupOrderId: targetObjId };
+      if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
+        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+      }
+      order = await this.orderRepository.findOne({ filters });
+    }
 
     if (!order) {
       throw new NotFoundException('Child order not found');

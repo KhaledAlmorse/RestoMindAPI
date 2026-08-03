@@ -135,8 +135,12 @@ export class InventoryService {
   }
 
   async getBatches(query: QueryBatchDto, userId: string) {
-    const restaurantId = await this.getManagerRestaurantId(userId);
-    const { page = '1', limit = '10', ingredientId } = query;
+    let restaurantId = await this.getManagerRestaurantId(userId);
+    if (!restaurantId && query.restaurantId) {
+      restaurantId = new Types.ObjectId(query.restaurantId);
+    }
+
+    const { page = '1', limit = '10', ingredientId, search } = query;
 
     const parsedPage = parseInt(page, 10);
     const parsedLimit = parseInt(limit, 10);
@@ -149,6 +153,10 @@ export class InventoryService {
       restaurantId,
       isDeleted: false,
     };
+
+    if (search) {
+      filters.$or = [{ batchNumber: { $regex: search, $options: 'i' } }];
+    }
 
     if (ingredientId) {
       this.validateObjectId(ingredientId);
