@@ -26,6 +26,8 @@ import { WeeklyPredictionModule } from './weekly-prediction/weekly-prediction.mo
 import { WasteReportsModule } from './waste-reports/waste-reports.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
 import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
+import { VectorStoreModule } from './vector-store/vector-store.module';
+import { AssistantModule } from './assistant/assistant.module';
 
 @Module({
   imports: [
@@ -54,6 +56,8 @@ import { PartnershipApplicationsModule } from './partnership-applications/partne
     WasteReportsModule,
     RecommendationsModule,
     PartnershipApplicationsModule,
+    VectorStoreModule,
+    AssistantModule,
   ],
 
   controllers: [AppController],

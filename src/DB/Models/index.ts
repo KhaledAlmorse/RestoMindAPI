@@ -23,3 +23,8 @@ export * from './prediction.model';
 export * from './waste-report.model';
 export * from './recommendation.model';
 export * from './partnership-application.model';
+export * from './knowledge-vector.model';
+export * from './weekly-executive-snapshot.model';
+export * from './assistant-action-log.model';
+export * from './recommendation-action.model';
+export * from './assistant-chat-history.model';
