@@ -70,6 +70,35 @@ export function nextPeriodStart(
   return new Date(Math.max(...candidates.map((date) => date.getTime())));
 }
 
+/**
+ * Whether a tier can be bought right now.
+ *
+ * A merchant who already has capacity — paid for or on trial — cannot buy the
+ * same tier again, or a smaller one, until that entitlement runs out. Stacking
+ * months in advance is how the same plan gets bought twice by accident, and
+ * paying for a downgrade you cannot use until next month helps nobody.
+ *
+ * Upgrades are always allowed. Someone who has hit their product cap needs the
+ * bigger tier today, not on their renewal date — blocking that would leave the
+ * "upgrade to keep adding products" message pointing at a locked door.
+ *
+ * Once the entitlement lapses (grace, expired, unpaid) everything is buyable
+ * again: that window is exactly when renewal is supposed to happen.
+ */
+export function canPurchaseTier(
+  sub: SubscriptionFields | undefined | null,
+  target: TierName,
+  now: Date = new Date(),
+): boolean {
+  const state = resolveSubscriptionState(sub, now);
+  if (state !== 'trial' && state !== 'active') return true;
+
+  const held = effectiveTier(sub, state);
+  if (!held) return true;
+
+  return TIERS[target].productCap > TIERS[held].productCap;
+}
+
 /** The tier whose limits currently apply. Trials borrow TRIAL_TIER's capacity. */
 export function effectiveTier(
   sub: SubscriptionFields | undefined | null,

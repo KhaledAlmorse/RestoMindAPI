@@ -5,6 +5,7 @@ import {
   tierPriceCents,
 } from './subscription-tiers.config';
 import {
+  canPurchaseTier,
   effectiveProductCap,
   effectiveTier,
   hasDashboardAccess,
@@ -206,5 +207,45 @@ describe('nextPeriodStart', () => {
 
   it('starts now for a restaurant that has never had either', () => {
     expect(nextPeriodStart(undefined, now)).toEqual(now);
+  });
+});
+
+describe('canPurchaseTier', () => {
+  const now = new Date('2026-08-05T12:00:00Z');
+  const future = new Date('2026-09-19T12:00:00Z');
+  const past = new Date('2026-07-01T12:00:00Z');
+
+  it('refuses the plan a paying merchant already holds', () => {
+    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
+    expect(canPurchaseTier(sub, 'plus', now)).toBe(false);
+  });
+
+  it('refuses a downgrade they could not use until next month anyway', () => {
+    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
+    expect(canPurchaseTier(sub, 'basic', now)).toBe(false);
+  });
+
+  it('allows an upgrade immediately', () => {
+    // Someone who has hit their product cap needs the bigger tier today —
+    // making them wait for a renewal date would strand their catalogue.
+    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
+    expect(canPurchaseTier(sub, 'scale', now)).toBe(true);
+  });
+
+  it('treats a trial as holding the trial tier', () => {
+    const sub = { trialEndsAt: future };
+    expect(canPurchaseTier(sub, 'basic', now)).toBe(false);
+    expect(canPurchaseTier(sub, 'plus', now)).toBe(false);
+    expect(canPurchaseTier(sub, 'scale', now)).toBe(true);
+  });
+
+  it('opens everything up during grace — that is the renewal window', () => {
+    const sub = { tier: 'plus' as const, currentPeriodEnd: past };
+    expect(canPurchaseTier(sub, 'plus', now)).toBe(true);
+    expect(canPurchaseTier(sub, 'basic', now)).toBe(true);
+  });
+
+  it('opens everything up for a restaurant that has never subscribed', () => {
+    expect(canPurchaseTier(undefined, 'basic', now)).toBe(true);
   });
 });

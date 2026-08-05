@@ -34,7 +34,9 @@ import {
   tierPriceCents,
 } from './subscription-tiers.config';
 import {
+  canPurchaseTier,
   effectiveProductCap,
+  effectiveTier,
   nextPeriodStart,
   resolveSubscriptionState,
 } from './subscription-state';
@@ -136,6 +138,10 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
       // When a month bought right now would begin — the same rule onPaid
       // applies, so the screen can only ever promise what actually happens.
       nextPeriodStart: nextPeriodStart(sub),
+      // The date the plans they already hold become buyable again. Null while
+      // nothing is blocking them, so the screen has no date to explain away.
+      renewableFrom:
+        state === 'trial' || state === 'active' ? nextPeriodStart(sub) : null,
       productCount,
       productCap: Number.isFinite(effectiveProductCap(sub, state))
         ? effectiveProductCap(sub, state)
@@ -154,6 +160,9 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
           vatEGP: vatCents / 100,
           // The UI highlights the smallest tier that actually fits.
           fitsCurrentCatalogue: productCount <= TIERS[name].productCap,
+          // Same rule startCheckout enforces, so the screen never offers a
+          // button that the next request would reject.
+          purchasable: canPurchaseTier(sub, name),
         };
       }),
     };
@@ -176,6 +185,25 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
         message: `You have ${productCount} products, which exceeds the ${TIERS[tier].label} limit of ${TIERS[tier].productCap}. Remove ${productCount - TIERS[tier].productCap} products or choose a larger plan.`,
         productCount,
         productCap: TIERS[tier].productCap,
+      });
+    }
+
+    // Nothing to buy while the same capacity is already paid for or running
+    // on trial. Renewal belongs at the end of the period, not stacked on top
+    // of it, and a downgrade bought today cannot take effect until then either.
+    if (!canPurchaseTier(restaurant.subscription, tier)) {
+      const state = resolveSubscriptionState(restaurant.subscription);
+      const availableFrom = nextPeriodStart(restaurant.subscription);
+      const held = effectiveTier(restaurant.subscription, state);
+      throw new ConflictException({
+        code: 'PLAN_NOT_DUE',
+        message:
+          state === 'trial'
+            ? `Your free trial already gives you ${TIERS[held!].label} limits until ${availableFrom.toDateString()}. You can buy this plan from then, or move up to a larger one now.`
+            : `Your ${TIERS[held!].label} plan is paid for until ${availableFrom.toDateString()}. You can renew from then, or move up to a larger plan now.`,
+        state,
+        currentTier: held,
+        availableFrom,
       });
     }
 
