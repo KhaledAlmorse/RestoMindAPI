@@ -12,4 +12,8 @@ export class QuerySupplierDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  @IsOptional()
+  @IsString()
+  restaurantId?: string;
 }
