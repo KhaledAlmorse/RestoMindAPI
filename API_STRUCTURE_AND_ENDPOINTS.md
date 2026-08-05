@@ -18,7 +18,7 @@ This document is the **single source of truth** for the **RestoMindApi** backend
    - [4.6 Ingredients Module (`/ingredients`)](#46-ingredients-module-ingredients)
    - [4.7 Offers Module (`/offers`)](#47-offers-module-offers)
    - [4.8 Cart Module (`/cart`)](#48-cart-module-cart)
-   - [4.9 Orders & Order Groups Module (`/orders`, `/order-groups`)](#49-orders--order-groups-module-orders-order-groups)
+   - [4.9 Orders & Order Groups Module (`/orders`)](#49-orders--order-groups-module-orders)
    - [4.10 Favorites Module (`/favorites`)](#410-favorites-module-favorites)
    - [4.11 Sales Module (`/sales`)](#411-sales-module-sales)
    - [4.12 Dashboard Module (`/dashboard`)](#412-dashboard-module-dashboard)
@@ -40,10 +40,11 @@ This document is the **single source of truth** for the **RestoMindApi** backend
 **RestoMindApi** is built with NestJS, MongoDB (Mongoose), TypeScript, and JWT Authentication.
 
 ### Roles in the System (`RolesEnum`):
+
 - `admin`: Super administrator with full system permissions across all modules.
-- `manager`: Restaurant manager assigned to a specific restaurant. Can manage their restaurant details, staff users, products, recipes, ingredients, offers, and process orders.
+- `manager`: Restaurant manager assigned to a specific restaurant. Can manage their restaurant details, staff users, products, recipes, ingredients, offers, inventory, suppliers, purchase orders, and process orders.
+- `staff`: Restaurant staff members (managed by managers). Authorized to view profile/restaurant, manage inventory batches/transactions/waste, process purchase orders, view products/ingredients/offers, and process restaurant orders.
 - `customer`: End consumer who can view active products/offers, maintain shopping cart, place multi-restaurant order groups, manage personal saved addresses, and save favorites.
-- `staff`: Restaurant staff members (managed by managers).
 
 ---
 
@@ -61,11 +62,18 @@ For Refresh Token endpoints (e.g., `POST /auth/generate-access-token`):
 Authorization: Bearer <JWT_REFRESH_TOKEN>
 ```
 
+For Reset Token endpoints (e.g., `PATCH /auth/reset-password`):
+
+```text
+Authorization: Bearer <JWT_RESET_TOKEN>
+```
+
 ---
 
 ## 3. Global Error & Response Formats
 
 ### Standard Success Response
+
 Most endpoints return objects wrapped in data containers or structured objects:
 
 ```json
@@ -88,6 +96,7 @@ Or for paginated lists:
 ```
 
 ### Common Error Responses
+
 - **400 Bad Request**: Input validation failed (class-validator) or invalid MongoDB `ObjectId`.
 - **401 Unauthorized**: Missing, expired, or invalid JWT token.
 - **403 Forbidden**: User role does not have permission for this route or access across restaurant boundary.
@@ -103,6 +112,7 @@ Or for paginated lists:
 ### 4.1 Auth Module (`/auth`)
 
 #### 1. Sign Up
+
 - **Route**: `POST /auth/signUp`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -149,6 +159,7 @@ Or for paginated lists:
 ---
 
 #### 2. Login
+
 - **Route**: `POST /auth/login`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -182,9 +193,10 @@ Or for paginated lists:
 ---
 
 #### 3. Get Authenticated User Profile (`me`)
+
 - **Route**: `GET /auth/me`
 - **Auth Required**: Yes (Access Token)
-- **Allowed Roles**: `admin`, `customer`, `manager`
+- **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
 - **Success Response** (200 OK):
   ```json
   {
@@ -203,6 +215,7 @@ Or for paginated lists:
 ---
 
 #### 4. Confirm Email Verification OTP
+
 - **Route**: `PATCH /auth/confirm-email`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -226,9 +239,10 @@ Or for paginated lists:
 ---
 
 #### 5. Logout
+
 - **Route**: `POST /auth/logout`
 - **Auth Required**: Yes (Access Token)
-- **Allowed Roles**: `admin`, `customer`, `manager`
+- **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
 - **Success Response** (200 OK):
   ```json
   {
@@ -239,6 +253,7 @@ Or for paginated lists:
 ---
 
 #### 6. Send OTP
+
 - **Route**: `POST /auth/send-otp`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -262,6 +277,7 @@ Or for paginated lists:
 ---
 
 #### 7. Forgot Password
+
 - **Route**: `POST /auth/forgot-password`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -283,9 +299,10 @@ Or for paginated lists:
 ---
 
 #### 8. Generate Access Token (Refresh Token Rotation)
+
 - **Route**: `POST /auth/generate-access-token`
 - **Auth Required**: Yes (Refresh Token in Authorization Header)
-- **Allowed Roles**: `admin`, `customer`, `manager`
+- **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
 - **Success Response** (200 OK):
   ```json
   {
@@ -297,6 +314,7 @@ Or for paginated lists:
 ---
 
 #### 9. Confirm Reset Password OTP
+
 - **Route**: `PATCH /auth/confirm-reset-otp`
 - **Auth Required**: No
 - **Allowed Roles**: Public
@@ -317,6 +335,7 @@ Or for paginated lists:
 ---
 
 #### 10. Reset Password
+
 - **Route**: `PATCH /auth/reset-password`
 - **Auth Required**: Headers Authorization with Reset Token
 - **Allowed Roles**: Public (Token validated via Header)
@@ -340,9 +359,10 @@ Or for paginated lists:
 ---
 
 #### 11. Update Current Profile (`update-me`)
+
 - **Route**: `PATCH /auth/update-me`
 - **Auth Required**: Yes (Access Token)
-- **Allowed Roles**: `admin`, `customer`, `manager`
+- **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
 - **Content-Type**: `multipart/form-data` or `application/json`
 - **Request Body**:
   ```json
@@ -369,6 +389,7 @@ Or for paginated lists:
 ---
 
 #### 12. Add Delivery Address
+
 - **Route**: `POST /auth/addresses`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `customer`
@@ -403,6 +424,7 @@ Or for paginated lists:
 ---
 
 #### 13. Get Saved Addresses
+
 - **Route**: `GET /auth/addresses`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `customer`
@@ -416,6 +438,7 @@ Or for paginated lists:
 ---
 
 #### 14. Update Delivery Address
+
 - **Route**: `PATCH /auth/addresses/:addressId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `customer`
@@ -437,6 +460,7 @@ Or for paginated lists:
 ---
 
 #### 15. Delete Delivery Address
+
 - **Route**: `DELETE /auth/addresses/:addressId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `customer`
@@ -451,6 +475,7 @@ Or for paginated lists:
 ---
 
 #### 16. Set Default Delivery Address
+
 - **Route**: `PATCH /auth/addresses/:addressId/default`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `customer`
@@ -467,6 +492,7 @@ Or for paginated lists:
 ### 4.2 User Module (`/users`)
 
 #### 1. Create User
+
 - **Route**: `POST /users`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -503,6 +529,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get All Users (Paginated & Filtered)
+
 - **Route**: `GET /users`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -542,6 +569,7 @@ Or for paginated lists:
 ---
 
 #### 3. Get User By Id
+
 - **Route**: `GET /users/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -562,6 +590,7 @@ Or for paginated lists:
 ---
 
 #### 4. Update User
+
 - **Route**: `PATCH /users/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -585,7 +614,64 @@ Or for paginated lists:
 
 ---
 
-#### 5. Delete User (Soft Delete)
+#### 5. Update User Status
+
+- **Route**: `PATCH /users/:id/status`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`
+- **Path Parameters**: `id`
+- **Request Body**:
+  ```json
+  {
+    "isActive": true
+  }
+  ```
+- **Validation Rules**:
+  - `isActive`: boolean, required
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc7777777777abcdef333",
+      "isActive": true
+    }
+  }
+  ```
+
+---
+
+#### 6. Resend User Setup Email
+
+- **Route**: `POST /users/:id/resend-setup-email`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Account setup email resent successfully"
+  }
+  ```
+
+---
+
+#### 7. Trigger User Password Reset
+
+- **Route**: `POST /users/:id/reset-password`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`
+- **Path Parameters**: `id`
+- **Success Response** (200 OK):
+  ```json
+  {
+    "message": "Password reset instructions sent successfully"
+  }
+  ```
+
+---
+
+#### 8. Delete User (Soft Delete)
+
 - **Route**: `DELETE /users/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -612,9 +698,11 @@ Or for paginated lists:
 ### 4.3 Restaurant Module (`/restaurants`)
 
 #### 1. Create Restaurant
+
 - **Route**: `POST /restaurants`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
+- **Content-Type**: `multipart/form-data`
 - **Request Body**:
   ```json
   {
@@ -629,6 +717,7 @@ Or for paginated lists:
     }
   }
   ```
+- **File Upload**: Optional file field `image`.
 - **Validation Rules**:
   - `name`: string, required
   - `ownerUserId`: Mongo ObjectId string, required (user must have role `manager`)
@@ -648,6 +737,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get All Restaurants (Paginated & Filtered)
+
 - **Route**: `GET /restaurants`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -690,10 +780,11 @@ Or for paginated lists:
 
 ---
 
-#### 3. Get Manager's Own Restaurant (`me`)
+#### 3. Get Authenticated User's Restaurant (`me`)
+
 - **Route**: `GET /restaurants/me`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Success Response** (200 OK):
   ```json
   {
@@ -708,6 +799,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get Restaurant By Id
+
 - **Route**: `GET /restaurants/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -725,9 +817,11 @@ Or for paginated lists:
 ---
 
 #### 5. Update Restaurant
+
 - **Route**: `PATCH /restaurants/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
+- **Content-Type**: `multipart/form-data` or `application/json`
 - **Path Parameters**: `id`
 - **Request Body**:
   ```json
@@ -737,6 +831,7 @@ Or for paginated lists:
     "isActive": true
   }
   ```
+- **File Upload**: Optional file field `image`.
 - **Success Response** (200 OK):
   ```json
   {
@@ -750,6 +845,7 @@ Or for paginated lists:
 ---
 
 #### 6. Delete Restaurant (Soft Delete)
+
 - **Route**: `DELETE /restaurants/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -771,6 +867,7 @@ Or for paginated lists:
 ### 4.4 Products Module (`/products`)
 
 #### 1. Create Product
+
 - **Route**: `POST /products`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -808,6 +905,7 @@ Or for paginated lists:
 ---
 
 #### 2. Update Product
+
 - **Route**: `PATCH /products/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -827,6 +925,7 @@ Or for paginated lists:
 ---
 
 #### 3. Delete Product (Soft Delete)
+
 - **Route**: `DELETE /products/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -841,9 +940,10 @@ Or for paginated lists:
 ---
 
 #### 4. Change Product Availability
+
 - **Route**: `PATCH /products/:id/availability`
 - **Auth Required**: Yes
-- **Allowed Roles**: `admin`, `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `id`
 - **Request Body**:
   ```json
@@ -864,9 +964,10 @@ Or for paginated lists:
 ---
 
 #### 5. Get All Products (Paginated & Filtered)
+
 - **Route**: `GET /products`
 - **Auth Required**: Yes
-- **Allowed Roles**: `admin`, `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `page`: string (default `1`)
   - `limit`: string (default `10`)
@@ -894,9 +995,10 @@ Or for paginated lists:
 ---
 
 #### 6. Get Product By Id or Slug
+
 - **Route**: `GET /products/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `admin`, `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `id` (can be Mongo ObjectId or product slug)
 - **Success Response** (200 OK):
   ```json
@@ -912,6 +1014,7 @@ Or for paginated lists:
 ---
 
 #### 7. Upsert Product Recipe
+
 - **Route**: `PUT /products/:productId/recipe`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -941,9 +1044,10 @@ Or for paginated lists:
 ---
 
 #### 8. Get Product Recipe
+
 - **Route**: `GET /products/:productId/recipe`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `productId`
 - **Success Response** (200 OK):
   ```json
@@ -957,6 +1061,7 @@ Or for paginated lists:
 ### 4.5 Categories Module (`/categories`)
 
 #### 1. Create Category
+
 - **Route**: `POST /categories`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -986,6 +1091,7 @@ Or for paginated lists:
 ---
 
 #### 2. Update Category
+
 - **Route**: `PATCH /categories/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -1005,6 +1111,7 @@ Or for paginated lists:
 ---
 
 #### 3. Delete Category
+
 - **Route**: `DELETE /categories/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -1020,6 +1127,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get All Categories (Paginated & Searchable)
+
 - **Route**: `GET /categories`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -1051,6 +1159,7 @@ Or for paginated lists:
 ---
 
 #### 5. Get Category By Id
+
 - **Route**: `GET /categories/:id`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -1070,6 +1179,7 @@ Or for paginated lists:
 ### 4.6 Ingredients Module (`/ingredients`)
 
 #### 1. Create Ingredient
+
 - **Route**: `POST /ingredients`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1102,9 +1212,10 @@ Or for paginated lists:
 ---
 
 #### 2. Get All Ingredients (Paginated & Filtered)
+
 - **Route**: `GET /ingredients`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `page`: string (default `1`)
   - `limit`: string (default `10`)
@@ -1129,9 +1240,10 @@ Or for paginated lists:
 ---
 
 #### 3. Get Ingredient By Id
+
 - **Route**: `GET /ingredients/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `id`
 - **Success Response** (200 OK):
   ```json
@@ -1143,6 +1255,7 @@ Or for paginated lists:
 ---
 
 #### 4. Update Ingredient
+
 - **Route**: `PATCH /ingredients/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1163,6 +1276,7 @@ Or for paginated lists:
 ---
 
 #### 5. Delete Ingredient (Soft Delete)
+
 - **Route**: `DELETE /ingredients/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1179,6 +1293,7 @@ Or for paginated lists:
 ### 4.7 Offers Module (`/offers`)
 
 #### 1. Create Offer
+
 - **Route**: `POST /offers`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1220,6 +1335,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get Active Offers (Customer Public List)
+
 - **Route**: `GET /offers/active`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -1238,7 +1354,7 @@ Or for paginated lists:
   - `sortOrder`: string (`asc`, `desc`, default `desc`)
   - `page`: string (default `1`)
   - `limit`: string (default `10`)
-- **Example**: `GET /offers/active?page=1&limit=10&status=active`
+- **Example**: `GET /offers/active?page=1&limit=10`
 - **Success Response** (200 OK):
   ```json
   {
@@ -1261,6 +1377,7 @@ Or for paginated lists:
 ---
 
 #### 3. Get Active Offer By Id or Product Slug
+
 - **Route**: `GET /offers/active/:id`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -1275,6 +1392,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get Recommended Offers
+
 - **Route**: `GET /offers/recommendations`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -1292,10 +1410,11 @@ Or for paginated lists:
 
 ---
 
-#### 5. Get Offers (Manager List)
+#### 5. Get Offers Listing (Management)
+
 - **Route**: `GET /offers`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**: Same as `QueryOfferDto` (`status`, `productId`, `source`, `categoryId`, `restaurantId`, `search`, `featured`, `minPrice`, `maxPrice`, `startDate`, `endDate`, `sortBy`, `sortOrder`, `page`, `limit`)
 - **Success Response** (200 OK):
   ```json
@@ -1310,10 +1429,11 @@ Or for paginated lists:
 
 ---
 
-#### 6. Get Offer By Id (Manager)
+#### 6. Get Offer By Id
+
 - **Route**: `GET /offers/:id`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `id`
 - **Success Response** (200 OK):
   ```json
@@ -1325,6 +1445,7 @@ Or for paginated lists:
 ---
 
 #### 7. Update Offer
+
 - **Route**: `PATCH /offers/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1346,6 +1467,7 @@ Or for paginated lists:
 ---
 
 #### 8. Cancel Offer
+
 - **Route**: `PATCH /offers/:id/cancel`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1365,6 +1487,7 @@ Or for paginated lists:
 ### 4.8 Cart Module (`/cart`)
 
 #### 1. Get User Cart
+
 - **Route**: `GET /cart`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1387,7 +1510,7 @@ Or for paginated lists:
       ],
       "totalQuantity": 2,
       "totalOriginalPrice": 25.98,
-      "totalDiscount": 5.20,
+      "totalDiscount": 5.2,
       "finalTotalPrice": 20.78
     }
   }
@@ -1396,6 +1519,7 @@ Or for paginated lists:
 ---
 
 #### 2. Add Item to Cart
+
 - **Route**: `POST /cart`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1419,6 +1543,7 @@ Or for paginated lists:
 ---
 
 #### 3. Update Cart Item Quantity
+
 - **Route**: `PATCH /cart/:offerId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1439,6 +1564,7 @@ Or for paginated lists:
 ---
 
 #### 4. Remove Item from Cart
+
 - **Route**: `DELETE /cart/:offerId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1453,6 +1579,7 @@ Or for paginated lists:
 ---
 
 #### 5. Clear Entire Cart
+
 - **Route**: `DELETE /cart`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1465,9 +1592,10 @@ Or for paginated lists:
 
 ---
 
-### 4.9 Orders & Order Groups Module (`/orders`, `/order-groups`)
+### 4.9 Orders & Order Groups Module (`/orders`)
 
 #### 1. Create Order (Checkout Cart)
+
 - **Route**: `POST /orders`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1503,52 +1631,113 @@ Or for paginated lists:
 
 ---
 
-#### 2. Get Customer Orders (`me`)
-- **Route**: `GET /orders/me`
-- **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Query Parameters**: `restaurantId` (optional Mongo ObjectId string)
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": [ ... ]
-  }
-  ```
+#### 2. Get Order Group By Id
 
----
-
-#### 3. Get Customer Order Details By Id
-- **Route**: `GET /orders/me/:id`
-- **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Path Parameters**: `id`
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": { ... }
-  }
-  ```
-
----
-
-#### 4. Get Group Order Details By Id
 - **Route**: `GET /orders/group/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`, `admin`
-- **Path Parameters**: `id`
+- **Path Parameters**: `id` (Order Group ObjectId)
 - **Success Response** (200 OK):
   ```json
   {
-    "data": { ... }
+    "data": {
+      "_id": "669fc999888777abcdef999",
+      "userId": "669fc1234567890abcdef123",
+      "overallStatus": "Pending",
+      "totalOriginalPrice": 25.98,
+      "totalDiscount": 5.20,
+      "finalTotalPrice": 20.78,
+      "childOrders": [ ... ]
+    }
   }
   ```
 
 ---
 
-#### 5. Get All Orders (Admin Listing)
+#### 3. Cancel Order Group
+
+- **Route**: `PATCH /orders/group/:id/cancel`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`
+- **Path Parameters**: `id` (Order Group ObjectId)
+- **Security Check**: Customer can only cancel their own order group if it is still in `Pending` state.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "orderGroupId": "669fc999888777abcdef999",
+      "overallStatus": "Cancelled"
+    }
+  }
+  ```
+
+---
+
+#### 4. Get Child Order By Id
+
+- **Route**: `GET /orders/:id`
+- **Auth Required**: Yes
+- **Allowed Roles**: `customer`, `manager`, `admin`, `staff`
+- **Path Parameters**: `id` (Child Order ObjectId)
+- **Security Check**: Customers can only view their own orders; Managers and Staff can only view orders assigned to their restaurant.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc999888777abcdef999",
+      "groupOrderId": "669fc888777666abcdef888",
+      "restaurant": {
+        "_id": "669fc8888888888abcdef222",
+        "name": "Pizza Gourmet Express"
+      },
+      "items": [ ... ],
+      "finalTotalPrice": 20.78,
+      "status": "Pending"
+    }
+  }
+  ```
+
+---
+
+#### 5. Update Child Order Status
+
+- **Route**: `PATCH /orders/:id/status`
+- **Auth Required**: Yes
+- **Allowed Roles**: `admin`, `manager`, `staff`
+- **Path Parameters**: `id` (Child Order ObjectId)
+- **Security Check**: Managers and Staff can only update status of orders belonging to their own restaurant.
+- **Request Body**:
+  ```json
+  {
+    "status": "Preparing"
+  }
+  ```
+- **Validation Rules**:
+  - `status`: enum string required (`OrderStatusEnum`: `Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
+- **Side Effects**:
+  - `Delivered`: Idempotently creates `SalesTransaction` records for each order line item (`source: marketplace_order`).
+  - `Cancelled`: Restores offer remaining quantity and reactivates offer if previously `sold_out`.
+- **Success Response** (200 OK):
+  ```json
+  {
+    "data": {
+      "_id": "669fc999888777abcdef999",
+      "status": "Preparing"
+    }
+  }
+  ```
+
+---
+
+#### 6. Get All Orders (Role-Aware Listing)
+
 - **Route**: `GET /orders`
 - **Auth Required**: Yes
-- **Allowed Roles**: `admin`
+- **Allowed Roles**: `customer`, `manager`, `admin`, `staff`
+- **Behavior by Role**:
+  - `customer`: Automatically scoped to current customer's orders (`userId`).
+  - `manager` / `staff`: Automatically scoped to current user's restaurant (`restaurantId`).
+  - `admin`: Can view all orders or filter by any `restaurantId`.
 - **Query Parameters**:
   - `page`: number (default `1`)
   - `limit`: number (default `10`)
@@ -1560,7 +1749,7 @@ Or for paginated lists:
   - `endDate`: ISO date string (filters `createdAt <= endDate 23:59:59.999Z`)
   - `minTotalPrice`: number (filters `finalTotalPrice >= minTotalPrice`)
   - `maxTotalPrice`: number (filters `finalTotalPrice <= maxTotalPrice`)
-  - `restaurantId`: Mongo ObjectId string (filter by restaurant)
+  - `restaurantId`: Mongo ObjectId string (filter by restaurant for Admin)
   - `sortBy` / `sort`: string (`createdAt`, `updatedAt`, `finalTotalPrice`, `totalQuantity`, `status`; default `createdAt`)
   - `sortOrder` / `order`: string (`asc`, `desc`; default `desc`)
 - **Success Response** (200 OK):
@@ -1601,115 +1790,10 @@ Or for paginated lists:
 
 ---
 
-#### 6. Get Restaurant Orders (Manager Listing)
-- **Route**: `GET /orders/restaurant/:restaurantId`
-- **Auth Required**: Yes
-- **Allowed Roles**: `admin`, `manager`
-- **Path Parameters**: `restaurantId`
-- **Security Check**: Managers can ONLY view orders for their own assigned restaurant (`restaurantId` must match manager's `user.restaurantId`).
-- **Query Parameters**:
-  - `page`: number (default `1`)
-  - `limit`: number (default `10`)
-  - `search`: string (matches `fullName`, `emailAddress`, `phoneNumber`, `groupOrderId`, or order `_id`)
-  - `status`: enum string (`Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
-  - `paymentMethod`: string
-  - `deliveryMethod`: string
-  - `startDate`: ISO date string
-  - `endDate`: ISO date string
-  - `minTotalPrice`: number
-  - `maxTotalPrice`: number
-  - `sortBy` / `sort`: string (`createdAt`, `updatedAt`, `finalTotalPrice`, `totalQuantity`, `status`; default `createdAt`)
-  - `sortOrder` / `order`: string (`asc`, `desc`; default `desc`)
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": [
-      {
-        "_id": "669fc999888777abcdef999",
-        "restaurant": {
-          "_id": "669fc8888888888abcdef222",
-          "name": "Pizza Gourmet Express"
-        },
-        "items": [ ... ],
-        "finalTotalPrice": 20.78,
-        "status": "Pending"
-      }
-    ],
-    "totalItems": 1,
-    "totalPages": 1,
-    "currentPage": 1,
-    "pageSize": 10,
-    "hasNextPage": false,
-    "hasPreviousPage": false
-  }
-  ```
-
----
-
-#### 7. Update Sub-Order Status
-- **Route**: `PATCH /orders/:id/status`
-- **Auth Required**: Yes
-- **Allowed Roles**: `admin`, `manager`
-- **Path Parameters**: `id`
-- **Security Check**: Managers can only update status of orders belonging to their own restaurant.
-- **Request Body**:
-  ```json
-  {
-    "status": "Preparing"
-  }
-  ```
-- **Validation Rules**:
-  - `status`: enum string required (`OrderStatusEnum`: `Pending`, `Confirmed`, `Preparing`, `Ready`, `Out For Delivery`, `Delivered`, `Cancelled`)
-- **Side Effects**:
-  - `Delivered`: Idempotently creates `SalesTransaction` records for each order line item (`source: marketplace_order`).
-  - `Cancelled`: Restores offer remaining quantity and reactivates offer if previously `sold_out`.
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": {
-      "_id": "669fc999888777abcdef999",
-      "status": "Preparing"
-    }
-  }
-  ```
-
----
-
-#### 8. Cancel Order Group
-- **Route**: `PATCH /orders/group/:id/cancel`
-- **Auth Required**: Yes
-- **Allowed Roles**: `customer`
-- **Path Parameters**: `id` (Order Group ObjectId)
-- **Security Check**: Customer can only cancel their own order group if it is still in `Pending` state.
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": {
-      "orderGroupId": "669fc999888777abcdef999",
-      "overallStatus": "Cancelled"
-    }
-  }
-  ```
-
----
-
-#### 9. Get Order Group By Id (`/order-groups`)
-- **Route**: `GET /order-groups/:id`
-- **Auth Required**: Yes
-- **Allowed Roles**: `admin`
-- **Path Parameters**: `id`
-- **Success Response** (200 OK):
-  ```json
-  {
-    "data": { ... }
-  }
-  ```
-
----
-
 ### 4.10 Favorites Module (`/favorites`)
 
 #### 1. Add Favorite Offer
+
 - **Route**: `POST /favorites/:offerId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1728,6 +1812,7 @@ Or for paginated lists:
 ---
 
 #### 2. Remove Favorite Offer
+
 - **Route**: `DELETE /favorites/:offerId`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1742,6 +1827,7 @@ Or for paginated lists:
 ---
 
 #### 3. Get User Favorites
+
 - **Route**: `GET /favorites`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1767,6 +1853,7 @@ Or for paginated lists:
 ---
 
 #### 4. Check Favorite Status
+
 - **Route**: `GET /favorites/:offerId/status`
 - **Auth Required**: Yes
 - **Allowed Roles**: `customer`
@@ -1783,6 +1870,7 @@ Or for paginated lists:
 ### 4.11 Sales Module (`/sales`)
 
 #### 1. Get Sales Transactions (Paginated & Filtered)
+
 - **Route**: `GET /sales`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -1836,6 +1924,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get Sales Summary Statistics
+
 - **Route**: `GET /sales/summary`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`, `manager`
@@ -1854,7 +1943,7 @@ Or for paginated lists:
       "totalQuantitySold": 42,
       "totalGrossRevenue": 545.58,
       "totalNetRevenue": 436.38,
-      "totalDiscountsGiven": 109.20,
+      "totalDiscountsGiven": 109.2,
       "promotionalSalesCount": 42,
       "featuredSalesCount": 42,
       "averageSellingPrice": 10.39
@@ -1867,6 +1956,7 @@ Or for paginated lists:
 ### 4.12 Dashboard Module (`/dashboard`)
 
 #### 1. Get Admin Dashboard
+
 - **Route**: `GET /dashboard/admin`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -1879,13 +1969,13 @@ Or for paginated lists:
     "kpis": {
       "revenue": {
         "current": 436.38,
-        "previous": 350.00,
+        "previous": 350.0,
         "changePercent": 24.68
       },
       "orders": {
         "current": 15,
         "previous": 12,
-        "changePercent": 25.00
+        "changePercent": 25.0
       },
       "activeOffers": 8,
       "pendingOrders": 2,
@@ -1945,6 +2035,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get Manager Dashboard
+
 - **Route**: `GET /dashboard/manager`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -1958,9 +2049,9 @@ Or for paginated lists:
     "restaurantName": "Pizza Gourmet Express",
     "kpis": {
       "revenue": {
-        "current": 250.00,
-        "previous": 200.00,
-        "changePercent": 25.00
+        "current": 250.0,
+        "previous": 200.0,
+        "changePercent": 25.0
       },
       "orders": {
         "current": 8,
@@ -1969,8 +2060,8 @@ Or for paginated lists:
       },
       "activeOffers": 3,
       "pendingOrders": 1,
-      "netProfit": 215.00,
-      "taxDeduction": 35.00,
+      "netProfit": 215.0,
+      "taxDeduction": 35.0,
       "avgOrderValue": 31.25
     },
     "topProducts": [
@@ -2015,16 +2106,17 @@ Or for paginated lists:
 ### 4.13 Inventory Module (`/inventory`)
 
 #### 1. Create Batch (Single or Bulk)
+
 - **Route**: `POST /inventory/batches`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Request Body**: Accepts single `CreateBatchDto`, array of `CreateBatchDto`, or `CreateBatchesDto` object `{ "batches": [...] }`.
   ```json
   {
     "ingredientId": "669fc2222222222abcdef555",
     "batchNumber": "BATCH-2026-001",
     "quantityRemaining": 5000,
-    "unitCost": 2.50,
+    "unitCost": 2.5,
     "expiryDate": "2026-12-31T00:00:00.000Z",
     "receivedDate": "2026-08-01T00:00:00.000Z"
   }
@@ -2045,7 +2137,7 @@ Or for paginated lists:
       "ingredientId": "669fc2222222222abcdef555",
       "batchNumber": "BATCH-2026-001",
       "quantityRemaining": 5000,
-      "unitCost": 2.50
+      "unitCost": 2.5
     }
   }
   ```
@@ -2053,9 +2145,10 @@ Or for paginated lists:
 ---
 
 #### 2. Get Batches (Paginated & Filtered)
+
 - **Route**: `GET /inventory/batches`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `ingredientId`: Mongo ObjectId string
   - `isExpired`: boolean string (`true`, `false`)
@@ -2075,16 +2168,17 @@ Or for paginated lists:
 ---
 
 #### 3. Create Stock Transaction
+
 - **Route**: `POST /inventory/transactions`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Request Body**:
   ```json
   {
     "ingredientId": "669fc2222222222abcdef555",
     "type": "in",
     "quantity": 1000,
-    "unitCost": 2.50,
+    "unitCost": 2.5,
     "reason": "Restock shipment",
     "batchId": "669fc555444333abcdef111"
   }
@@ -2106,9 +2200,10 @@ Or for paginated lists:
 ---
 
 #### 4. Get Stock Transactions
+
 - **Route**: `GET /inventory/transactions`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `ingredientId`: Mongo ObjectId string
   - `type`: enum string (`in`, `out`, `adjustment`, `waste`)
@@ -2129,9 +2224,10 @@ Or for paginated lists:
 ---
 
 #### 5. Create Waste Event
+
 - **Route**: `POST /inventory/waste-events`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Request Body**:
   ```json
   {
@@ -2158,9 +2254,10 @@ Or for paginated lists:
 ---
 
 #### 6. Get Waste Events
+
 - **Route**: `GET /inventory/waste-events`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `ingredientId`: Mongo ObjectId string
   - `reason`: enum string (`expired`, `spoiled`, `damaged`, `prep_waste`, `other`)
@@ -2181,6 +2278,7 @@ Or for paginated lists:
 ### 4.14 Suppliers Module (`/suppliers`)
 
 #### 1. Create Supplier
+
 - **Route**: `POST /suppliers`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2214,9 +2312,10 @@ Or for paginated lists:
 ---
 
 #### 2. Get Suppliers
+
 - **Route**: `GET /suppliers`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `search`: string (matches supplier name or contact person)
   - `page`: number (default `1`)
@@ -2234,6 +2333,7 @@ Or for paginated lists:
 ### 4.15 Purchase Orders Module (`/purchase-orders`)
 
 #### 1. Create Purchase Order
+
 - **Route**: `POST /purchase-orders`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2245,7 +2345,7 @@ Or for paginated lists:
       {
         "ingredientId": "669fc2222222222abcdef555",
         "quantityOrdered": 50,
-        "unitCost": 3.00
+        "unitCost": 3.0
       }
     ],
     "notes": "Urgent delivery required"
@@ -2262,7 +2362,7 @@ Or for paginated lists:
       "_id": "669fc777666555abcdef333",
       "poNumber": "PO-2026-0001",
       "status": "draft",
-      "totalCost": 150.00
+      "totalCost": 150.0
     }
   }
   ```
@@ -2270,9 +2370,10 @@ Or for paginated lists:
 ---
 
 #### 2. Get Purchase Orders
+
 - **Route**: `GET /purchase-orders`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `supplierId`: Mongo ObjectId string
   - `status`: enum string (`draft`, `ordered`, `received`, `cancelled`)
@@ -2289,9 +2390,10 @@ Or for paginated lists:
 ---
 
 #### 3. Receive Purchase Order
+
 - **Route**: `PATCH /purchase-orders/:id/receive`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Path Parameters**: `id` (PO Mongo ObjectId)
 - **Side Effects**: Automatically updates inventory stock levels and creates inventory batches/stock transactions for received items.
 - **Success Response** (200 OK):
@@ -2308,6 +2410,7 @@ Or for paginated lists:
 ---
 
 #### 4. Update Purchase Order Status
+
 - **Route**: `PATCH /purchase-orders/:id/status`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2335,9 +2438,10 @@ Or for paginated lists:
 ### 4.16 Production Planning Module (`/predictions/production-plan`)
 
 #### 1. Get Daily Production Plan
+
 - **Route**: `GET /predictions/production-plan`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Query Parameters**:
   - `date`: ISO date string (YYYY-MM-DD, e.g. `2026-08-02`)
 - **Success Response** (200 OK):
@@ -2362,9 +2466,10 @@ Or for paginated lists:
 ---
 
 #### 2. Record Actual Production / Sales
+
 - **Route**: `POST /predictions/production-plan/actuals`
 - **Auth Required**: Yes
-- **Allowed Roles**: `manager`
+- **Allowed Roles**: `admin`, `manager`, `staff`
 - **Request Body**:
   ```json
   {
@@ -2389,6 +2494,7 @@ Or for paginated lists:
 ### 4.17 Waste Reports Module (`/waste-reports`)
 
 #### 1. Get Waste Reports List
+
 - **Route**: `GET /waste-reports`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2409,6 +2515,7 @@ Or for paginated lists:
 ---
 
 #### 2. Get Waste Reports Summary
+
 - **Route**: `GET /waste-reports/summary`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2417,11 +2524,11 @@ Or for paginated lists:
   {
     "data": {
       "totalWasteEvents": 12,
-      "totalWasteCost": 345.50,
+      "totalWasteCost": 345.5,
       "byReason": {
-        "expired": 150.00,
-        "spoiled": 120.00,
-        "prep_waste": 75.50
+        "expired": 150.0,
+        "spoiled": 120.0,
+        "prep_waste": 75.5
       }
     }
   }
@@ -2432,6 +2539,7 @@ Or for paginated lists:
 ### 4.18 Weekly Prediction Module (`/predictions`)
 
 #### 1. Recalculate Single Product Prediction
+
 - **Route**: `POST /predictions/recalculate`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2460,6 +2568,7 @@ Or for paginated lists:
 ---
 
 #### 2. Batch Recalculate Predictions
+
 - **Route**: `POST /predictions/batch-recalculate`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2480,6 +2589,7 @@ Or for paginated lists:
 ---
 
 #### 3. Get Predictions Listing
+
 - **Route**: `GET /predictions`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2498,6 +2608,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get AI Learned Status
+
 - **Route**: `GET /predictions/learned-status`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2514,6 +2625,7 @@ Or for paginated lists:
 ---
 
 #### 5. Get Prediction Accuracy Metrics
+
 - **Route**: `GET /predictions/accuracy`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2534,6 +2646,7 @@ Or for paginated lists:
 ---
 
 #### 6. Trigger AI Backfill
+
 - **Route**: `POST /predictions/ai-backfill`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2558,6 +2671,7 @@ Or for paginated lists:
 ### 4.19 Recommendations Module (`/recommendations`)
 
 #### 1. Get Active AI Recommendations
+
 - **Route**: `GET /recommendations`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2585,6 +2699,7 @@ Or for paginated lists:
 ---
 
 #### 2. Scan Surplus Inventory
+
 - **Route**: `POST /recommendations/scan-surplus`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2599,6 +2714,7 @@ Or for paginated lists:
 ---
 
 #### 3. Approve Recommendation
+
 - **Route**: `PATCH /recommendations/:id/approve`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2623,6 +2739,7 @@ Or for paginated lists:
 ---
 
 #### 4. Edit Recommendation
+
 - **Route**: `PATCH /recommendations/:id/edit`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2647,6 +2764,7 @@ Or for paginated lists:
 ---
 
 #### 5. Dismiss Recommendation
+
 - **Route**: `PATCH /recommendations/:id/dismiss`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2663,7 +2781,8 @@ Or for paginated lists:
 
 ---
 
-#### 6. Validate Plan (`/predictions/validate-plan`)
+#### 6. Validate Production Plan (`/predictions/validate-plan`)
+
 - **Route**: `POST /predictions/validate-plan`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`
@@ -2693,6 +2812,7 @@ Or for paginated lists:
 ### 4.20 Partnership Applications Module (`/partnership-applications`)
 
 #### 1. Submit Partnership Application (Public)
+
 - **Route**: `POST /partnership-applications`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -2727,6 +2847,7 @@ Or for paginated lists:
 ---
 
 #### 2. Check Application Status (Public)
+
 - **Route**: `GET /partnership-applications/status/:id`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
@@ -2744,6 +2865,7 @@ Or for paginated lists:
 ---
 
 #### 3. Setup Approved Partner Account (`/auth/setup-account`)
+
 - **Route**: `POST /auth/setup-account`
 - **Auth Required**: No (Public with Token)
 - **Allowed Roles**: Public
@@ -2764,6 +2886,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get All Applications (Admin)
+
 - **Route**: `GET /admin/partnership-applications`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2783,6 +2906,7 @@ Or for paginated lists:
 ---
 
 #### 5. Get Application By Id (Admin)
+
 - **Route**: `GET /admin/partnership-applications/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2797,6 +2921,7 @@ Or for paginated lists:
 ---
 
 #### 6. Mark Application Under Review (Admin)
+
 - **Route**: `PATCH /admin/partnership-applications/:id/review`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2814,6 +2939,7 @@ Or for paginated lists:
 ---
 
 #### 7. Reject Application (Admin)
+
 - **Route**: `POST /admin/partnership-applications/:id/reject`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2837,6 +2963,7 @@ Or for paginated lists:
 ---
 
 #### 8. Approve Application (Admin)
+
 - **Route**: `POST /admin/partnership-applications/:id/approve`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2856,6 +2983,7 @@ Or for paginated lists:
 ---
 
 #### 9. Resend Approval Email (Admin)
+
 - **Route**: `POST /admin/partnership-applications/:id/resend-approval-email`
 - **Auth Required**: Yes
 - **Allowed Roles**: `admin`
@@ -2872,6 +3000,7 @@ Or for paginated lists:
 ### 4.21 Imports Module (`/imports`)
 
 #### 1. Upload File for Import
+
 - **Route**: `POST /imports`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -2899,6 +3028,7 @@ Or for paginated lists:
 ---
 
 #### 2. Preview Import Column Mapping
+
 - **Route**: `POST /imports/:id/preview`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -2928,6 +3058,7 @@ Or for paginated lists:
 ---
 
 #### 3. Confirm & Process Import Job
+
 - **Route**: `POST /imports/:id/confirm`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -2957,6 +3088,7 @@ Or for paginated lists:
 ---
 
 #### 4. Get Import Jobs Listing
+
 - **Route**: `GET /imports`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -2975,6 +3107,7 @@ Or for paginated lists:
 ---
 
 #### 5. Get Import Job By Id
+
 - **Route**: `GET /imports/:id`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -2994,6 +3127,7 @@ Or for paginated lists:
 ---
 
 #### 6. Retry AI Ingestion for Import Job
+
 - **Route**: `POST /imports/:id/retry-ai-ingest`
 - **Auth Required**: Yes
 - **Allowed Roles**: `manager`, `admin`
@@ -3010,10 +3144,8 @@ Or for paginated lists:
 ### 4.22 App Root Module (`/`)
 
 #### 1. Health / Root Hello
+
 - **Route**: `GET /`
 - **Auth Required**: No (Public)
 - **Allowed Roles**: Public
 - **Success Response** (200 OK): `"Hello World!"`
-
-
-

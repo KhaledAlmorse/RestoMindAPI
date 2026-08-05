@@ -114,9 +114,7 @@ describe('UserService - createUser authorization & role validation', () => {
         role: RolesEnum.CUSTOMER,
       };
 
-      await expect(
-        service.createUser(dto, mockManagerUser),
-      ).rejects.toThrow(
+      await expect(service.createUser(dto, mockManagerUser)).rejects.toThrow(
         new ForbiddenException('Managers can only create Staff accounts.'),
       );
       expect(userRepository.create).not.toHaveBeenCalled();
@@ -132,9 +130,7 @@ describe('UserService - createUser authorization & role validation', () => {
         role: RolesEnum.MANAGER,
       };
 
-      await expect(
-        service.createUser(dto, mockManagerUser),
-      ).rejects.toThrow(
+      await expect(service.createUser(dto, mockManagerUser)).rejects.toThrow(
         new ForbiddenException('Managers can only create Staff accounts.'),
       );
       expect(userRepository.create).not.toHaveBeenCalled();
@@ -150,9 +146,7 @@ describe('UserService - createUser authorization & role validation', () => {
         role: RolesEnum.ADMIN,
       };
 
-      await expect(
-        service.createUser(dto, mockManagerUser),
-      ).rejects.toThrow(
+      await expect(service.createUser(dto, mockManagerUser)).rejects.toThrow(
         new ForbiddenException('Managers can only create Staff accounts.'),
       );
       expect(userRepository.create).not.toHaveBeenCalled();
