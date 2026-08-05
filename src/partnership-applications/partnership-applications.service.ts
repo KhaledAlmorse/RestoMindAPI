@@ -18,6 +18,8 @@ import {
 import { PartnershipApplicationStatusEnum, RolesEnum } from 'src/Common/Types';
 import { TokenService } from 'src/Common/Services';
 import { sendEmail } from 'src/Common/Utils/send-email.utils';
+import { addDays } from 'src/Common/Utils';
+import { TRIAL_DAYS } from 'src/subscriptions/subscription-tiers.config';
 import { CreatePartnershipApplicationDto } from './dto/create-partnership-application.dto';
 import { QueryPartnershipApplicationDto } from './dto/query-partnership-application.dto';
 import { RejectPartnershipApplicationDto } from './dto/reject-partnership-application.dto';
@@ -501,6 +503,18 @@ export class PartnershipApplicationsService {
           status: PartnershipApplicationStatusEnum.ONBOARDED,
         } as any,
       });
+
+      // The trial clock starts when the owner actually reaches the product,
+      // not when the admin approved it — an approval email left unread for a
+      // week should cost the merchant nothing.
+      if (application.restaurantId) {
+        await this.restaurantRepository.update({
+          filters: { _id: application.restaurantId },
+          body: {
+            'subscription.trialEndsAt': addDays(new Date(), TRIAL_DAYS),
+          } as any,
+        });
+      }
     }
 
     return {

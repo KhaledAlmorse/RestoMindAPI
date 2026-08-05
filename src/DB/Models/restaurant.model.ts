@@ -45,6 +45,27 @@ export class Restaurant {
     country?: string;
   };
 
+  /**
+   * Billing state. Deliberately holds no `status` field — status is derived
+   * by resolveSubscriptionState() so it can never go stale between cron ticks.
+   */
+  @Prop({
+    type: {
+      tier: { type: String, enum: ['basic', 'plus', 'scale'], required: false },
+      currentPeriodEnd: { type: Date, required: false },
+      trialEndsAt: { type: Date, required: false },
+      lastPaymentId: { type: Types.ObjectId, ref: 'Payment', required: false },
+    },
+    _id: false,
+    required: false,
+  })
+  subscription?: {
+    tier?: 'basic' | 'plus' | 'scale';
+    currentPeriodEnd?: Date;
+    trialEndsAt?: Date;
+    lastPaymentId?: Types.ObjectId;
+  };
+
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
@@ -66,6 +87,10 @@ RestaurantSchema.index(
   { name: 1 },
   { unique: true, partialFilterExpression: { isDeleted: false } },
 );
+
+// The offer-suspension cron scans by subscription dates every 5 minutes.
+RestaurantSchema.index({ 'subscription.currentPeriodEnd': 1 });
+RestaurantSchema.index({ 'subscription.trialEndsAt': 1 });
 
 export const RestaurantModel = MongooseModule.forFeature([
   { name: Restaurant.name, schema: RestaurantSchema },
