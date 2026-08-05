@@ -54,6 +54,16 @@ export enum OrderStatusEnum {
   OUT_FOR_DELIVERY = 'Out For Delivery',
   DELIVERED = 'Delivered',
   CANCELLED = 'Cancelled',
+  /** Online payment started, stock reserved, money not yet confirmed. */
+  AWAITING_PAYMENT = 'Awaiting Payment',
+  PAYMENT_FAILED = 'Payment Failed',
+  /**
+   * Fully refunded AFTER delivery. Distinct from CANCELLED: the order was
+   * delivered, and calling it cancelled would falsify the fulfilment record
+   * and corrupt the sales history the forecasting model trains on.
+   */
+  REFUNDED = 'Refunded',
+  PARTIALLY_REFUNDED = 'Partially Refunded',
 }
 
 export enum StockTransactionTypeEnum {

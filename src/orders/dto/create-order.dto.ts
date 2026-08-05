@@ -92,7 +92,7 @@ export class CreateOrderDto {
   @IsOptional()
   specialNotes?: string;
 
-  @IsEnum(['Cash on Delivery'])
+  @IsEnum(['Cash on Delivery', 'Card', 'Wallet'])
   @IsNotEmpty()
   paymentMethod!: string;
 
