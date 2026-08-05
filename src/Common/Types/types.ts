@@ -157,3 +157,35 @@ export enum PartnershipApplicationStatusEnum {
   REJECTED = 'REJECTED',
   ONBOARDED = 'ONBOARDED',
 }
+
+export enum PaymentPurposeEnum {
+  SUBSCRIPTION = 'subscription',
+  ORDER = 'order',
+}
+
+export enum PaymentStatusEnum {
+  PENDING = 'pending',
+  PAID = 'paid',
+  FAILED = 'failed',
+  EXPIRED = 'expired',
+}
+
+export enum PaymentMethodEnum {
+  CARD = 'card',
+  WALLET = 'wallet',
+}
+
+export enum RefundStatusEnum {
+  REQUESTED = 'requested',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  PROCESSING = 'processing',
+  SUCCEEDED = 'succeeded',
+  FAILED = 'failed',
+  MANUAL_REQUIRED = 'manual_required',
+}
+
+export enum RefundSettlementModeEnum {
+  GATEWAY = 'gateway',
+  OFFLINE = 'offline',
+}

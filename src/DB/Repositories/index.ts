@@ -23,3 +23,5 @@ export * from './prediction.repository';
 export * from './waste-report.repository';
 export * from './recommendation.repository';
 export * from './partnership-application.repository';
+export * from './payment.repository';
+export * from './refund.repository';
