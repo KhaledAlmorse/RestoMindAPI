@@ -200,3 +200,81 @@ describe('PaymentsService refund reservation', () => {
     expect(repo.store.refundedAmountCents).toBe(0);
   });
 });
+
+describe('PaymentsService late-success auto-refund', () => {
+  let service: PaymentsService;
+  let repo: ReturnType<typeof makeRepo>;
+  let refundRepo: any;
+  let paymob: any;
+
+  beforeEach(() => {
+    process.env.PAYMOB_HMAC_SECRET = HMAC_SECRET;
+    repo = makeRepo({
+      _id: 'pay1',
+      purpose: PaymentPurposeEnum.ORDER,
+      userId: 'u1',
+      orderGroupId: 'g1',
+      amountCents: 30000,
+      currency: 'EGP',
+      // The sweeper already expired this and gave the stock back.
+      status: PaymentStatusEnum.EXPIRED,
+      refundedAmountCents: 0,
+      paymobOrderId: 555000,
+    });
+    const refundStore: any = {
+      _id: 'ref1',
+      paymentId: 'pay1',
+      amountCents: 30000,
+      settlementMode: 'gateway',
+    };
+    refundRepo = {
+      create: jest.fn(async (doc: any) => ({ ...doc, _id: 'ref1' })),
+      findOne: jest.fn(async () => refundStore),
+      update: jest.fn(async ({ body }: any) => Object.assign(refundStore, body)),
+    };
+    paymob = {
+      refundTransaction: jest.fn(async () => ({ id: 777 })),
+      voidTransaction: jest.fn(),
+    };
+    service = new PaymentsService(repo as any, refundRepo, paymob, {} as any);
+  });
+
+  it('refunds in full when a success lands on an expired payment', async () => {
+    // The stock is gone, so the money must go back — there is nothing left
+    // to deliver.
+    const outcome = await service.applyTransactionOutcome(
+      repo.store as any,
+      { id: 991122, success: true, pending: false } as any,
+    );
+
+    expect(outcome).toBe('applied');
+    expect(refundRepo.create).toHaveBeenCalledTimes(1);
+    expect(refundRepo.create.mock.calls[0][0].amountCents).toBe(30000);
+    expect(paymob.refundTransaction).toHaveBeenCalledWith(991122, 30000);
+    expect(repo.store.refundedAmountCents).toBe(30000);
+  });
+
+  it('does not refund twice when the late callback is redelivered', async () => {
+    await service.applyTransactionOutcome(
+      repo.store as any,
+      { id: 991122, success: true, pending: false } as any,
+    );
+    // Second delivery: paymobTransactionId now matches, so the duplicate
+    // guard at the top short-circuits before any refund is created.
+    const second = await service.applyTransactionOutcome(
+      repo.store as any,
+      { id: 991122, success: true, pending: false } as any,
+    );
+
+    expect(second).toBe('duplicate');
+    expect(refundRepo.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not auto-refund a failed transaction on an expired payment', async () => {
+    await service.applyTransactionOutcome(
+      repo.store as any,
+      { id: 991122, success: false, pending: false } as any,
+    );
+    expect(refundRepo.create).not.toHaveBeenCalled();
+  });
+});

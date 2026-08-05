@@ -200,6 +200,19 @@ export class PaymentsService {
     txn: PaymobRawTransaction,
   ): Promise<TransactionOutcome> {
     if (payment.paymobTransactionId === txn.id) return 'duplicate';
+
+    // A success landing on an already-expired payment: the sweeper gave the
+    // stock back, so the money must go back too. Rare by design — if it is
+    // not rare, the sweeper's 15-minute window is wrong.
+    if (
+      payment.status === PaymentStatusEnum.EXPIRED &&
+      txn.success === true &&
+      txn.pending !== true
+    ) {
+      await this.autoRefundLateSuccess(payment, txn);
+      return 'applied';
+    }
+
     if (payment.status !== PaymentStatusEnum.PENDING) return 'duplicate';
 
     // Still in flight (wallet OTP outstanding, 3DS in progress). Record
@@ -363,6 +376,56 @@ export class PaymentsService {
       });
       return RefundStatusEnum.MANUAL_REQUIRED;
     }
+  }
+
+  /**
+   * The order expired and its stock was returned, but the money arrived
+   * anyway. Give it straight back — there is nothing left to deliver.
+   *
+   * Guarded by the same reservation as any other refund, so a duplicate
+   * delivery of the late callback cannot refund twice.
+   */
+  private async autoRefundLateSuccess(
+    payment: PaymentType,
+    txn: PaymobRawTransaction,
+  ): Promise<void> {
+    this.logger.error(
+      `Late success on expired payment ${String(payment._id)} (txn ${txn.id}) — auto-refunding ${payment.amountCents}`,
+    );
+
+    // Record the transaction id first, so a retry of this same callback hits
+    // the duplicate guard at the top of applyTransactionOutcome.
+    await this.paymentRepository.update({
+      filters: { _id: payment._id },
+      body: {
+        paymobTransactionId: txn.id,
+        status: PaymentStatusEnum.PAID,
+      } as any,
+    });
+
+    const reserved = await this.reserveRefund(
+      payment._id,
+      payment.amountCents,
+    );
+    if (!reserved) {
+      this.logger.error(
+        `Late-success refund for payment ${String(payment._id)} was already reserved — not refunding again`,
+      );
+      return;
+    }
+
+    const refund = await this.refundRepository.create({
+      paymentId: payment._id,
+      orderGroupId: payment.orderGroupId,
+      amountCents: payment.amountCents,
+      reason: 'Payment confirmed after the order had already expired',
+      settlementMode: RefundSettlementModeEnum.GATEWAY,
+      status: RefundStatusEnum.APPROVED,
+      initiatedBy: payment.userId,
+      reviewedAt: new Date(),
+    } as any);
+
+    await this.executeRefund(refund._id);
   }
 
   private async settleRefund(

@@ -192,6 +192,15 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     );
   }
 
+  /**
+   * Public wrapper so the refund flow recomputes a group's status with the
+   * same rules as cancellation — the two must never disagree about what a
+   * mixed group means.
+   */
+  computeGroupStatus(childOrders: any[]): string {
+    return this.computeOverallStatus(childOrders);
+  }
+
   private computeOverallStatus(childOrders: any[]): string {
     if (!childOrders || childOrders.length === 0)
       return OrderStatusEnum.PENDING;
