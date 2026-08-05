@@ -208,15 +208,33 @@ export class PaymobService {
    * so this resolves the true state of every attempt against that order even
    * when no callback ever arrived — which is the normal case for wallets,
    * whose callback URL lives on the integration rather than the intention.
+   *
+   * Queries the transactions collection filtered by order, NOT
+   * `/api/ecommerce/orders/{id}`. That endpoint documents a nested
+   * `transactions` array, but for Intention-based payments it comes back empty
+   * even when the same order reports `paid_amount_cents` in full. Reading it
+   * meant every reconciliation concluded "never paid", and the sweeper would
+   * then expire a genuinely paid order, restock it, and keep the money.
    */
   async getOrderWithTransactions(
     paymobOrderId: number,
   ): Promise<{ transactions: PaymobRawTransaction[] }> {
     const token = await this.getInquiryToken();
-    const data = await this.request<{ transactions?: PaymobRawTransaction[] }>(
-      `/api/ecommerce/orders/${paymobOrderId}?token=${encodeURIComponent(token)}`,
+    const data = await this.request<
+      { results?: PaymobRawTransaction[] } | PaymobRawTransaction[]
+    >(
+      `/api/acceptance/transactions?order_id=${paymobOrderId}&token=${encodeURIComponent(token)}`,
       { method: 'GET' },
     );
-    return { transactions: data.transactions ?? [] };
+
+    const transactions = Array.isArray(data) ? data : (data.results ?? []);
+
+    // Belt and braces: the filter is applied server-side, but settling a
+    // payment against another order's transaction would be unrecoverable.
+    return {
+      transactions: transactions.filter(
+        (txn) => Number(txn?.order?.id) === Number(paymobOrderId),
+      ),
+    };
   }
 }

@@ -45,6 +45,27 @@ export interface CreatePaymentInput {
   tier?: string;
 }
 
+/**
+ * Chooses which of an order's transactions decides its fate.
+ *
+ * An order accumulates one transaction per attempt, so a customer whose first
+ * card was declined and whose second succeeded leaves two settled rows behind,
+ * in no guaranteed order. Taking whichever came back first would let a stale
+ * decline cancel an order that was paid for seconds later.
+ *
+ * Refunds and captures appear against the same order as child transactions;
+ * they describe what happened *after* payment and must never be read as the
+ * payment itself.
+ */
+export function pickSettledTransaction(
+  transactions: PaymobRawTransaction[],
+): PaymobRawTransaction | undefined {
+  const attempts = transactions.filter(
+    (txn) => !txn.pending && txn.has_parent_transaction !== true,
+  );
+  return attempts.find((txn) => txn.success === true) ?? attempts[0];
+}
+
 export type TransactionOutcome = 'applied' | 'duplicate' | 'pending';
 export type CallbackOutcome =
   | TransactionOutcome
@@ -222,7 +243,7 @@ export class PaymentsService {
     try {
       const { transactions } =
         await this.paymobService.getOrderWithTransactions(paymobOrderId);
-      const settled = transactions.find((t) => !t.pending);
+      const settled = pickSettledTransaction(transactions);
       if (settled) await this.applyTransactionOutcome(payment, settled);
     } catch (error: any) {
       // Never expire on an inquiry failure — the sweeper will try again. The

@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PaymentStatusEnum, RefundStatusEnum } from 'src/Common/Types';
 import { PaymentRepository, RefundRepository } from 'src/DB/Repositories';
 import { PaymobService } from './paymob.service';
-import { PaymentsService } from './payments.service';
+import { PaymentsService, pickSettledTransaction } from './payments.service';
 
 /** A payment older than this with no resolution gets actively inquired about. */
 const PENDING_GRACE_MS = 15 * 60 * 1000;
@@ -52,7 +52,7 @@ export class PaymentsReconciliationService {
             payment.paymobOrderId,
           );
 
-        const settled = transactions.find((t) => !t.pending);
+        const settled = pickSettledTransaction(transactions);
         if (settled) {
           // Same code path as a verified callback, so the two can never
           // disagree about what a transaction means.

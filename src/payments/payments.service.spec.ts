@@ -1,7 +1,7 @@
 import { createHmac } from 'crypto';
 import { PaymentPurposeEnum, PaymentStatusEnum } from 'src/Common/Types';
 import { buildTransactionHmacString } from './hmac';
-import { PaymentsService } from './payments.service';
+import { PaymentsService, pickSettledTransaction } from './payments.service';
 
 const HMAC_SECRET = 'test_hmac_secret';
 
@@ -350,5 +350,37 @@ describe('PaymentsService.reconcileByPaymobOrderId', () => {
     const result = await service.reconcileByPaymobOrderId(555000, OWNER as any);
     expect(result.status).toBe(PaymentStatusEnum.PENDING);
     expect(fulfiller.onFailed).not.toHaveBeenCalled();
+  });
+});
+
+describe('pickSettledTransaction', () => {
+  const txn = (over: Record<string, any>) =>
+    ({ id: 1, success: false, pending: false, ...over }) as any;
+
+  it('prefers the successful attempt over an earlier decline', () => {
+    // Two cards, one declined, one approved — and no guaranteed order in the
+    // response. Reading the decline would cancel a paid order.
+    const picked = pickSettledTransaction([
+      txn({ id: 1, success: false }),
+      txn({ id: 2, success: true }),
+    ]);
+    expect(picked?.id).toBe(2);
+  });
+
+  it('ignores refunds and captures booked against the same order', () => {
+    const picked = pickSettledTransaction([
+      txn({ id: 9, success: true, has_parent_transaction: true }),
+    ]);
+    expect(picked).toBeUndefined();
+  });
+
+  it('ignores transactions still in flight', () => {
+    expect(pickSettledTransaction([txn({ pending: true })])).toBeUndefined();
+  });
+
+  it('reports the failure when every attempt failed', () => {
+    const picked = pickSettledTransaction([txn({ id: 3, success: false })]);
+    expect(picked?.id).toBe(3);
+    expect(picked?.success).toBe(false);
   });
 });
