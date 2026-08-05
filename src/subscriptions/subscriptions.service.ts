@@ -1,12 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
-import { PaymentMethodEnum, PaymentPurposeEnum } from 'src/Common/Types';
+import {
+  PaymentMethodEnum,
+  PaymentPurposeEnum,
+  PaymentStatusEnum,
+} from 'src/Common/Types';
 import { addDays, addMonths } from 'src/Common/Utils';
 import {
   PaymentRepository,
@@ -30,8 +35,18 @@ import {
 } from './subscription-tiers.config';
 import {
   effectiveProductCap,
+  nextPeriodStart,
   resolveSubscriptionState,
 } from './subscription-state';
+
+/**
+ * How long a started-but-unfinished checkout blocks another.
+ *
+ * Matches the equivalent guard on the order path. Long enough to cover 3-D
+ * Secure and a wallet OTP, short enough that abandoning the Paymob page does
+ * not lock the merchant out of paying for the rest of the day.
+ */
+const CHECKOUT_IN_FLIGHT_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
@@ -118,6 +133,9 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
       tier: sub?.tier ?? null,
       trialEndsAt: sub?.trialEndsAt ?? null,
       currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      // When a month bought right now would begin — the same rule onPaid
+      // applies, so the screen can only ever promise what actually happens.
+      nextPeriodStart: nextPeriodStart(sub),
       productCount,
       productCap: Number.isFinite(effectiveProductCap(sub, state))
         ? effectiveProductCap(sub, state)
@@ -158,6 +176,25 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
         message: `You have ${productCount} products, which exceeds the ${TIERS[tier].label} limit of ${TIERS[tier].productCap}. Remove ${productCount - TIERS[tier].productCap} products or choose a larger plan.`,
         productCount,
         productCap: TIERS[tier].productCap,
+      });
+    }
+
+    // One checkout at a time. Nothing on the Paymob page stops a merchant
+    // going back and starting again, and two completed intentions are two real
+    // charges — the second silently buying a month they did not mean to.
+    const inFlight = await this.paymentRepository.findOne({
+      filters: {
+        restaurantId: restaurant._id,
+        purpose: PaymentPurposeEnum.SUBSCRIPTION,
+        status: PaymentStatusEnum.PENDING,
+        createdAt: { $gte: new Date(Date.now() - CHECKOUT_IN_FLIGHT_MS) },
+      } as any,
+    });
+    if (inFlight) {
+      throw new ConflictException({
+        code: 'PAYMENT_IN_PROGRESS',
+        message:
+          'You already have a payment in progress. Finish it in the payment window, or wait a few minutes and try again — you have not been charged twice.',
       });
     }
 
@@ -253,16 +290,8 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     }
 
     const restaurant = await this.requireRestaurant(payment.restaurantId);
-    const sub = restaurant.subscription;
 
-    // Paying during a trial must not burn the remaining trial days, and an
-    // early renewal must extend rather than truncate. Both fall out of max().
-    const candidates = [new Date()];
-    if (sub?.trialEndsAt) candidates.push(new Date(sub.trialEndsAt));
-    if (sub?.currentPeriodEnd) candidates.push(new Date(sub.currentPeriodEnd));
-    const periodStart = new Date(
-      Math.max(...candidates.map((d) => d.getTime())),
-    );
+    const periodStart = nextPeriodStart(restaurant.subscription);
     const periodEnd = addMonths(periodStart, 1);
 
     await this.restaurantRepository.update({

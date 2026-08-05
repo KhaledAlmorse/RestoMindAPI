@@ -8,6 +8,7 @@ import {
   effectiveProductCap,
   effectiveTier,
   hasDashboardAccess,
+  nextPeriodStart,
   resolveSubscriptionState,
 } from './subscription-state';
 
@@ -172,5 +173,38 @@ describe('pricing helpers', () => {
       const { netCents, vatCents } = splitVat(total);
       expect(netCents + vatCents).toBe(total);
     }
+  });
+});
+
+describe('nextPeriodStart', () => {
+  const now = new Date('2026-08-05T12:00:00Z');
+
+  it('starts a purchase at the end of an unfinished trial', () => {
+    // Paying on day 3 of a 14-day trial must not throw away the other 11.
+    const trialEndsAt = new Date('2026-08-19T12:00:00Z');
+    expect(nextPeriodStart({ trialEndsAt }, now)).toEqual(trialEndsAt);
+  });
+
+  it('extends an early renewal instead of truncating it', () => {
+    const currentPeriodEnd = new Date('2026-09-19T12:00:00Z');
+    expect(nextPeriodStart({ currentPeriodEnd }, now)).toEqual(
+      currentPeriodEnd,
+    );
+  });
+
+  it('starts now once both trial and paid period are behind us', () => {
+    expect(
+      nextPeriodStart(
+        {
+          trialEndsAt: new Date('2026-07-01T00:00:00Z'),
+          currentPeriodEnd: new Date('2026-08-01T00:00:00Z'),
+        },
+        now,
+      ),
+    ).toEqual(now);
+  });
+
+  it('starts now for a restaurant that has never had either', () => {
+    expect(nextPeriodStart(undefined, now)).toEqual(now);
   });
 });

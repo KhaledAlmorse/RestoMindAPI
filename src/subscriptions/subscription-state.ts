@@ -51,6 +51,25 @@ export function resolveSubscriptionState(
   return 'unpaid';
 }
 
+/**
+ * When a month bought right now would begin.
+ *
+ * Paying during a free trial must not cut the trial short, and renewing early
+ * must extend rather than truncate — both fall out of taking the latest of the
+ * three dates. Exported so the billing screen can promise the merchant the
+ * same date that `onPaid` will actually write; a UI that guessed this
+ * separately would eventually contradict the ledger.
+ */
+export function nextPeriodStart(
+  sub: SubscriptionFields | undefined | null,
+  now: Date = new Date(),
+): Date {
+  const candidates = [now];
+  if (sub?.trialEndsAt) candidates.push(new Date(sub.trialEndsAt));
+  if (sub?.currentPeriodEnd) candidates.push(new Date(sub.currentPeriodEnd));
+  return new Date(Math.max(...candidates.map((date) => date.getTime())));
+}
+
 /** The tier whose limits currently apply. Trials borrow TRIAL_TIER's capacity. */
 export function effectiveTier(
   sub: SubscriptionFields | undefined | null,
