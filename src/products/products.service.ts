@@ -14,6 +14,7 @@ import {
   IngredientRepository,
   UserRepository,
 } from 'src/DB/Repositories';
+import { assertProductCapacity } from './product-cap';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
@@ -121,6 +122,17 @@ export class ProductsService {
     });
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
+    }
+
+    // Checked before the Cloudinary upload below, so a rejected create never
+    // wastes an upload. Admins are not tenants and bypass the cap, matching
+    // the existing bypass in RestaurantOwnerGuard.
+    if (authUser.user.role !== RolesEnum.ADMIN) {
+      const productCount = await this.productRepository.countDocuments({
+        restaurantId: targetRestaurantId,
+        isDeleted: false,
+      });
+      assertProductCapacity(restaurant.subscription, productCount);
     }
 
     // Generate unique slug: restaurant-name + "-" + product-title
