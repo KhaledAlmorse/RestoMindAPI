@@ -27,6 +27,7 @@ import { WasteReportsModule } from './waste-reports/waste-reports.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
 import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
 import { PaymentsModule } from './payments/payments.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { PaymentsModule } from './payments/payments.module';
     RecommendationsModule,
     PartnershipApplicationsModule,
     PaymentsModule.forRoot(),
+    SubscriptionsModule,
   ],
 
   controllers: [AppController],

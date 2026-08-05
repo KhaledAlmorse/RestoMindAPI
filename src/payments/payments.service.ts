@@ -26,6 +26,7 @@ import {
 } from './paymob.service';
 import {
   PAYMENT_FULFILLERS,
+  PaymentFulfiller,
   PaymentFulfillerRegistry,
 } from './payment-fulfiller';
 
@@ -64,6 +65,23 @@ export class PaymentsService {
 
   getEnabledPaymentMethods(): PaymentMethodEnum[] {
     return getEnabledMethods();
+  }
+
+  /**
+   * Domain modules register themselves here on init.
+   *
+   * Self-registration rather than DI-time wiring because the alternative is
+   * circular: SubscriptionsModule and OrdersModule both need PaymentsService
+   * to create an intention, so a fulfiller registry injected at construction
+   * would need them injected into PaymentsModule in turn. This keeps the
+   * module graph one-directional with no forwardRef.
+   */
+  registerFulfiller(
+    purpose: PaymentPurposeEnum,
+    fulfiller: PaymentFulfiller,
+  ): void {
+    this.fulfillers[purpose] = fulfiller;
+    this.logger.log(`Registered payment fulfiller for "${purpose}"`);
   }
 
   // -------------------------------------------------------------------------

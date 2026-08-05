@@ -1,4 +1,4 @@
-import { DynamicModule, Module } from '@nestjs/common';
+import { DynamicModule, Global, Module } from '@nestjs/common';
 import { PaymentModel, RefundModel } from 'src/DB/Models';
 import { PaymentRepository, RefundRepository } from 'src/DB/Repositories';
 import { PaymentsController } from './payments.controller';
@@ -10,6 +10,13 @@ import {
   PaymentFulfillerRegistry,
 } from './payment-fulfiller';
 
+/**
+ * Global so `forRoot()` is called exactly once, in app.module.ts. Calling it
+ * from more than one module would risk a second PaymentsService instance, and
+ * fulfillers registered on one instance would be invisible to the other —
+ * payments would settle with no domain effect.
+ */
+@Global()
 @Module({})
 export class PaymentsModule {
   /**
