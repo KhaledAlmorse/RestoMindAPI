@@ -26,6 +26,19 @@ function required(name: string): string {
   return value;
 }
 
+/**
+ * Where Paymob POSTs the callback, and where the customer lands afterwards.
+ *
+ * Required rather than defaulted: an unset value would interpolate the string
+ * "undefined" into the notification_url, Paymob would never reach us, and
+ * every payment would hang in `pending` until the sweeper caught it. Better
+ * to refuse to create the intention at all.
+ */
+export const getApiPublicUrl = () =>
+  required('API_PUBLIC_URL').replace(/\/+$/, '');
+export const getFrontendUrl = () =>
+  required('FRONTEND_URL').replace(/\/+$/, '');
+
 export const getPaymobSecretKey = () => required('PAYMOB_SECRET_KEY');
 export const getPaymobPublicKey = () => required('PAYMOB_PUBLIC_KEY');
 export const getPaymobApiKey = () => required('PAYMOB_API_KEY');

@@ -42,6 +42,10 @@ import {
 } from 'src/subscriptions/subscription-state';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
+import {
+  getApiPublicUrl,
+  getFrontendUrl,
+} from 'src/payments/paymob.config';
 import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
 import { PaymentType } from 'src/DB/Models/payment.model';
 
@@ -889,8 +893,8 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
             quantity: 1,
           },
         ],
-        notificationUrl: `${process.env.API_PUBLIC_URL}/payments/webhook`,
-        redirectionUrl: `${process.env.FRONTEND_URL}/checkout/result?group=${groupOrderId.toString()}`,
+        notificationUrl: `${getApiPublicUrl()}/payments/webhook`,
+        redirectionUrl: `${getFrontendUrl()}/checkout/result?group=${groupOrderId.toString()}`,
         expirationSeconds: 900,
       });
 

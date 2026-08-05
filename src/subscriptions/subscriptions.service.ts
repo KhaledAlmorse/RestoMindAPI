@@ -18,6 +18,10 @@ import { PaymentType } from 'src/DB/Models/payment.model';
 import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
 import { PaymentsService } from 'src/payments/payments.service';
 import {
+  getApiPublicUrl,
+  getFrontendUrl,
+} from 'src/payments/paymob.config';
+import {
   TIERS,
   TierName,
   splitVat,
@@ -147,8 +151,8 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
           quantity: 1,
         },
       ],
-      notificationUrl: `${process.env.API_PUBLIC_URL}/payments/webhook`,
-      redirectionUrl: `${process.env.FRONTEND_URL}/dashboard/billing/result`,
+      notificationUrl: `${getApiPublicUrl()}/payments/webhook`,
+      redirectionUrl: `${getFrontendUrl()}/dashboard/billing/result`,
       expirationSeconds: 3600,
     });
 
