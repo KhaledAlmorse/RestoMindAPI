@@ -1,6 +1,8 @@
 import {
   BUSINESS_TIMEZONE,
+  addDays,
   addDaysToDateString,
+  addMonths,
   getBusinessDateString,
   getBusinessDayOfWeek,
   getBusinessDayRange,
@@ -71,5 +73,75 @@ describe('date.util', () => {
       expect(start.toISOString()).toBe('2026-01-14T22:00:00.000Z');
       expect(end.toISOString()).toBe('2026-01-15T22:00:00.000Z');
     });
+  });
+});
+
+describe('addDays', () => {
+  it('adds whole days preserving the Cairo wall-clock time', () => {
+    // 2026-07-29T18:00Z = 2026-07-29 21:00 Cairo (+3)
+    const result = addDays(new Date('2026-07-29T18:00:00.000Z'), 7);
+    expect(getBusinessDateString(result)).toBe('2026-08-05');
+  });
+
+  it('does not drift across the summer-to-winter DST boundary', () => {
+    // Egypt ends DST in late October. Crossing it must not shift the Cairo
+    // wall-clock hour, even though the UTC offset changes +3 -> +2.
+    const start = new Date('2026-10-20T12:00:00.000Z'); // 15:00 Cairo (+3)
+    const result = addDays(start, 14); // lands in November
+    const cairoHour = new Intl.DateTimeFormat('en-GB', {
+      timeZone: BUSINESS_TIMEZONE,
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(result);
+    expect(cairoHour).toBe('15');
+  });
+
+  it('accepts negative days', () => {
+    const result = addDays(new Date('2026-08-05T18:00:00.000Z'), -7);
+    expect(getBusinessDateString(result)).toBe('2026-07-29');
+  });
+
+  it('is a no-op for zero days', () => {
+    const instant = new Date('2026-07-29T18:00:00.000Z');
+    expect(addDays(instant, 0).toISOString()).toBe(instant.toISOString());
+  });
+});
+
+describe('addMonths', () => {
+  it('adds one calendar month', () => {
+    const result = addMonths(new Date('2026-03-15T10:00:00.000Z'), 1);
+    expect(getBusinessDateString(result)).toBe('2026-04-15');
+  });
+
+  it('clamps to the last day when the target month is shorter', () => {
+    // 31 Jan + 1 month has no 31 Feb — must clamp to 28 Feb, not roll to 3 Mar.
+    const result = addMonths(new Date('2026-01-31T10:00:00.000Z'), 1);
+    expect(getBusinessDateString(result)).toBe('2026-02-28');
+  });
+
+  it('clamps to 29 February in a leap year', () => {
+    const result = addMonths(new Date('2028-01-31T10:00:00.000Z'), 1);
+    expect(getBusinessDateString(result)).toBe('2028-02-29');
+  });
+
+  it('rolls the year over', () => {
+    const result = addMonths(new Date('2026-12-15T10:00:00.000Z'), 1);
+    expect(getBusinessDateString(result)).toBe('2027-01-15');
+  });
+
+  it('rolls the year backwards for a negative month', () => {
+    const result = addMonths(new Date('2026-01-15T10:00:00.000Z'), -1);
+    expect(getBusinessDateString(result)).toBe('2025-12-15');
+  });
+
+  it('preserves the Cairo wall-clock hour across a winter-to-summer change', () => {
+    // Feb (+2) -> May (+3). The local hour must not move.
+    const result = addMonths(new Date('2026-02-15T10:00:00.000Z'), 3);
+    const cairoHour = new Intl.DateTimeFormat('en-GB', {
+      timeZone: BUSINESS_TIMEZONE,
+      hour: '2-digit',
+      hourCycle: 'h23',
+    }).format(result);
+    expect(cairoHour).toBe('12'); // 10:00Z in Feb is 12:00 Cairo
   });
 });
