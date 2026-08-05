@@ -11,6 +11,7 @@ import {
   RestaurantRepository,
   UserRepository,
 } from 'src/DB/Repositories';
+import { SubscriptionRemindersService } from './subscription-reminders.service';
 import { SubscriptionsController } from './subscriptions.controller';
 import { SubscriptionsService } from './subscriptions.service';
 
@@ -30,6 +31,7 @@ import { SubscriptionsService } from './subscriptions.service';
     UserRepository,
     PaymentRepository,
     SubscriptionsService,
+    SubscriptionRemindersService,
   ],
   exports: [SubscriptionsService],
 })
