@@ -22,6 +22,11 @@ export enum OfferStatusEnum {
   EXPIRED = 'expired',
   CANCELLED = 'cancelled',
   SOLD_OUT = 'sold_out',
+  /**
+   * Billing consequence, distinct from CANCELLED (a merchant decision).
+   * Reactivation must be able to tell the two apart.
+   */
+  SUSPENDED = 'suspended',
 }
 
 export enum OfferSourceEnum {

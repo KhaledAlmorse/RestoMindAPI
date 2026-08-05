@@ -32,6 +32,10 @@ import {
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
+import {
+  hasDashboardAccess,
+  resolveSubscriptionState,
+} from 'src/subscriptions/subscription-state';
 import { OffersService } from 'src/offers/offers.service';
 
 @Injectable()
@@ -461,6 +465,17 @@ export class OrdersService {
       if (offer.status !== OfferStatusEnum.ACTIVE) {
         throw new BadRequestException(
           `Offer for "${product.title || 'product'}" is currently ${offer.status}`,
+        );
+      }
+
+      // Second line of defence, closing the up-to-5-minute window between a
+      // subscription lapsing and the offers cron suspending its offers. The
+      // restaurant document is already populated above, so this costs nothing.
+      if (
+        !hasDashboardAccess(resolveSubscriptionState(restaurant?.subscription))
+      ) {
+        throw new BadRequestException(
+          `"${restaurant?.name || 'This restaurant'}" is not currently accepting orders`,
         );
       }
       if (now < offer.startDate || now > offer.endDate) {

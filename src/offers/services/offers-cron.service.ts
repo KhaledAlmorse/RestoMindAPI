@@ -1,13 +1,18 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { OfferRepository } from 'src/DB/Repositories';
+import { OfferRepository, RestaurantRepository } from 'src/DB/Repositories';
 import { OfferStatusEnum } from 'src/Common/Types';
+import {
+  hasDashboardAccess,
+  resolveSubscriptionState,
+} from 'src/subscriptions/subscription-state';
 import { OfferRulesService } from './offer-rules.service';
 
 @Injectable()
 export class OffersCronService implements OnModuleInit {
   constructor(
     private readonly offerRepository: OfferRepository,
+    private readonly restaurantRepository: RestaurantRepository,
     private readonly offerRulesService: OfferRulesService,
   ) {}
 
@@ -96,6 +101,63 @@ export class OffersCronService implements OnModuleInit {
         filters: { _id: offer._id },
         body: { status: OfferStatusEnum.ACTIVE } as any,
       });
+    }
+
+    // 5. Suspend the offers of restaurants whose subscription has lapsed, and
+    // restore them once it is paid.
+    await this.applySubscriptionSuspension(now);
+  }
+
+  /**
+   * Marketplace visibility follows the subscription.
+   *
+   * Offers are SUSPENDED, never deleted — products, offers, history and
+   * analytics all survive a lapse, and paying reactivates instantly. Steps
+   * 1-4 above filter on specific statuses and so cannot touch a SUSPENDED
+   * offer, which is what stops them resurrecting one.
+   */
+  private async applySubscriptionSuspension(now: Date): Promise<void> {
+    const restaurants = await this.restaurantRepository.findMany({
+      filters: { isDeleted: false },
+      select: 'subscription',
+    });
+
+    const lapsed: any[] = [];
+    const current: any[] = [];
+    for (const restaurant of restaurants || []) {
+      const state = resolveSubscriptionState(restaurant.subscription, now);
+      (hasDashboardAccess(state) ? current : lapsed).push(restaurant._id);
+    }
+
+    if (lapsed.length) {
+      await this.offerRepository.updateMany(
+        {
+          restaurantId: { $in: lapsed },
+          status: {
+            $in: [
+              OfferStatusEnum.ACTIVE,
+              OfferStatusEnum.SCHEDULED,
+              OfferStatusEnum.SOLD_OUT,
+            ],
+          },
+          isDeleted: false,
+        },
+        { status: OfferStatusEnum.SUSPENDED },
+      );
+    }
+
+    if (current.length) {
+      // Restore to SCHEDULED and let the promote pass (step 3) decide whether
+      // the date window and stock make it ACTIVE — the activation rules stay
+      // in exactly one place.
+      await this.offerRepository.updateMany(
+        {
+          restaurantId: { $in: current },
+          status: OfferStatusEnum.SUSPENDED,
+          isDeleted: false,
+        },
+        { status: OfferStatusEnum.SCHEDULED },
+      );
     }
   }
 }
