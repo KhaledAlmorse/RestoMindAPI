@@ -278,3 +278,77 @@ describe('PaymentsService late-success auto-refund', () => {
     expect(refundRepo.create).not.toHaveBeenCalled();
   });
 });
+
+describe('PaymentsService.reconcileByPaymobOrderId', () => {
+  const OWNER = 'user-1';
+  let repo: ReturnType<typeof makeRepo>;
+  let paymob: { getOrderWithTransactions: jest.Mock };
+  let fulfiller: { onPaid: jest.Mock; onFailed: jest.Mock };
+  let service: PaymentsService;
+
+  beforeEach(() => {
+    repo = makeRepo({
+      _id: 'pay1',
+      userId: OWNER,
+      purpose: PaymentPurposeEnum.SUBSCRIPTION,
+      amountCents: 30000,
+      currency: 'EGP',
+      status: PaymentStatusEnum.PENDING,
+      refundedAmountCents: 0,
+      paymobOrderId: 555000,
+    });
+    paymob = { getOrderWithTransactions: jest.fn() };
+    fulfiller = { onPaid: jest.fn(), onFailed: jest.fn() };
+    service = new PaymentsService(
+      repo as any,
+      {} as any,
+      paymob as any,
+      { [PaymentPurposeEnum.SUBSCRIPTION]: fulfiller } as any,
+    );
+  });
+
+  it('settles a payment whose callback never arrived', async () => {
+    paymob.getOrderWithTransactions.mockResolvedValue({
+      transactions: [{ id: 991122, success: true, pending: false }],
+    });
+
+    const result = await service.reconcileByPaymobOrderId(555000, OWNER as any);
+
+    expect(result.status).toBe(PaymentStatusEnum.PAID);
+    expect(fulfiller.onPaid).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to touch a payment belonging to someone else', async () => {
+    // The Paymob order id is visible in the return URL, so it must not be
+    // usable to settle — or even read — another user's payment.
+    await expect(
+      service.reconcileByPaymobOrderId(555000, 'user-2' as any),
+    ).rejects.toThrow('Payment not found');
+    expect(paymob.getOrderWithTransactions).not.toHaveBeenCalled();
+  });
+
+  it('does not re-inquire about a payment that is already settled', async () => {
+    repo.store.status = PaymentStatusEnum.PAID;
+    const result = await service.reconcileByPaymobOrderId(555000, OWNER as any);
+    expect(result.status).toBe(PaymentStatusEnum.PAID);
+    expect(paymob.getOrderWithTransactions).not.toHaveBeenCalled();
+  });
+
+  it('leaves the payment pending when the inquiry itself fails', async () => {
+    // An unreachable gateway is not evidence of non-payment; expiring here
+    // would cancel an order the customer may well have paid for.
+    paymob.getOrderWithTransactions.mockRejectedValue(new Error('network'));
+    const result = await service.reconcileByPaymobOrderId(555000, OWNER as any);
+    expect(result.status).toBe(PaymentStatusEnum.PENDING);
+    expect(fulfiller.onPaid).not.toHaveBeenCalled();
+  });
+
+  it('stays pending while the transaction is still in flight', async () => {
+    paymob.getOrderWithTransactions.mockResolvedValue({
+      transactions: [{ id: 991122, success: false, pending: true }],
+    });
+    const result = await service.reconcileByPaymobOrderId(555000, OWNER as any);
+    expect(result.status).toBe(PaymentStatusEnum.PENDING);
+    expect(fulfiller.onFailed).not.toHaveBeenCalled();
+  });
+});

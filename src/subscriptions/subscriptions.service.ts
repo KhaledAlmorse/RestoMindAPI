@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { PaymentMethodEnum, PaymentPurposeEnum } from 'src/Common/Types';
-import { addMonths } from 'src/Common/Utils';
+import { addDays, addMonths } from 'src/Common/Utils';
 import {
   PaymentRepository,
   ProductRepository,
@@ -23,6 +23,7 @@ import {
 } from 'src/payments/paymob.config';
 import {
   TIERS,
+  TRIAL_DAYS,
   TierName,
   splitVat,
   tierPriceCents,
@@ -44,11 +45,50 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     private readonly paymentsService: PaymentsService,
   ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     this.paymentsService.registerFulfiller(
       PaymentPurposeEnum.SUBSCRIPTION,
       this,
     );
+    await this.backfillMissingTrials();
+  }
+
+  /**
+   * Gives the standard trial to restaurants that have no subscription at all.
+   *
+   * The trial is granted at partnership approval, so every restaurant onboarded
+   * before this feature shipped — and every seeded one — has no subscription
+   * object. Without this they resolve to `unpaid` the moment the code deploys:
+   * dashboard locked, offers suspended, and the storefront refusing orders for
+   * merchants who did nothing wrong. Backdating is not an option either, since
+   * a trial that starts in the past is already over.
+   *
+   * Idempotent: the update itself creates the field it filters on, so a restart
+   * matches nothing. A restaurant whose trial genuinely lapsed keeps its dates
+   * and stays locked, which is the point.
+   */
+  private async backfillMissingTrials(): Promise<void> {
+    try {
+      const trialEndsAt = addDays(new Date(), TRIAL_DAYS);
+      const result = await this.restaurantRepository.updateMany(
+        {
+          isDeleted: { $ne: true },
+          'subscription.trialEndsAt': { $exists: false },
+          'subscription.currentPeriodEnd': { $exists: false },
+        },
+        { $set: { 'subscription.trialEndsAt': trialEndsAt } },
+      );
+
+      if (result?.modifiedCount) {
+        this.logger.log(
+          `Granted a ${TRIAL_DAYS}-day trial to ${result.modifiedCount} restaurant(s) with no subscription, ending ${trialEndsAt.toISOString()}`,
+        );
+      }
+    } catch (error: any) {
+      // Never block boot on a migration. A restaurant left without a trial is
+      // visible immediately as a locked dashboard, and an admin can set one.
+      this.logger.error(`Trial backfill failed: ${error?.message}`);
+    }
   }
 
   private async requireRestaurant(restaurantId: string | Types.ObjectId) {

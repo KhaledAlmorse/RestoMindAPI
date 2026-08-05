@@ -190,6 +190,58 @@ export class PaymentsService {
   }
 
   /**
+   * Resolves one payment on demand, for the page the payer lands on after
+   * returning from Paymob.
+   *
+   * Without this, the only things that settle a payment are the webhook and
+   * the 5-minute sweeper's 15-minute grace. Locally the webhook never arrives
+   * at all (Paymob cannot reach a localhost `notification_url`), so a merchant
+   * who has genuinely paid is still shown the paywall for up to 20 minutes and
+   * reasonably concludes their money vanished. In production it closes the
+   * same, smaller gap whenever a callback is slow.
+   *
+   * Scoped to the caller's own payment: the redirect exposes the Paymob order
+   * id in the URL bar, so it must not be usable to poke at anyone else's.
+   */
+  async reconcileByPaymobOrderId(
+    paymobOrderId: number,
+    userId: Types.ObjectId,
+  ): Promise<{ status: PaymentStatusEnum; purpose: PaymentPurposeEnum }> {
+    const payment = await this.paymentRepository.findOne({
+      filters: { paymobOrderId },
+    });
+
+    if (!payment || String(payment.userId) !== String(userId)) {
+      throw new NotFoundException('Payment not found');
+    }
+
+    if (payment.status !== PaymentStatusEnum.PENDING) {
+      return { status: payment.status, purpose: payment.purpose };
+    }
+
+    try {
+      const { transactions } =
+        await this.paymobService.getOrderWithTransactions(paymobOrderId);
+      const settled = transactions.find((t) => !t.pending);
+      if (settled) await this.applyTransactionOutcome(payment, settled);
+    } catch (error: any) {
+      // Never expire on an inquiry failure — the sweeper will try again. The
+      // caller just sees "still pending", which is the truth as far as we know.
+      this.logger.error(
+        `On-demand reconcile failed for payment ${String(payment._id)}: ${error?.message}`,
+      );
+    }
+
+    const fresh = await this.paymentRepository.findOne({
+      filters: { _id: payment._id },
+    });
+    return {
+      status: fresh?.status ?? payment.status,
+      purpose: payment.purpose,
+    };
+  }
+
+  /**
    * Shared by the webhook and the reconciliation sweeper.
    *
    * Idempotent: the stored paymobTransactionId and the PENDING status are both

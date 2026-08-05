@@ -1,5 +1,15 @@
-import { Body, Controller, Get, HttpCode, Post, Query } from '@nestjs/common';
-import { Auth } from 'src/Common/Decorators';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { Auth, AuthUser } from 'src/Common/Decorators';
+import { type IAuthUser } from 'src/Common/Types';
 import { PaymentsService } from './payments.service';
 
 @Controller('payments')
@@ -41,5 +51,26 @@ export class PaymentsController {
   @Auth('customer', 'manager', 'admin', 'staff')
   getMethods() {
     return { data: this.paymentsService.getEnabledPaymentMethods() };
+  }
+
+  /**
+   * Settles the caller's own payment immediately on return from Paymob,
+   * rather than waiting for a callback that may be slow — or, on localhost,
+   * that will never arrive at all.
+   *
+   * Plain @Auth, never @AuthPaid: this is the very call that turns an unpaid
+   * merchant into a paid one.
+   */
+  @Post('reconcile/:paymobOrderId')
+  @HttpCode(200)
+  @Auth('customer', 'manager', 'admin', 'staff')
+  reconcile(
+    @Param('paymobOrderId', ParseIntPipe) paymobOrderId: number,
+    @AuthUser() user: IAuthUser,
+  ) {
+    return this.paymentsService.reconcileByPaymobOrderId(
+      paymobOrderId,
+      user.user._id,
+    );
   }
 }
