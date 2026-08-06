@@ -45,6 +45,10 @@ import { PaymentsService } from 'src/payments/payments.service';
 import { getApiPublicUrl, getFrontendUrl } from 'src/payments/paymob.config';
 import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
 import { PaymentType } from 'src/DB/Models/payment.model';
+import {
+  commissionCentsFor,
+  commissionRateFor,
+} from 'src/payouts/payout.config';
 
 @Injectable()
 export class OrdersService implements OnModuleInit, PaymentFulfiller {
@@ -813,6 +817,13 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
 
         const totalDiscount = totalOriginalPrice - finalTotalPrice;
 
+        // Commission is snapshotted per order, at the rate in force right now.
+        const commissionRate = commissionRateFor(entries[0].restaurant ?? {});
+        const commissionCents = commissionCentsFor(
+          Math.round(finalTotalPrice * 100),
+          commissionRate,
+        );
+
         groupTotalQuantity += totalQuantity;
         groupTotalOriginalPrice += totalOriginalPrice;
         groupFinalTotalPrice += finalTotalPrice;
@@ -826,6 +837,8 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
           totalOriginalPrice,
           totalDiscount,
           finalTotalPrice,
+          commissionRate,
+          commissionCents,
           totalQuantity,
           fullName,
           phoneNumber: userPhone,

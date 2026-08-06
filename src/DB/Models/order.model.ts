@@ -81,6 +81,19 @@ export class Order {
   @Prop({ type: Number, required: true })
   finalTotalPrice!: number;
 
+  /**
+   * The commission rate this order was sold under. Snapshot, not a lookup —
+   * re-deriving commission from the restaurant's current rate would silently
+   * rewrite the value of every historical order the moment pricing changes,
+   * and there would be no way to prove what was agreed at the time.
+   */
+  @Prop({ type: Number, required: true, default: 0 })
+  commissionRate!: number;
+
+  /** Integer piasters. Rounded once, at creation. */
+  @Prop({ type: Number, required: true, default: 0 })
+  commissionCents!: number;
+
   @Prop({ type: Number, required: true })
   totalQuantity!: number;
 
@@ -154,6 +167,9 @@ export class Order {
 }
 
 const OrderSchema = SchemaFactory.createForClass(Order);
+
+// Statement window: one restaurant's delivered orders in a deliveredAt range.
+OrderSchema.index({ restaurantId: 1, status: 1, deliveredAt: 1 });
 
 export const OrderModel = MongooseModule.forFeature([
   { name: Order.name, schema: OrderSchema },
