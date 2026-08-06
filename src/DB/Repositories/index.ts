@@ -27,3 +27,4 @@ export * from './payment.repository';
 export * from './refund.repository';
 export * from './payout.repository';
 export * from './merchant-adjustment.repository';
+export * from './system-settings.repository';

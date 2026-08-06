@@ -27,3 +27,4 @@ export * from './payment.model';
 export * from './refund.model';
 export * from './payout.model';
 export * from './merchant-adjustment.model';
+export * from './system-settings.model';

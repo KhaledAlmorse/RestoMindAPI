@@ -29,6 +29,7 @@ import { PartnershipApplicationsModule } from './partnership-applications/partne
 import { PaymentsModule } from './payments/payments.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { PayoutsModule } from './payouts/payouts.module';
+import { SystemSettingsModule } from './system-settings/system-settings.module';
 
 @Module({
   imports: [
@@ -58,6 +59,9 @@ import { PayoutsModule } from './payouts/payouts.module';
     RecommendationsModule,
     PartnershipApplicationsModule,
     PaymentsModule.forRoot(),
+    // Before SubscriptionsModule: its @Global service is read during
+    // SubscriptionsService.onModuleInit, which gates the trial backfill.
+    SystemSettingsModule,
     SubscriptionsModule,
     PayoutsModule,
   ],
