@@ -28,14 +28,17 @@ import {
 } from 'src/payments/paymob.config';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 import {
-  TIERS,
-  TierName,
-  tierPriceCents,
-} from './subscription-tiers.config';
+  BILLING_INTERVALS,
+  BillingInterval,
+  INTERVAL_LABEL,
+  INTERVAL_MONTHS,
+  capValue,
+} from './billing-interval';
+import { perMonthCents, planPriceCents } from './plan-pricing';
+import { SubscriptionPlansService } from './subscription-plans.service';
 import {
-  canPurchaseTier,
+  canPurchasePlan,
   effectiveProductCap,
-  effectiveTier,
   nextPeriodStart,
   resolveSubscriptionState,
 } from './subscription-state';
@@ -60,6 +63,7 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     private readonly paymentRepository: PaymentRepository,
     private readonly paymentsService: PaymentsService,
     private readonly systemSettingsService: SystemSettingsService,
+    private readonly plansService: SubscriptionPlansService,
   ) {}
 
   /**
@@ -113,6 +117,17 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
         return;
       }
 
+      // Capacity comes from the plan flagged isTrialPlan. With no such plan
+      // there is nothing to grant, and a trial with no cap would resolve to
+      // zero products — worse than no trial at all.
+      const trialPlan = await this.plansService.getTrialPlan();
+      if (!trialPlan) {
+        this.logger.warn(
+          'Trial backfill skipped: no plan is flagged isTrialPlan, so there is no capacity to grant',
+        );
+        return;
+      }
+
       const trialEndsAt = addDays(new Date(), settings.trialDurationDays);
       const result = await this.restaurantRepository.updateMany(
         {
@@ -120,7 +135,12 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
           'subscription.trialEndsAt': { $exists: false },
           'subscription.currentPeriodEnd': { $exists: false },
         },
-        { $set: { 'subscription.trialEndsAt': trialEndsAt } },
+        {
+          $set: {
+            'subscription.trialEndsAt': trialEndsAt,
+            'subscription.trialProductCap': trialPlan.productCap ?? null,
+          },
+        },
       );
 
       if (result?.modifiedCount) {
@@ -160,83 +180,181 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     // price the next request would charge differently.
     const earlyBird = await this.isEarlyBirdPriced(restaurant);
 
+    const settings = await this.systemSettingsService.get();
+    const plans = await this.plansService.listSellable();
+    const cap = effectiveProductCap(sub, state);
+    const renewableFrom =
+      state === 'trial' || state === 'active' ? nextPeriodStart(sub) : null;
+
     return {
       state,
       earlyBird,
       tier: sub?.tier ?? null,
+      interval: sub?.interval ?? null,
+      planLabel: sub?.planLabelSnapshot ?? null,
       trialEndsAt: sub?.trialEndsAt ?? null,
       currentPeriodEnd: sub?.currentPeriodEnd ?? null,
-      // When a month bought right now would begin — the same rule onPaid
+      // When a period bought right now would begin — the same rule onPaid
       // applies, so the screen can only ever promise what actually happens.
       nextPeriodStart: nextPeriodStart(sub),
       // The date the plans they already hold become buyable again. Null while
       // nothing is blocking them, so the screen has no date to explain away.
-      renewableFrom:
-        state === 'trial' || state === 'active' ? nextPeriodStart(sub) : null,
+      renewableFrom,
       productCount,
-      productCap: Number.isFinite(effectiveProductCap(sub, state))
-        ? effectiveProductCap(sub, state)
-        : null,
-      tiers: (Object.keys(TIERS) as TierName[]).map((name) => {
-        const priceCents = tierPriceCents(name, earlyBird);
+      productCap: Number.isFinite(cap) ? cap : null,
+      plans: plans.map((plan) => ({
+        slug: plan.slug,
+        label: plan.label,
+        productCap: plan.productCap ?? null,
+        isCurrent: plan.slug === sub?.tier,
+        // The UI highlights the smallest plan that actually fits.
+        fitsCurrentCatalogue: productCount <= capValue(plan.productCap),
+        intervals: this.buildIntervalOptions(
+          plan,
+          sub,
+          state,
+          earlyBird,
+          settings.earlyBirdDiscountPercent,
+          renewableFrom,
+        ),
+      })),
+    };
+  }
+
+  /**
+   * The per-interval price block for one plan.
+   *
+   * `purchasable` mirrors the guard startCheckout enforces, so the screen can
+   * never render a button the next request would reject with a 409 — and
+   * `blockedReason` gives the merchant the date instead of a dead control.
+   */
+  private buildIntervalOptions(
+    plan: { prices: Record<BillingInterval, number | null>; productCap: number | null },
+    sub: any,
+    state: ReturnType<typeof resolveSubscriptionState>,
+    earlyBird: boolean,
+    discountPercent: number,
+    renewableFrom: Date | null,
+  ) {
+    const monthlyPerMonth = perMonthCents(plan as any, 'monthly');
+
+    return BILLING_INTERVALS.reduce(
+      (acc, interval) => {
+        const priceCents = planPriceCents(
+          plan as any,
+          interval,
+          earlyBird,
+          discountPercent,
+        );
+
+        if (priceCents === null) {
+          acc[interval] = null;
+          return acc;
+        }
+
         const { netCents, vatCents } = splitVat(priceCents);
-        return {
-          name,
-          label: TIERS[name].label,
-          productCap: Number.isFinite(TIERS[name].productCap)
-            ? TIERS[name].productCap
-            : null,
+        const perMonth = perMonthCents(plan as any, interval)!;
+        const purchasable = canPurchasePlan(
+          sub,
+          state,
+          plan.productCap ?? null,
+          interval,
+        );
+
+        acc[interval] = {
           priceEGP: priceCents / 100,
           // What they would pay without the early-bird seat, so the screen can
           // show the saving. Null when there is nothing to compare against.
-          standardPriceEGP: earlyBird ? TIERS[name].priceEGP : null,
+          standardPriceEGP: earlyBird
+            ? (plan.prices[interval] as number) / 100
+            : null,
           netEGP: netCents / 100,
           vatEGP: vatCents / 100,
-          // The UI highlights the smallest tier that actually fits.
-          fitsCurrentCatalogue: productCount <= TIERS[name].productCap,
-          // Same rule startCheckout enforces, so the screen never offers a
-          // button that the next request would reject.
-          purchasable: canPurchaseTier(sub, name),
+          perMonthEGP: perMonth / 100,
+          // Saving against paying monthly. Null when monthly is not sold, so
+          // there is no baseline to claim a saving against.
+          savingPercent:
+            monthlyPerMonth && monthlyPerMonth > perMonth
+              ? Math.round((1 - perMonth / monthlyPerMonth) * 100)
+              : null,
+          purchasable,
+          blockedReason: purchasable
+            ? null
+            : `You already have this much capacity until ${renewableFrom?.toDateString() ?? 'the end of your period'}. Choose a longer commitment or a larger plan.`,
         };
-      }),
-    };
+        return acc;
+      },
+      {} as Record<BillingInterval, unknown>,
+    );
   }
 
   async startCheckout(
     userId: string,
     restaurantId: string,
-    tier: TierName,
+    slug: string,
+    interval: BillingInterval,
     method: PaymentMethodEnum,
   ) {
     const restaurant = await this.requireRestaurant(restaurantId);
-    const productCount = await this.countProducts(restaurant._id);
+    const plan = await this.plansService.getBySlug(slug);
 
-    // Refuse to sell a plan the merchant already exceeds — they would pay and
-    // still be blocked, which is the worst possible outcome.
-    if (productCount > TIERS[tier].productCap) {
-      throw new BadRequestException({
-        code: 'TIER_TOO_SMALL',
-        message: `You have ${productCount} products, which exceeds the ${TIERS[tier].label} limit of ${TIERS[tier].productCap}. Remove ${productCount - TIERS[tier].productCap} products or choose a larger plan.`,
-        productCount,
-        productCap: TIERS[tier].productCap,
+    // An archived plan is retired: existing holders keep it to the end of
+    // their period, but nobody starts a new one.
+    if (plan.archived) {
+      throw new ConflictException({
+        code: 'PLAN_ARCHIVED',
+        message: `The ${plan.label} plan is no longer available. Please choose another plan.`,
       });
     }
 
-    // Nothing to buy while the same capacity is already paid for or running
-    // on trial. Renewal belongs at the end of the period, not stacked on top
-    // of it, and a downgrade bought today cannot take effect until then either.
-    if (!canPurchaseTier(restaurant.subscription, tier)) {
-      const state = resolveSubscriptionState(restaurant.subscription);
+    const earlyBird = await this.isEarlyBirdPriced(restaurant);
+    const settings = await this.systemSettingsService.get();
+    const amountCents = planPriceCents(
+      plan,
+      interval,
+      earlyBird,
+      settings.earlyBirdDiscountPercent,
+    );
+
+    if (amountCents === null) {
+      throw new BadRequestException({
+        code: 'INTERVAL_NOT_SOLD',
+        message: `The ${plan.label} plan is not sold on a ${INTERVAL_LABEL[interval]} basis. Please choose another billing period.`,
+      });
+    }
+
+    const productCount = await this.countProducts(restaurant._id);
+    const planCap = capValue(plan.productCap);
+
+    // Refuse to sell a plan the merchant already exceeds — they would pay and
+    // still be blocked, which is the worst possible outcome.
+    if (productCount > planCap) {
+      throw new BadRequestException({
+        code: 'TIER_TOO_SMALL',
+        message: `You have ${productCount} products, which exceeds the ${plan.label} limit of ${plan.productCap}. Remove ${productCount - planCap} products or choose a larger plan.`,
+        productCount,
+        productCap: plan.productCap,
+      });
+    }
+
+    // Nothing to buy while the same capacity is already paid for on the same
+    // or a longer commitment. Renewal belongs at the end of the period, not
+    // stacked on top of it.
+    const state = resolveSubscriptionState(restaurant.subscription);
+    if (
+      !canPurchasePlan(restaurant.subscription, state, plan.productCap, interval)
+    ) {
       const availableFrom = nextPeriodStart(restaurant.subscription);
-      const held = effectiveTier(restaurant.subscription, state);
+      const heldLabel =
+        restaurant.subscription?.planLabelSnapshot ?? 'current plan';
       throw new ConflictException({
         code: 'PLAN_NOT_DUE',
         message:
           state === 'trial'
-            ? `Your free trial already gives you ${TIERS[held!].label} limits until ${availableFrom.toDateString()}. You can buy this plan from then, or move up to a larger one now.`
-            : `Your ${TIERS[held!].label} plan is paid for until ${availableFrom.toDateString()}. You can renew from then, or move up to a larger plan now.`,
+            ? `Your free trial already gives you these limits until ${availableFrom.toDateString()}. You can buy from then, choose a longer billing period, or move up to a larger plan now.`
+            : `Your ${heldLabel} is paid for until ${availableFrom.toDateString()}. You can renew from then, choose a longer billing period, or move up to a larger plan now.`,
         state,
-        currentTier: held,
+        currentTier: restaurant.subscription?.tier ?? null,
         availableFrom,
       });
     }
@@ -265,18 +383,18 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    const amountCents = tierPriceCents(
-      tier,
-      await this.isEarlyBirdPriced(restaurant),
-    );
-
     const { checkoutUrl } = await this.paymentsService.createPayment({
       purpose: PaymentPurposeEnum.SUBSCRIPTION,
       userId: user._id,
       restaurantId: restaurant._id,
       amountCents,
       method,
-      tier,
+      tier: plan.slug,
+      interval,
+      // Snapshotted so onPaid grants what was bought even if an admin edits
+      // the plan while the payment is still settling.
+      planLabel: plan.label,
+      planProductCap: plan.productCap ?? null,
       billingData: {
         first_name: user.firstName,
         last_name: user.lastName,
@@ -288,7 +406,7 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
       },
       items: [
         {
-          name: `RestoMind ${TIERS[tier].label} - 1 month`,
+          name: `RestoMind ${plan.label} - ${INTERVAL_LABEL[interval]}`,
           amount: amountCents,
           quantity: 1,
         },
@@ -388,13 +506,23 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
 
     const restaurant = await this.requireRestaurant(payment.restaurantId);
 
+    const interval: BillingInterval = payment.interval ?? 'monthly';
     const periodStart = nextPeriodStart(restaurant.subscription);
-    const periodEnd = addMonths(periodStart, 1);
+    const periodEnd = addMonths(periodStart, INTERVAL_MONTHS[interval]);
 
+    // Every field comes from the payment's own snapshot, never from the live
+    // plan: a payment settling after an admin edits the plan must grant what
+    // was bought and paid for, not what the plan happens to say now.
+    //
+    // trialProductCap is deliberately absent — the trial grant owns it, so a
+    // purchase can never shorten or shrink a trial that is still running.
     await this.restaurantRepository.update({
       filters: { _id: restaurant._id },
       body: {
         'subscription.tier': payment.tier,
+        'subscription.interval': interval,
+        'subscription.productCapSnapshot': payment.planProductCap ?? null,
+        'subscription.planLabelSnapshot': payment.planLabel ?? payment.tier,
         'subscription.currentPeriodEnd': periodEnd,
         'subscription.lastPaymentId': payment._id,
       } as any,

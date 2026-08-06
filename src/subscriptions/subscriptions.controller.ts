@@ -47,6 +47,7 @@ export class SubscriptionsController {
       user.user._id.toString(),
       this.requireRestaurantId(user),
       body.tier,
+      body.interval,
       body.method,
     );
   }

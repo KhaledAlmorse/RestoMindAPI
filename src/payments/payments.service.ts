@@ -42,7 +42,11 @@ export interface CreatePaymentInput {
   notificationUrl: string;
   redirectionUrl: string;
   expirationSeconds: number;
+  /** Subscription only: the plan slug and what it looked like when bought. */
   tier?: string;
+  interval?: 'monthly' | 'halfYearly' | 'yearly';
+  planLabel?: string;
+  planProductCap?: number | null;
 }
 
 /**
@@ -125,6 +129,9 @@ export class PaymentsService {
       status: PaymentStatusEnum.PENDING,
       refundedAmountCents: 0,
       tier: input.tier,
+      interval: input.interval,
+      planLabel: input.planLabel,
+      planProductCap: input.planProductCap,
     } as any);
 
     const intention = await this.paymobService.createIntention({
