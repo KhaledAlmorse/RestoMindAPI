@@ -1,77 +1,89 @@
-import { TIERS } from 'src/subscriptions/subscription-tiers.config';
+import { ConflictException } from '@nestjs/common';
+import { addDays } from 'src/Common/Utils';
 import { assertProductCapacity } from './product-cap';
 
-const FUTURE = new Date(Date.now() + 30 * 24 * 3600 * 1000);
-const PAST = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+const NOW = new Date();
+const active = (cap: number | null) => ({
+  currentPeriodEnd: addDays(NOW, 10),
+  productCapSnapshot: cap,
+  planLabelSnapshot: 'Basic',
+});
 
 describe('assertProductCapacity', () => {
-  it('allows creation below the tier cap', () => {
+  it('allows a create below the cap', () => {
+    expect(() => assertProductCapacity(active(1000), 999)).not.toThrow();
+  });
+
+  it('blocks a create at the cap', () => {
+    expect(() => assertProductCapacity(active(1000), 1000)).toThrow(
+      ConflictException,
+    );
+  });
+
+  it('never blocks an unlimited plan', () => {
     expect(() =>
-      assertProductCapacity({ tier: 'basic', currentPeriodEnd: FUTURE }, 999),
+      assertProductCapacity(active(null), 10_000_000),
     ).not.toThrow();
   });
 
-  it('blocks creation once the tier cap is reached', () => {
-    expect(() =>
-      assertProductCapacity({ tier: 'basic', currentPeriodEnd: FUTURE }, 1000),
-    ).toThrow(/limit/i);
+  it('blocks entirely when the subscription is not active', () => {
+    expect(() => assertProductCapacity({}, 0)).toThrow(ConflictException);
+    expect(() => assertProductCapacity(undefined, 0)).toThrow(
+      ConflictException,
+    );
   });
 
-  it('uses the trial tier capacity during a trial', () => {
-    expect(() =>
-      assertProductCapacity({ trialEndsAt: FUTURE }, 2999),
-    ).not.toThrow();
-    expect(() => assertProductCapacity({ trialEndsAt: FUTURE }, 3000)).toThrow();
+  it('keeps working through the grace window', () => {
+    const justLapsed = {
+      currentPeriodEnd: addDays(NOW, -1),
+      productCapSnapshot: 1000,
+      planLabelSnapshot: 'Basic',
+    };
+    expect(() => assertProductCapacity(justLapsed, 10)).not.toThrow();
   });
 
-  it('blocks entirely when expired, even at zero products', () => {
-    expect(() =>
-      assertProductCapacity({ tier: 'basic', currentPeriodEnd: PAST }, 0),
-    ).toThrow();
+  it('honours a live trial cap', () => {
+    const trial = { trialEndsAt: addDays(NOW, 5), trialProductCap: 3000 };
+    expect(() => assertProductCapacity(trial, 2999)).not.toThrow();
+    expect(() => assertProductCapacity(trial, 3000)).toThrow(
+      ConflictException,
+    );
   });
 
-  it('blocks entirely when there is no subscription at all', () => {
-    expect(() => assertProductCapacity(undefined, 0)).toThrow();
-  });
-
-  it('still allows creation during grace', () => {
-    // Grace keeps full access — the merchant is late, not gone.
-    const justLapsed = new Date(Date.now() - 2 * 24 * 3600 * 1000);
-    expect(() =>
-      assertProductCapacity({ tier: 'basic', currentPeriodEnd: justLapsed }, 10),
-    ).not.toThrow();
-  });
-
-  it('allows unlimited on scale', () => {
-    expect(() =>
-      assertProductCapacity(
-        { tier: 'scale', currentPeriodEnd: FUTURE },
-        999_999,
-      ),
-    ).not.toThrow();
-  });
-
-  it('reports the next tier so the UI can offer an upgrade', () => {
-    expect.assertions(4);
+  it('names the plan the merchant holds, from the snapshot', () => {
     try {
-      assertProductCapacity({ tier: 'basic', currentPeriodEnd: FUTURE }, 1000);
+      assertProductCapacity(active(1000), 1000);
+      throw new Error('expected a ConflictException');
     } catch (error: any) {
+      expect(error.response.message).toContain('Basic');
+      expect(error.response.cap).toBe(1000);
       expect(error.response.code).toBe('PRODUCT_LIMIT_REACHED');
-      expect(error.response.cap).toBe(TIERS.basic.productCap);
-      expect(error.response.nextTier).toBe('plus');
-      expect(error.response.nextTierPriceEGP).toBe(TIERS.plus.priceEGP);
     }
   });
 
-  it('reports no next tier when already on scale', () => {
-    // Unreachable in practice (scale is unlimited) but the helper must not
-    // invent a tier that does not exist.
-    expect.assertions(1);
+  it('carries the upgrade hint when one is supplied', () => {
     try {
-      assertProductCapacity({ tier: 'scale', currentPeriodEnd: FUTURE }, 10);
-      expect(true).toBe(true); // scale never throws — cap is Infinity
-    } catch {
-      // unreachable
+      assertProductCapacity(active(1000), 1000, {
+        slug: 'plus',
+        label: 'Plus',
+        priceEGP: 600,
+      });
+      throw new Error('expected a ConflictException');
+    } catch (error: any) {
+      expect(error.response.nextPlan).toEqual({
+        slug: 'plus',
+        label: 'Plus',
+        priceEGP: 600,
+      });
+    }
+  });
+
+  it('omits the hint rather than inventing one', () => {
+    try {
+      assertProductCapacity(active(1000), 1000);
+      throw new Error('expected a ConflictException');
+    } catch (error: any) {
+      expect(error.response.nextPlan).toBeNull();
     }
   });
 });
