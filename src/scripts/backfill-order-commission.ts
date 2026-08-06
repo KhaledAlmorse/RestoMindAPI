@@ -4,12 +4,19 @@
  * any commission agreement, so "current rate" is the only defensible value —
  * the alternative is leaving them at zero and under-charging silently.
  *
- * Idempotent: only touches orders where commissionCents is 0 or absent.
- * Orders created before this migration have no commissionCents field in
- * storage at all — Mongoose's schema `default: 0` only fills that in when a
- * document is hydrated, it is never written to the underlying document, so a
- * raw equality filter of `{ commissionCents: 0 }` silently matches none of
- * them. `$exists: false` is required to actually find the legacy rows.
+ * Idempotent: only touches orders where commissionCents is absent from
+ * storage entirely. Orders created before this migration have no
+ * commissionCents field in the stored document — Mongoose's schema
+ * `default: 0` only fills that in at hydration time, never on disk — so
+ * `$exists: false` alone finds every legacy row.
+ *
+ * Deliberately NOT `{ commissionCents: 0 }`: every order created after this
+ * deploy writes commissionRate/commissionCents explicitly, so a restaurant
+ * with a genuine 0% rate produces real, correctly-snapshotted orders with
+ * commissionCents === 0. Matching on that value would re-touch them on every
+ * run and overwrite them with whatever the restaurant's rate happens to be
+ * *now* if it's ever changed later — the exact silent rewrite this snapshot
+ * exists to prevent.
  *
  *   npm run backfill:order-commission
  */
@@ -36,9 +43,7 @@ async function backfill(app: INestApplicationContext) {
 
   const orders =
     (await orderRepository.findMany({
-      filters: {
-        $or: [{ commissionCents: { $exists: false } }, { commissionCents: 0 }],
-      },
+      filters: { commissionCents: { $exists: false } },
     })) ?? [];
 
   let updated = 0;
