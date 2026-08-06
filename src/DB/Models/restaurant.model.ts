@@ -55,6 +55,7 @@ export class Restaurant {
       currentPeriodEnd: { type: Date, required: false },
       trialEndsAt: { type: Date, required: false },
       lastPaymentId: { type: Types.ObjectId, ref: 'Payment', required: false },
+      earlyBird: { type: Boolean, required: false },
     },
     _id: false,
     required: false,
@@ -64,6 +65,13 @@ export class Restaurant {
     currentPeriodEnd?: Date;
     trialEndsAt?: Date;
     lastPaymentId?: Types.ObjectId;
+    /**
+     * Holds an early-bird seat. Granted once — automatically at onboarding
+     * while seats remain, or by an admin for a specific merchant — and then
+     * never recomputed, so the price cannot drift as other merchants sign up.
+     * It only takes effect while the platform switch is on.
+     */
+    earlyBird?: boolean;
   };
 
   /**

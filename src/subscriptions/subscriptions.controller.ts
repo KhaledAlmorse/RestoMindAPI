@@ -9,7 +9,11 @@ import {
 } from '@nestjs/common';
 import { Auth, AuthUser } from 'src/Common/Decorators';
 import { type IAuthUser } from 'src/Common/Types';
-import { SetTrialDto, StartCheckoutDto } from './dto/subscription.dto';
+import {
+  SetEarlyBirdDto,
+  SetTrialDto,
+  StartCheckoutDto,
+} from './dto/subscription.dto';
 import { SubscriptionsService } from './subscriptions.service';
 
 /**
@@ -57,6 +61,20 @@ export class SubscriptionsController {
     return this.subscriptionsService.setTrial(
       restaurantId,
       body.trialEndsAt ?? null,
+      user.user._id.toString(),
+    );
+  }
+
+  @Patch(':restaurantId/early-bird')
+  @Auth('admin')
+  setEarlyBird(
+    @Param('restaurantId') restaurantId: string,
+    @Body() body: SetEarlyBirdDto,
+    @AuthUser() user: IAuthUser,
+  ) {
+    return this.subscriptionsService.setEarlyBird(
+      restaurantId,
+      body.granted,
       user.user._id.toString(),
     );
   }

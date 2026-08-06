@@ -26,9 +26,9 @@ import {
   getApiPublicUrl,
   getFrontendUrl,
 } from 'src/payments/paymob.config';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 import {
   TIERS,
-  TRIAL_DAYS,
   TierName,
   tierPriceCents,
 } from './subscription-tiers.config';
@@ -59,7 +59,24 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     private readonly userRepository: UserRepository,
     private readonly paymentRepository: PaymentRepository,
     private readonly paymentsService: PaymentsService,
+    private readonly systemSettingsService: SystemSettingsService,
   ) {}
+
+  /**
+   * Whether this merchant is actually charged the early-bird price right now.
+   *
+   * Two conditions, and both matter: the merchant holds a seat, and the
+   * platform switch is still on. Turning the switch off therefore reprices
+   * every early bird at their next renewal without touching the month they
+   * have already paid for — that payment is settled and immutable.
+   */
+  private async isEarlyBirdPriced(restaurant: {
+    subscription?: { earlyBird?: boolean };
+  }): Promise<boolean> {
+    if (!restaurant.subscription?.earlyBird) return false;
+    const settings = await this.systemSettingsService.get();
+    return settings.earlyBirdEnabled;
+  }
 
   async onModuleInit(): Promise<void> {
     this.paymentsService.registerFulfiller(
@@ -82,10 +99,21 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
    * Idempotent: the update itself creates the field it filters on, so a restart
    * matches nothing. A restaurant whose trial genuinely lapsed keeps its dates
    * and stays locked, which is the point.
+   *
+   * Skipped entirely while trials are switched off. A merchant onboarded under
+   * that switch has no trialEndsAt and no currentPeriodEnd, so this query would
+   * match them and hand them a trial at the next restart — silently undoing the
+   * admin's decision. `setTrial` remains for granting one deliberately.
    */
   private async backfillMissingTrials(): Promise<void> {
     try {
-      const trialEndsAt = addDays(new Date(), TRIAL_DAYS);
+      const settings = await this.systemSettingsService.get();
+      if (!settings.freeTrialEnabled) {
+        this.logger.log('Trial backfill skipped: free trials are switched off');
+        return;
+      }
+
+      const trialEndsAt = addDays(new Date(), settings.trialDurationDays);
       const result = await this.restaurantRepository.updateMany(
         {
           isDeleted: { $ne: true },
@@ -97,7 +125,7 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
 
       if (result?.modifiedCount) {
         this.logger.log(
-          `Granted a ${TRIAL_DAYS}-day trial to ${result.modifiedCount} restaurant(s) with no subscription, ending ${trialEndsAt.toISOString()}`,
+          `Granted a ${settings.trialDurationDays}-day trial to ${result.modifiedCount} restaurant(s) with no subscription, ending ${trialEndsAt.toISOString()}`,
         );
       }
     } catch (error: any) {
@@ -128,9 +156,13 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     const sub = restaurant.subscription;
     const state = resolveSubscriptionState(sub);
     const productCount = await this.countProducts(restaurant._id);
+    // The same answer startCheckout will use, so the screen can never show a
+    // price the next request would charge differently.
+    const earlyBird = await this.isEarlyBirdPriced(restaurant);
 
     return {
       state,
+      earlyBird,
       tier: sub?.tier ?? null,
       trialEndsAt: sub?.trialEndsAt ?? null,
       currentPeriodEnd: sub?.currentPeriodEnd ?? null,
@@ -146,7 +178,7 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
         ? effectiveProductCap(sub, state)
         : null,
       tiers: (Object.keys(TIERS) as TierName[]).map((name) => {
-        const priceCents = tierPriceCents(name);
+        const priceCents = tierPriceCents(name, earlyBird);
         const { netCents, vatCents } = splitVat(priceCents);
         return {
           name,
@@ -154,7 +186,10 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
           productCap: Number.isFinite(TIERS[name].productCap)
             ? TIERS[name].productCap
             : null,
-          priceEGP: TIERS[name].priceEGP,
+          priceEGP: priceCents / 100,
+          // What they would pay without the early-bird seat, so the screen can
+          // show the saving. Null when there is nothing to compare against.
+          standardPriceEGP: earlyBird ? TIERS[name].priceEGP : null,
           netEGP: netCents / 100,
           vatEGP: vatCents / 100,
           // The UI highlights the smallest tier that actually fits.
@@ -230,7 +265,10 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    const amountCents = tierPriceCents(tier);
+    const amountCents = tierPriceCents(
+      tier,
+      await this.isEarlyBirdPriced(restaurant),
+    );
 
     const { checkoutUrl } = await this.paymentsService.createPayment({
       purpose: PaymentPurposeEnum.SUBSCRIPTION,
@@ -261,6 +299,38 @@ export class SubscriptionsService implements PaymentFulfiller, OnModuleInit {
     });
 
     return { checkoutUrl };
+  }
+
+  /**
+   * Grants or revokes one merchant's early-bird seat by hand.
+   *
+   * Deliberately ignores the cap: the cap governs who claims a seat
+   * automatically at onboarding, while this is an admin knowingly making an
+   * exception for a named merchant. The count an admin sees on the settings
+   * screen includes seats granted this way, so nothing is hidden.
+   */
+  async setEarlyBird(restaurantId: string, granted: boolean, adminId: string) {
+    const restaurant = await this.requireRestaurant(restaurantId);
+    const previous = restaurant.subscription?.earlyBird ?? false;
+
+    await this.restaurantRepository.update({
+      filters: { _id: restaurant._id },
+      body: { 'subscription.earlyBird': granted } as any,
+    });
+
+    this.logger.log(
+      `Admin ${adminId} ${granted ? 'granted' : 'revoked'} the early-bird price for restaurant ${String(restaurant._id)} (was ${previous})`,
+    );
+
+    return {
+      restaurantId: String(restaurant._id),
+      earlyBird: granted,
+      // Whether it is actually being charged, which is not the same thing while
+      // the platform switch is off.
+      effective: await this.isEarlyBirdPriced({
+        subscription: { earlyBird: granted },
+      }),
+    };
   }
 
   /**

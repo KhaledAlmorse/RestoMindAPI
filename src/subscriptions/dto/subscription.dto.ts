@@ -1,4 +1,9 @@
-import { IsDateString, IsEnum, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+} from 'class-validator';
 import { PaymentMethodEnum } from 'src/Common/Types';
 
 export class StartCheckoutDto {
@@ -14,4 +19,10 @@ export class SetTrialDto {
   @IsOptional()
   @IsDateString()
   trialEndsAt?: string | null;
+}
+
+export class SetEarlyBirdDto {
+  /** False revokes the seat; the merchant renews at the standard price. */
+  @IsBoolean()
+  granted!: boolean;
 }
