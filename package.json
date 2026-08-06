@@ -20,6 +20,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migrate:order-groups": "ts-node -r tsconfig-paths/register src/scripts/migrate-order-groups.ts",
     "backfill:order-commission": "ts-node -r tsconfig-paths/register src/scripts/backfill-order-commission.ts",
+    "repair:cart-user-ids": "ts-node -r tsconfig-paths/register src/scripts/repair-cart-user-ids.ts",
     "seed": "ts-node -r tsconfig-paths/register src/DB/seed.ts"
   },
   "dependencies": {
