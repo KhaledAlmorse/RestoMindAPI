@@ -96,8 +96,30 @@ export class Payment {
 
   // --- subscription-only fields ---
 
+  /** A SubscriptionPlan slug. */
   @Prop({ type: String, required: false })
   tier?: string;
+
+  @Prop({
+    type: String,
+    enum: ['monthly', 'halfYearly', 'yearly'],
+    required: false,
+  })
+  interval?: 'monthly' | 'halfYearly' | 'yearly';
+
+  /**
+   * What the plan looked like at the moment of purchase.
+   *
+   * onPaid writes the restaurant's entitlement from these, never from the live
+   * plan: a payment that settles after an admin edits the plan must grant what
+   * was bought, not what the plan says now. `planProductCap: null` is
+   * unlimited, matching SubscriptionPlan.productCap.
+   */
+  @Prop({ type: String, required: false })
+  planLabel?: string;
+
+  @Prop({ type: Number, required: false, default: undefined })
+  planProductCap?: number | null;
 
   @Prop({ type: Date, required: false })
   periodStart?: Date;

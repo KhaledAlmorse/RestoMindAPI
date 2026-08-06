@@ -39,6 +39,7 @@ export class SystemSettingsService {
       trialDurationDays: settings.trialDurationDays,
       earlyBirdEnabled: settings.earlyBirdEnabled,
       earlyBirdCap: settings.earlyBirdCap,
+      earlyBirdDiscountPercent: settings.earlyBirdDiscountPercent,
       earlyBirdClaimed,
       earlyBirdSeatsLeft: Math.max(0, settings.earlyBirdCap - earlyBirdClaimed),
     };

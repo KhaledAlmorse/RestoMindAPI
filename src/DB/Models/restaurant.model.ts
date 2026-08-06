@@ -51,17 +51,30 @@ export class Restaurant {
    */
   @Prop({
     type: {
-      tier: { type: String, enum: ['basic', 'plus', 'scale'], required: false },
+      // No enum: plans are admin-managed, so a slug this schema has never
+      // heard of must still be writable. An enum here would reject the write
+      // AFTER the merchant had already paid.
+      tier: { type: String, required: false },
+      interval: {
+        type: String,
+        enum: ['monthly', 'halfYearly', 'yearly'],
+        required: false,
+      },
       currentPeriodEnd: { type: Date, required: false },
       trialEndsAt: { type: Date, required: false },
       lastPaymentId: { type: Types.ObjectId, ref: 'Payment', required: false },
       earlyBird: { type: Boolean, required: false },
+      productCapSnapshot: { type: Number, required: false, default: undefined },
+      planLabelSnapshot: { type: String, required: false },
+      trialProductCap: { type: Number, required: false, default: undefined },
     },
     _id: false,
     required: false,
   })
   subscription?: {
-    tier?: 'basic' | 'plus' | 'scale';
+    /** A SubscriptionPlan slug. */
+    tier?: string;
+    interval?: 'monthly' | 'halfYearly' | 'yearly';
     currentPeriodEnd?: Date;
     trialEndsAt?: Date;
     lastPaymentId?: Types.ObjectId;
@@ -72,6 +85,19 @@ export class Restaurant {
      * It only takes effect while the platform switch is on.
      */
     earlyBird?: boolean;
+    /**
+     * The cap actually purchased, snapshotted so enforcement needs no plan
+     * lookup on the product-create path and an admin editing a plan cannot
+     * shrink a merchant who has already paid.
+     *
+     * `null` means unlimited; absent means never set. The distinction is
+     * load-bearing — see effectiveProductCap().
+     */
+    productCapSnapshot?: number | null;
+    /** So an archived or renamed plan still displays correctly. */
+    planLabelSnapshot?: string;
+    /** Owned by the trial grant. A purchase never writes this. */
+    trialProductCap?: number | null;
   };
 
   /**

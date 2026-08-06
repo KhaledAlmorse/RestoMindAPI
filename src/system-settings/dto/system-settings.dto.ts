@@ -1,4 +1,11 @@
-import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
 
 /** Every field optional: an admin flipping one switch sends only that switch. */
 export class UpdateSystemSettingsDto {
@@ -20,4 +27,11 @@ export class UpdateSystemSettingsDto {
   @IsInt()
   @Min(0)
   earlyBirdCap?: number;
+
+  /** @IsNumber, not @IsInt: the rate carries decimals (33.3333). */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  earlyBirdDiscountPercent?: number;
 }

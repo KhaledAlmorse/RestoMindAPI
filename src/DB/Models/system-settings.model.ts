@@ -36,6 +36,17 @@ export class SystemSettings {
   /** How many merchants may claim the early-bird price automatically. */
   @Prop({ type: Number, required: true, default: 30, min: 0 })
   earlyBirdCap!: number;
+
+  /**
+   * One rate replacing the three per-tier earlyBirdEGP values, which were all
+   * exactly a third off — the old config encoded a single rate three times.
+   *
+   * 33.3333 rather than 33.33: at 33.33 the Scale yearly price lands on
+   * 10,001 EGP instead of 10,000. Combined with whole-EGP rounding in
+   * planPriceCents() this reproduces every legacy price exactly.
+   */
+  @Prop({ type: Number, required: true, default: 33.3333, min: 0, max: 100 })
+  earlyBirdDiscountPercent!: number;
 }
 
 const SystemSettingsSchema = SchemaFactory.createForClass(SystemSettings);
