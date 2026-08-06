@@ -28,6 +28,7 @@ import { RecommendationsModule } from './recommendations/recommendations.module'
 import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { PayoutsModule } from './payouts/payouts.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
     PartnershipApplicationsModule,
     PaymentsModule.forRoot(),
     SubscriptionsModule,
+    PayoutsModule,
   ],
 
   controllers: [AppController],
