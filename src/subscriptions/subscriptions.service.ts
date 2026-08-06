@@ -12,7 +12,7 @@ import {
   PaymentPurposeEnum,
   PaymentStatusEnum,
 } from 'src/Common/Types';
-import { addDays, addMonths } from 'src/Common/Utils';
+import { addDays, addMonths, splitVat } from 'src/Common/Utils';
 import {
   PaymentRepository,
   ProductRepository,
@@ -30,7 +30,6 @@ import {
   TIERS,
   TRIAL_DAYS,
   TierName,
-  splitVat,
   tierPriceCents,
 } from './subscription-tiers.config';
 import {

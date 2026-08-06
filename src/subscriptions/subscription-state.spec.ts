@@ -1,7 +1,7 @@
+import { splitVat } from 'src/Common/Utils';
 import {
   TIERS,
   TRIAL_TIER,
-  splitVat,
   tierPriceCents,
 } from './subscription-tiers.config';
 import {

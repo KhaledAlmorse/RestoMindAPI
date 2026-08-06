@@ -31,24 +31,8 @@ export const TRIAL_DAYS = 14;
 /** Capacity granted during the trial — the cap must not obstruct evaluation. */
 export const TRIAL_TIER: TierName = 'plus';
 
-export const VAT_RATE = 0.14;
-
 export function tierPriceCents(tier: TierName): number {
   return Math.round(TIERS[tier].priceEGP * 100);
-}
-
-/**
- * Breaks a VAT-inclusive amount into net + VAT for the invoice.
- *
- * VAT is the rounded part and net is the remainder, so net + vat === total
- * exactly — the invoice can never disagree with what was charged by a piaster.
- */
-export function splitVat(totalCents: number): {
-  netCents: number;
-  vatCents: number;
-} {
-  const vatCents = Math.round(totalCents - totalCents / (1 + VAT_RATE));
-  return { netCents: totalCents - vatCents, vatCents };
 }
 
 export function nextTierAfter(tier: TierName | undefined): TierName | null {
