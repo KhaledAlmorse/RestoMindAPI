@@ -64,16 +64,28 @@ export function assertMonotonicLadder(
     );
   }
 
-  // BILLING_INTERVALS is ascending by length, so each priced entry must cost
-  // no more per month than the shorter one before it.
+  // BILLING_INTERVALS is ascending by length.
+  // Each priced entry must have a higher TOTAL price and a lower (or equal) PER-MONTH price
+  // than the shorter commitment before it.
+  let previousTotal = -1;
   let previousPerMonth = Number.POSITIVE_INFINITY;
+
   for (const interval of priced) {
-    const perMonth = prices[interval]! / INTERVAL_MONTHS[interval];
+    const total = prices[interval]!;
+    const perMonth = total / INTERVAL_MONTHS[interval];
+
+    if (total <= previousTotal) {
+      throw new BadRequestException(
+        `The ${interval} total price must be greater than a shorter commitment's total price.`,
+      );
+    }
     if (perMonth > previousPerMonth) {
       throw new BadRequestException(
         `The ${interval} price works out dearer per month than a shorter commitment. A longer plan must never cost more per month.`,
       );
     }
+
+    previousTotal = total;
     previousPerMonth = perMonth;
   }
 }

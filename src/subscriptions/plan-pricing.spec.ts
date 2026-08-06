@@ -111,6 +111,26 @@ describe('assertMonotonicLadder', () => {
     ).toThrow(BadRequestException);
   });
 
+  it('rejects a half-yearly total price that is lower than monthly total price', () => {
+    expect(() =>
+      assertMonotonicLadder({
+        monthly: 30000,
+        halfYearly: 15000,
+        yearly: 300000,
+      }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejects a yearly total price that is lower than half-yearly total price', () => {
+    expect(() =>
+      assertMonotonicLadder({
+        monthly: 30000,
+        halfYearly: 165000,
+        yearly: 100000,
+      }),
+    ).toThrow(BadRequestException);
+  });
+
   it('rejects a plan with no priced interval', () => {
     expect(() =>
       assertMonotonicLadder({ monthly: null, halfYearly: null, yearly: null }),

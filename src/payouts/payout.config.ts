@@ -17,7 +17,7 @@ export const PAYOUT_HOLD_DAYS = 7;
 export const MIN_PAYOUT_CENTS = 5_000; // 50 EGP
 
 /** Applied when a Restaurant has no commissionRate of its own. */
-export const DEFAULT_COMMISSION_RATE = 0.15;
+export const DEFAULT_COMMISSION_RATE = 0.05;
 
 export function commissionRateFor(restaurant: {
   commissionRate?: number;

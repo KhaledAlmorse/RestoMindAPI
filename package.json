@@ -21,6 +21,7 @@
     "migrate:order-groups": "ts-node -r tsconfig-paths/register src/scripts/migrate-order-groups.ts",
     "backfill:order-commission": "ts-node -r tsconfig-paths/register src/scripts/backfill-order-commission.ts",
     "repair:cart-user-ids": "ts-node -r tsconfig-paths/register src/scripts/repair-cart-user-ids.ts",
+    "seed:subscription-plans": "ts-node -r tsconfig-paths/register src/scripts/seed-subscription-plans.ts",
     "seed": "ts-node -r tsconfig-paths/register src/DB/seed.ts"
   },
   "dependencies": {
