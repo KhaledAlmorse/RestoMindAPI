@@ -66,6 +66,37 @@ export class Restaurant {
     lastPaymentId?: Types.ObjectId;
   };
 
+  /**
+   * Marketplace commission as a fraction of the order total, VAT-inclusive,
+   * matching the subscription pricing convention. Optional: unset means the
+   * platform default applies. Changing this affects only orders created
+   * afterwards — every Order snapshots the rate it was sold under.
+   */
+  @Prop({ type: Number, required: false, min: 0, max: 1 })
+  commissionRate?: number;
+
+  /**
+   * Where a manual payout is sent. Absent means payouts are blocked for this
+   * merchant — the statement is still produced, with a blocking reason, so
+   * nobody discovers the missing IBAN on transfer day.
+   */
+  @Prop({
+    type: {
+      method: { type: String, enum: ['bank', 'wallet'], required: true },
+      accountName: { type: String, required: true },
+      accountNumber: { type: String, required: true },
+      bankName: { type: String, required: false },
+    },
+    _id: false,
+    required: false,
+  })
+  payoutDestination?: {
+    method: 'bank' | 'wallet';
+    accountName: string;
+    accountNumber: string;
+    bankName?: string;
+  };
+
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
