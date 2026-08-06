@@ -30,6 +30,12 @@ describe('splitProRata', () => {
   it('falls back to an equal split when every weight is zero', () => {
     expect(splitProRata(300, [0, 0, 0])).toEqual([100, 100, 100]);
   });
+
+  it('preserves sign for a negative total', () => {
+    const parts = splitProRata(-1_000, [1, 1, 1]);
+    expect(parts).toEqual([-334, -333, -333]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(-1_000);
+  });
 });
 
 describe('saleLine', () => {
@@ -118,8 +124,11 @@ describe('refundLines', () => {
   });
 
   it('never reverses more commission than the order carried', () => {
+    // 7000 refunded against a 6000c order: naive pro-rata would compute
+    // round(900 * 7000/6000) = 1050, more commission than the order ever
+    // carried. The cap must bring it back to 900.
     const [line] = refundLines(
-      { _id: 'f4', orderId: 'a', amountCents: 6_000, completedAt: at('2026-08-02T09:00:00Z') } as any,
+      { _id: 'f4', orderId: 'a', amountCents: 7_000, completedAt: at('2026-08-02T09:00:00Z') } as any,
       [orderA],
     );
 
@@ -131,7 +140,7 @@ describe('summarise', () => {
   it('totals the lines and splits VAT out of the net commission', () => {
     const lines: LedgerLine[] = [
       saleLine({ _id: 'o1', restaurantId: 'r1', paymentMethod: 'Card', finalTotalPrice: 100, commissionCents: 1_500, deliveredAt: at('2026-08-01T12:00:00Z') } as any),
-      adjustmentLine({ _id: 'j1', amountCents: -500, reason: 'chargeback', effectiveAt: at('2026-08-03T00:00:00Z') } as any),
+      adjustmentLine({ _id: 'j1', restaurantId: 'r1', amountCents: -500, reason: 'chargeback', effectiveAt: at('2026-08-03T00:00:00Z') } as any),
     ];
 
     const totals = summarise(lines);

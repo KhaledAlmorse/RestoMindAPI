@@ -156,7 +156,7 @@ export function refundLines(
 
 interface AdjustmentLike {
   _id: any;
-  restaurantId?: any;
+  restaurantId: any;
   amountCents: number;
   reason: string;
   effectiveAt: Date;
@@ -166,7 +166,7 @@ export function adjustmentLine(adjustment: AdjustmentLike): LedgerLine {
   return {
     kind: 'adjustment',
     ref: String(adjustment._id),
-    restaurantId: String(adjustment.restaurantId ?? ''),
+    restaurantId: String(adjustment.restaurantId),
     occurredAt: adjustment.effectiveAt,
     grossCents: 0,
     commissionCents: 0,
