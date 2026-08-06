@@ -1,98 +1,363 @@
 <p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
+  <img src="https://nestjs.com/img/logo-small.svg" width="100" alt="NestJS Logo" />
 </p>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+<h1 align="center">RestoMind API</h1>
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
+<p align="center">
+  <b>Enterprise AI-Driven Restaurant Management & Multi-Tenant Backend Ecosystem</b>
 </p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
-## Description
+<p align="center">
+  <img src="https://img.shields.io/badge/NestJS-v11.0-E0234E?style=flat-square&logo=nestjs" alt="NestJS" />
+  <img src="https://img.shields.io/badge/TypeScript-v5.7-3178C6?style=flat-square&logo=typescript" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/MongoDB-Mongoose_v9.7-47A248?style=flat-square&logo=mongodb" alt="MongoDB" />
+  <img src="https://img.shields.io/badge/Security-JWT%20%26%20RBAC-000000?style=flat-square&logo=jsonwebtokens" alt="JWT Security" />
+  <img src="https://img.shields.io/badge/Cloud-Cloudinary-3448C5?style=flat-square&logo=cloudinary" alt="Cloudinary" />
+  <img src="https://img.shields.io/badge/AI-Forecasting%20Engine-FF6F61?style=flat-square" alt="AI Engine" />
+  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License" />
+</p>
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## 📌 Table of Contents
 
-```bash
-$ npm install
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [System Architecture & Tech Stack](#-system-architecture--tech-stack)
+- [Role-Based Access Control (RBAC)](#-role-based-access-control-rbac)
+- [Directory Structure](#-directory-structure)
+- [Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Environment Variables](#environment-variables)
+  - [Database Seeding](#database-seeding)
+  - [Running the Application](#running-the-application)
+- [AI & ML Forecasting Integration](#-ai--ml-forecasting-integration)
+- [Core API Modules & Endpoints Overview](#-core-api-modules--endpoints-overview)
+- [Database Schema & Seed Credentials](#-database-schema--seed-credentials)
+- [Testing & Quality Assurance](#-testing--quality-assurance)
+- [License & Project Info](#-license--project-info)
+
+---
+
+## 🚀 Overview
+
+**RestoMind API** is an enterprise-grade, multi-tenant backend service built with **NestJS**, **MongoDB (Mongoose)**, and **TypeScript**. Designed for modern restaurant chains, cloud kitchens, and bakery operations, RestoMind combines core restaurant management (orders, catalog, inventory, suppliers, waste) with **AI-driven demand forecasting, smart production planning, and automated inventory replenishment**.
+
+Whether managing single outlets or multi-brand restaurant networks, RestoMind API provides isolated data per restaurant, multi-restaurant order group handling for customers, real-time analytics, and seamless AI microservice interoperability.
+
+### 🌐 Ecosystem Repositories
+
+| Component | Repository Link | Tech Stack |
+| :--- | :--- | :--- |
+| **Backend API** | [RestoMindAPI](https://github.com/KhaledAlmorse/RestoMindAPI) | NestJS 11, MongoDB, TypeScript |
+| **Frontend Web App** | [restumint-app](https://github.com/AhmedMohO/restumint-app) | Next.js / React, Tailwind CSS |
+| **AI Prediction Engine** | [prediction-model](https://github.com/AmiraElsa3id/prediction-model) | Python, FastAPI / ML Models |
+
+
+---
+
+## ✨ Key Features
+
+### 🤖 AI-Powered Intelligence & Forecasting
+* **Weekly Demand Predictions**: Integrates with an external Python AI microservice (`AI_SERVICE_URL`) to generate machine-learning sales & ingredient consumption forecasts.
+* **Smart Production Planning**: Auto-computes optimized daily baking/cooking schedules based on projected sales vs. current stock levels.
+* **Automated Recommendations**: AI-driven pricing, stock replenishment alerts, waste mitigation strategies, and best-selling product highlights.
+
+### 🏢 Multi-Tenant Restaurant Architecture
+* **Tenant Isolation**: Strict boundaries for managers and staff guaranteeing access only to their assigned restaurant.
+* **Multi-Restaurant Order Groups**: Customers can place orders spanning products from multiple restaurants in a single checkout session (`OrderGroup`).
+
+### 📦 Comprehensive Inventory & Supply Chain Management
+* **Batch Tracking & Expiry Management**: FIFO inventory batch tracking with shelf-life metrics and automated expiration warnings.
+* **Supplier & Purchase Order Workflows**: Supplier lead times, purchase order creation, approval, and receiving with auto-updated inventory batches.
+* **Waste Tracking & Audit Logs**: Detailed waste logging (spoilage, expiration, damage) with cost impact analytics.
+
+### 🔐 Security & Auth Infrastructure
+* **Multi-Role Access**: `admin`, `manager`, `staff`, and `customer` roles enforced via custom NestJS Guards.
+* **Token Security**: Dual-token architecture with Access Token & Refresh Token rotation.
+* **OTP & Email Workflows**: Email verification and secure password reset workflows using **Nodemailer**.
+* **Safety Guards**: Pre-delete checks preventing accidental deletion of active restaurant managers (`MANAGER_HAS_ACTIVE_RESTAURANT`).
+
+### 📊 Analytics & Executive Dashboards
+* **Sales Analytics**: Revenue metrics, average order values, sales breakdown by channel.
+* **Dashboard KPI Widgets**: Real-time sales, order counts, top ingredients consumed, and pending purchase orders.
+* **Partnership Portal**: Dedicated onboarding pipeline for prospective restaurant partners with admin review workflows.
+
+---
+
+## 🛠 System Architecture & Tech Stack
+
+| Layer | Technology / Library | Purpose |
+| :--- | :--- | :--- |
+| **Framework** | [NestJS 11](https://nestjs.com/) | Progressive Node.js framework for scalable server-side code |
+| **Language** | [TypeScript 5.7](https://www.typescriptlang.org/) | Strongly typed JavaScript execution environment |
+| **Database** | [MongoDB](https://www.mongodb.com/) + [Mongoose 9](https://mongoosejs.com/) | NoSQL Document database & Object Data Modeling |
+| **Authentication** | [Passport JWT](https://jwt.io/) + [bcrypt](https://www.npmjs.com/package/bcrypt) | Secure token authentication, password hashing, OTP reset |
+| **File Storage** | [Cloudinary](https://cloudinary.com/) + [Multer](https://github.com/expressjs/multer) | Cloud asset management for product & restaurant imagery |
+| **Mailing** | [Nodemailer](https://nodemailer.com/) | Transactional email & OTP verification code delivery |
+| **Task Scheduling** | `@nestjs/schedule` | Automated cron jobs for batch expiration and AI sync |
+| **AI Integration** | RxJS HTTP Client | RESTful communication with Python Forecasting Microservice |
+
+---
+
+## 🛡 Role-Based Access Control (RBAC)
+
+RestoMind API enforces strict authorization levels across four main user roles:
+
+| Role | Scope | Key Capabilities |
+| :--- | :--- | :--- |
+| `admin` | System-Wide | Full access across all restaurants, user management, partnership approvals, system configuration. |
+| `manager` | Assigned Restaurant | Manages restaurant profile, staff accounts, products, recipes, ingredients, inventory, suppliers, purchase orders, sales. |
+| `staff` | Assigned Restaurant | Processes orders, manages inventory batches, records stock transactions & waste reports, receives purchase orders. |
+| `customer` | Public / Consumer | Browses active products & offers, manages shopping cart, places multi-restaurant order groups, manages saved addresses & favorites. |
+
+---
+
+## 📂 Directory Structure
+
+```text
+RestoMindAPI/
+├── src/
+│   ├── main.ts                       # Application entrypoint & global validation pipes
+│   ├── app.module.ts                 # Master module registering all feature modules
+│   ├── global.module.ts              # Global Auth & Guard bindings
+│   ├── Common/                       # Shared guards, decorators, filters, DTOs & AI Client
+│   │   ├── Guards/                   # AuthGuard & RolesGuard
+│   │   ├── Services/                 # AiClientService & AiClientModule
+│   │   └── Types/                    # Shared TypeScript interfaces & enums
+│   ├── DB/                           # Mongoose schemas & data models
+│   ├── auth/                         # Authentication, OTP & address management
+│   ├── user/                         # User management (RBAC & staff assignment)
+│   ├── restaurant/                   # Multi-tenant restaurant entity management
+│   ├── categories/                   # Menu item categories
+│   ├── products/                     # Product catalog & recipe definitions
+│   ├── ingredients/                  # Raw ingredient management & stock thresholds
+│   ├── inventory/                    # Inventory batches & stock movement transactions
+│   ├── suppliers/                    # Vendor profiles & lead-time data
+│   ├── purchase-orders/              # Supply chain purchasing & stock receiving
+│   ├── cart/                         # Shopping cart session management
+│   ├── orders/                       # Single and Multi-restaurant Order Groups
+│   ├── offers/                       # Promotional discounts & deal management
+│   ├── favorites/                    # Customer favorite product lists
+│   ├── sales/                        # POS sales transactions & revenue records
+│   ├── dashboard/                    # Restaurant & Admin analytics endpoints
+│   ├── production-planning/          # AI-generated daily production schedules
+│   ├── weekly-prediction/            # AI weekly sales & ingredient demand forecasts
+│   ├── recommendations/              # AI smart recommendations engine
+│   ├── waste-reports/                # Spoilage & waste tracking events
+│   ├── partnership-applications/     # Restaurant onboarding partner applications
+│   ├── imports/                      # Bulk data import utilities
+│   └── scripts/                      # DB Seeding & Migration scripts
+├── API_STRUCTURE_AND_ENDPOINTS.md    # Exhaustive endpoint documentation & payload specs
+├── test/                             # End-to-end (E2E) & unit test suites
+├── .env.example                      # Environment variables template
+├── package.json                      # Project metadata & dependencies
+└── tsconfig.json                     # TypeScript configuration
 ```
 
-## Compile and run the project
+---
+
+## ⚡ Getting Started
+
+### Prerequisites
+
+Ensure you have the following installed on your machine:
+* **Node.js**: `v18.x` or `v20.x`+
+* **npm** or **pnpm**
+* **MongoDB**: Local MongoDB instance (v6.0+) or MongoDB Atlas connection string
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/KhaledAlmorse/RestoMindAPI.git
+   cd RestoMindAPI
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+### Environment Variables
+
+Create a `.env` file in the project root directory by copying `.env.example`:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+cp .env.example .env
 ```
 
-## Run tests
+Configure your `.env` variables:
+
+```env
+# Server & Database Configuration
+PORT=3000
+DB_URL=mongodb://127.0.0.1:27017/restomind
+FRONTEND_URL=http://localhost:3000
+
+# Authentication & JWT Secrets
+ACCESS_TOKEN_SECRET=your_super_secret_access_key
+ACCESS_TOKEN_EXPIRES_IN=5h
+REFRESH_TOKEN_SECRET=your_super_secret_refresh_key
+REFRESH_EXPIRES_IN=10d
+RESET_TOKEN_SECRET=your_super_secret_reset_key
+
+# Transactional Email (Nodemailer)
+USER_EMAIL=your-email@gmail.com
+USER_PASS=your-app-password
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=465
+EMAIL_SECURE=true
+
+# Security Encryption & Hashing
+Encryption_SECRET=your_32_character_encryption_key
+SALT_ROUNDS=10
+
+# Cloudinary Storage Configuration
+CLOUD_NAME=your_cloud_name
+CLOUD_API_KEY=your_api_key
+CLOUD_API_SECRET=your_api_secret
+CLOUD_FOLDER_NAME=restomind
+
+# AI Forecasting Microservice
+AI_SERVICE_URL=http://127.0.0.1:8200
+AI_SHARED_SECRET=your_ai_microservice_shared_secret
+
+# Scholarship AI Gateway Configuration
+SCHOLARSHIP_API_KEY=your_scholarship_api_key
+BEDROCK_GATEWAY_URL=
+AI_PROVIDER_TYPE=gateway
+
+# Approved Model Identifiers
+BEDROCK_PRIMARY_LLM=anthropic.claude-sonnet-4-6
+BEDROCK_ROUTER_LLM=anthropic.claude-haiku-4-5-20251001-v1:0
+BEDROCK_PRIMARY_EMBEDDING=us.cohere.embed-v4:0
+BEDROCK_FALLBACK_EMBEDDING=amazon.titan-embed-text-v2:0:8k
+```
+
+
+### Database Seeding
+
+Seed the database with pre-configured initial data (Admin, Manager, El-Sultan Bakery, Categories, Ingredients, Products, Recipes, Inventory Batches, Suppliers, and Offers):
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run seed
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Running the Application
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# Development Mode
+npm run start
+
+# Watch / Hot Reload Mode (Recommended for development)
+npm run start:dev
+
+# Production Mode
+npm run build
+npm run start:prod
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## 🤖 AI & ML Forecasting Integration
 
-Check out a few resources that may come in handy when working with NestJS:
+RestoMind API seamlessly integrates with an external Python-based AI microservice repository ([prediction-model](https://github.com/AmiraElsa3id/prediction-model)) via the `AiClientService`.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```
+┌─────────────────┐        HTTP / JSON         ┌──────────────────────────────┐
+│  RestoMind API  │ ────────────────────────>  │   AI Forecasting Service     │
+│   (NestJS)      │ <────────────────────────  │   (Python / FastAPI / ML)    │
+└─────────────────┘  Shared Secret Handshake   └──────────────────────────────┘
+```
 
-## Support
+* **Weekly Predictions (`GET /predictions`)**: Pulls ML forecasting data for weekly sales & ingredient usage.
+* **Production Planning (`POST /predictions/production-plan`)**: Uses AI forecast numbers to suggest exact batch quantities to prepare, minimizing daily waste.
+* **Recommendations (`GET /recommendations`)**: Analyzes historical sales velocity and stock levels to generate actionable business alerts.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+---
 
-## Stay in touch
+## 📋 Core API Modules & Endpoints Overview
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+| Module | Base Path | Description | Access |
+| :--- | :--- | :--- | :--- |
+| **Auth** | `/auth` | Authentication, Sign Up, Login, OTP, Reset Password, Delivery Address Book | Public / Authenticated |
+| **Users** | `/users` | User management, role assignment, status toggle, manager safety checks | `admin`, `manager` |
+| **Restaurants** | `/restaurants` | Multi-tenant restaurant entity CRUD & owner bindings | `admin`, `manager`, `staff` |
+| **Categories** | `/categories` | Menu classification hierarchy | Public / Manager |
+| **Products** | `/products` | Catalog items, variants, prices & recipe definitions | Public / Manager |
+| **Ingredients** | `/ingredients` | Inventory items, units, minimum stock & safety thresholds | `manager`, `staff` |
+| **Inventory** | `/inventory` | Batches, FIFO stock movements, manually log stock adjustments | `manager`, `staff` |
+| **Suppliers** | `/suppliers` | Supplier profiles, contact info, and lead time metrics | `manager`, `staff` |
+| **Purchase Orders** | `/purchase-orders` | Supply purchase order creation, approval, & receiving into inventory | `manager`, `staff` |
+| **Cart** | `/cart` | Customer cart management supporting multi-restaurant items | `customer` |
+| **Orders** | `/orders` | Order creation, status pipeline (pending, preparing, delivered), Order Groups | `customer`, `staff`, `manager` |
+| **Offers** | `/offers` | Promotional discounts & banner campaign management | Public / Manager |
+| **Favorites** | `/favorites` | Customer saved favorite items | `customer` |
+| **Sales** | `/sales` | POS sales transaction logging & historical revenue streams | `manager` |
+| **Dashboard** | `/dashboard` | Executive KPIs, order distribution, ingredient consumption | `admin`, `manager` |
+| **Production Plan** | `/predictions/production-plan` | AI-assisted production schedule generation | `manager` |
+| **Waste Reports** | `/waste-reports` | Logging ingredient & product waste events with financial audit | `manager`, `staff` |
+| **Predictions** | `/predictions` | Fetch AI sales & ingredient forecasts | `manager` |
+| **Recommendations**| `/recommendations` | AI smart operational suggestions | `manager` |
+| **Partnerships** | `/partnership-applications` | Restaurant partner request submissions & admin review | Public / `admin` |
 
-## License
+> 📖 For full request/response DTO schemas, query parameters, and example JSON payloads, refer to [`API_STRUCTURE_AND_ENDPOINTS.md`](./API_STRUCTURE_AND_ENDPOINTS.md).
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+---
+
+## 🔑 Database Schema & Seed Credentials
+
+Running `npm run seed` sets up default sandbox accounts for immediate development & testing:
+
+### Seed Accounts Credentials:
+
+| Account Type | Email | Password | Assigned Entity / Role |
+| :--- | :--- | :--- | :--- |
+| **System Admin** | `admin@restomind.com` | `Password123!` | System Administrator (`admin`) |
+| **Restaurant Manager** | `manager@restomind.com` | `Password123!` | Manager of **El-Sultan Bakery** (`manager`) |
+
+### Seeded Mock Data Includes:
+* **Restaurant**: *El-Sultan Bakery* (مخبز السلطان)
+* **Categories**: Pastries (معجنات), Oriental Sweets (حلويات شرقية), Fresh Bread (خبز)
+* **Ingredients**: Premium Flour (ING-001), Butter (ING-002), Sugar (ING-003), Milk (ING-004)
+* **Products & Recipes**: Butter Croissant, Kunafa with Nuts, Fresh Baladi Bread
+* **Suppliers**: Al-Nahar Flour Mills
+* **Inventory**: Active inventory batch `FLOUR-PO-001` with stock history & waste logs.
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+RestoMind API includes unit tests and end-to-end (E2E) integration test suites powered by **Jest** and **Supertest**.
+
+```bash
+# Run unit tests
+npm run test
+
+# Run tests with coverage report
+npm run test:cov
+
+# Run E2E integration tests
+npm run test:e2e
+
+# Run linter
+npm run lint
+```
+
+---
+
+## 📄 License & Credits
+
+This project is created as part of the **RestoMind Graduation Project Ecosystem**.
+
+* **Framework**: NestJS & Node.js
+* **License**: UNLICENSED / Graduation Project Repository
+
+---
+
+<p align="center">
+  Made with ❤️ by the RestoMind Team
+</p>
