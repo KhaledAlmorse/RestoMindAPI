@@ -25,3 +25,5 @@ export * from './recommendation.model';
 export * from './partnership-application.model';
 export * from './payment.model';
 export * from './refund.model';
+export * from './payout.model';
+export * from './merchant-adjustment.model';

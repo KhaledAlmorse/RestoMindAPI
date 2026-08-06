@@ -25,3 +25,5 @@ export * from './recommendation.repository';
 export * from './partnership-application.repository';
 export * from './payment.repository';
 export * from './refund.repository';
+export * from './payout.repository';
+export * from './merchant-adjustment.repository';

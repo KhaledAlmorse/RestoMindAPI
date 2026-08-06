@@ -204,3 +204,18 @@ export enum RefundSettlementModeEnum {
   GATEWAY = 'gateway',
   OFFLINE = 'offline',
 }
+
+export enum PayoutDirectionEnum {
+  /** RestoMind transfers the merchant their share. */
+  TO_MERCHANT = 'to_merchant',
+  /** The merchant pays RestoMind commission owed on cash-on-delivery sales. */
+  FROM_MERCHANT = 'from_merchant',
+}
+
+export enum PayoutStatusEnum {
+  /** Recorded, transfer not yet confirmed by the bank. */
+  PENDING = 'pending',
+  COMPLETED = 'completed',
+  /** The transfer bounced. Does not advance the merchant's paid-through mark. */
+  FAILED = 'failed',
+}
