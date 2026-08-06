@@ -1,13 +1,8 @@
-import { splitVat } from 'src/Common/Utils';
+import { addDays, splitVat } from 'src/Common/Utils';
 import {
-  TIERS,
-  TRIAL_TIER,
-  tierPriceCents,
-} from './subscription-tiers.config';
-import {
-  canPurchaseTier,
+  canPurchasePlan,
+  currentIntervalMonths,
   effectiveProductCap,
-  effectiveTier,
   hasDashboardAccess,
   nextPeriodStart,
   resolveSubscriptionState,
@@ -118,62 +113,111 @@ describe('hasDashboardAccess', () => {
   });
 });
 
-describe('effectiveTier and effectiveProductCap', () => {
-  it('grants trial-tier capacity during the trial', () => {
-    const sub = { trialEndsAt: new Date('2026-08-20T12:00:00.000Z') };
-    expect(effectiveTier(sub, 'trial')).toBe(TRIAL_TIER);
-    expect(effectiveProductCap(sub, 'trial')).toBe(TIERS[TRIAL_TIER].productCap);
-  });
-
-  it('uses the paid tier when active', () => {
-    const sub = {
-      tier: 'basic' as const,
-      currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
-    };
-    expect(effectiveTier(sub, 'active')).toBe('basic');
-    expect(effectiveProductCap(sub, 'active')).toBe(1000);
-  });
-
-  it('keeps the paid tier during grace', () => {
-    const sub = {
-      tier: 'plus' as const,
-      currentPeriodEnd: new Date('2026-08-01T12:00:00.000Z'),
-    };
-    expect(effectiveProductCap(sub, 'grace')).toBe(3000);
-  });
+describe('effectiveProductCap', () => {
+  const future = (days: number) => addDays(NOW, days);
 
   it('grants no capacity when expired or unpaid', () => {
-    expect(effectiveProductCap({ tier: 'basic' }, 'expired')).toBe(0);
-    expect(effectiveProductCap(undefined, 'unpaid')).toBe(0);
+    expect(effectiveProductCap({}, 'unpaid', NOW)).toBe(0);
+    expect(
+      effectiveProductCap({ productCapSnapshot: 1000 }, 'expired', NOW),
+    ).toBe(0);
+    expect(effectiveProductCap(undefined, 'unpaid', NOW)).toBe(0);
   });
 
-  it('treats scale as unlimited', () => {
+  it('reads the paid snapshot for an active subscription', () => {
+    const sub = { currentPeriodEnd: future(10), productCapSnapshot: 1000 };
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(1000);
+  });
+
+  it('treats a null snapshot as unlimited', () => {
+    const sub = { currentPeriodEnd: future(10), productCapSnapshot: null };
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it('treats an unset snapshot as zero, never as unlimited', () => {
+    // A pre-migration record must not be handed free capacity.
+    const sub = { currentPeriodEnd: future(10) };
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(0);
+  });
+
+  it('keeps the trial cap while the trial is still running', () => {
+    const sub = { trialEndsAt: future(5), trialProductCap: 3000 };
+    expect(effectiveProductCap(sub, 'trial', NOW)).toBe(3000);
+  });
+
+  it('still honours the paid cap during grace', () => {
+    const sub = { currentPeriodEnd: addDays(NOW, -2), productCapSnapshot: 1000 };
+    expect(resolveSubscriptionState(sub, NOW)).toBe('grace');
+    expect(effectiveProductCap(sub, 'grace', NOW)).toBe(1000);
+  });
+
+  // The case the "longer interval" purchase rule creates: buying a
+  // smaller-cap, longer-interval plan mid-trial must not shrink capacity.
+  it('takes the larger of trial and paid caps while the trial runs', () => {
     const sub = {
-      tier: 'scale' as const,
-      currentPeriodEnd: new Date('2026-09-01T00:00:00.000Z'),
+      trialEndsAt: future(5),
+      trialProductCap: 3000,
+      currentPeriodEnd: future(370),
+      productCapSnapshot: 1000,
     };
-    expect(effectiveProductCap(sub, 'active')).toBe(Number.POSITIVE_INFINITY);
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(3000);
+  });
+
+  it('drops to the paid cap once the trial has ended', () => {
+    const sub = {
+      trialEndsAt: addDays(NOW, -1),
+      trialProductCap: 3000,
+      currentPeriodEnd: future(370),
+      productCapSnapshot: 1000,
+    };
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(1000);
+  });
+
+  it('gives a mid-trial upgrade its bigger cap immediately', () => {
+    const sub = {
+      trialEndsAt: future(5),
+      trialProductCap: 3000,
+      currentPeriodEnd: future(35),
+      productCapSnapshot: null,
+    };
+    expect(effectiveProductCap(sub, 'active', NOW)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
   });
 });
 
-describe('pricing helpers', () => {
-  it('converts tier prices to integer piasters', () => {
-    expect(tierPriceCents('basic')).toBe(30000);
-    expect(tierPriceCents('plus')).toBe(60000);
-    expect(tierPriceCents('scale')).toBe(150000);
+describe('currentIntervalMonths', () => {
+  it('is 0 on a trial, so every interval counts as longer', () => {
+    expect(
+      currentIntervalMonths({ trialEndsAt: addDays(NOW, 5) }, NOW),
+    ).toBe(0);
+  });
+
+  it('reflects the interval held while the period is live', () => {
+    const sub = { interval: 'yearly' as const, currentPeriodEnd: addDays(NOW, 5) };
+    expect(currentIntervalMonths(sub, NOW)).toBe(12);
+  });
+
+  it('is 0 once the period has lapsed', () => {
+    const sub = { interval: 'yearly' as const, currentPeriodEnd: addDays(NOW, -1) };
+    expect(currentIntervalMonths(sub, NOW)).toBe(0);
+  });
+});
+
+describe('VAT split', () => {
+  it('never loses a piaster at any seeded price', () => {
+    for (const total of [30000, 165000, 300000, 60000, 1500000]) {
+      const { netCents, vatCents } = splitVat(total);
+      expect(netCents + vatCents).toBe(total);
+    }
   });
 
   it('splits VAT out of a VAT-inclusive amount', () => {
     const { netCents, vatCents } = splitVat(30000);
     expect(vatCents).toBe(3684); // 300 - 300/1.14 = 36.84 EGP
     expect(netCents).toBe(26316);
-  });
-
-  it('never loses a piaster on any tier', () => {
-    for (const total of [30000, 60000, 150000]) {
-      const { netCents, vatCents } = splitVat(total);
-      expect(netCents + vatCents).toBe(total);
-    }
   });
 });
 
@@ -210,42 +254,78 @@ describe('nextPeriodStart', () => {
   });
 });
 
-describe('canPurchaseTier', () => {
+describe('canPurchasePlan', () => {
   const now = new Date('2026-08-05T12:00:00Z');
   const future = new Date('2026-09-19T12:00:00Z');
   const past = new Date('2026-07-01T12:00:00Z');
 
-  it('refuses the plan a paying merchant already holds', () => {
-    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
-    expect(canPurchaseTier(sub, 'plus', now)).toBe(false);
+  const activeMonthly = {
+    tier: 'basic',
+    interval: 'monthly' as const,
+    currentPeriodEnd: future,
+    productCapSnapshot: 1000,
+  };
+
+  it('allows anything once the subscription has lapsed', () => {
+    expect(canPurchasePlan({}, 'unpaid', 1000, 'monthly', now)).toBe(true);
+    expect(canPurchasePlan(undefined, 'unpaid', 1000, 'monthly', now)).toBe(
+      true,
+    );
   });
 
-  it('refuses a downgrade they could not use until next month anyway', () => {
-    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
-    expect(canPurchaseTier(sub, 'basic', now)).toBe(false);
+  it('blocks the same capacity on the same interval', () => {
+    expect(
+      canPurchasePlan(activeMonthly, 'active', 1000, 'monthly', now),
+    ).toBe(false);
   });
 
-  it('allows an upgrade immediately', () => {
-    // Someone who has hit their product cap needs the bigger tier today —
-    // making them wait for a renewal date would strand their catalogue.
-    const sub = { tier: 'plus' as const, currentPeriodEnd: future };
-    expect(canPurchaseTier(sub, 'scale', now)).toBe(true);
+  it('allows the same capacity on a longer interval', () => {
+    expect(
+      canPurchasePlan(activeMonthly, 'active', 1000, 'halfYearly', now),
+    ).toBe(true);
+    expect(canPurchasePlan(activeMonthly, 'active', 1000, 'yearly', now)).toBe(
+      true,
+    );
   });
 
-  it('treats a trial as holding the trial tier', () => {
-    const sub = { trialEndsAt: future };
-    expect(canPurchaseTier(sub, 'basic', now)).toBe(false);
-    expect(canPurchaseTier(sub, 'plus', now)).toBe(false);
-    expect(canPurchaseTier(sub, 'scale', now)).toBe(true);
+  it('allows a bigger cap on any interval', () => {
+    expect(
+      canPurchasePlan(activeMonthly, 'active', 3000, 'monthly', now),
+    ).toBe(true);
+  });
+
+  it('allows unlimited on any interval', () => {
+    expect(canPurchasePlan(activeMonthly, 'active', null, 'monthly', now)).toBe(
+      true,
+    );
+  });
+
+  it('blocks a smaller cap on a shorter-or-equal interval', () => {
+    const yearly = {
+      tier: 'plus',
+      interval: 'yearly' as const,
+      currentPeriodEnd: future,
+      productCapSnapshot: 3000,
+    };
+    expect(canPurchasePlan(yearly, 'active', 1000, 'monthly', now)).toBe(false);
+    expect(canPurchasePlan(yearly, 'active', 1000, 'yearly', now)).toBe(false);
+  });
+
+  it('lets a trial merchant commit to any interval', () => {
+    // A trial bought no interval, so every interval reads as longer.
+    const trial = { trialEndsAt: future, trialProductCap: 3000 };
+    expect(canPurchasePlan(trial, 'trial', 1000, 'monthly', now)).toBe(true);
+    expect(canPurchasePlan(trial, 'trial', 3000, 'yearly', now)).toBe(true);
   });
 
   it('opens everything up during grace — that is the renewal window', () => {
-    const sub = { tier: 'plus' as const, currentPeriodEnd: past };
-    expect(canPurchaseTier(sub, 'plus', now)).toBe(true);
-    expect(canPurchaseTier(sub, 'basic', now)).toBe(true);
-  });
-
-  it('opens everything up for a restaurant that has never subscribed', () => {
-    expect(canPurchaseTier(undefined, 'basic', now)).toBe(true);
+    const sub = {
+      tier: 'plus',
+      interval: 'monthly' as const,
+      currentPeriodEnd: past,
+      productCapSnapshot: 3000,
+    };
+    expect(canPurchasePlan(sub, 'grace', 3000, 'monthly', now)).toBe(true);
+    expect(canPurchasePlan(sub, 'grace', 1000, 'monthly', now)).toBe(true);
   });
 });

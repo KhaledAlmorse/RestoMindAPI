@@ -1,10 +1,10 @@
 import { addDays } from 'src/Common/Utils';
 import {
-  GRACE_DAYS,
-  TIERS,
-  TRIAL_TIER,
-  TierName,
-} from './subscription-tiers.config';
+  BillingInterval,
+  INTERVAL_MONTHS,
+  capValue,
+} from './billing-interval';
+import { GRACE_DAYS } from './subscription-tiers.config';
 
 export type SubscriptionState =
   | 'trial'
@@ -14,10 +14,16 @@ export type SubscriptionState =
   | 'unpaid';
 
 export interface SubscriptionFields {
-  tier?: TierName;
+  /** A SubscriptionPlan slug. */
+  tier?: string;
+  interval?: BillingInterval;
   currentPeriodEnd?: Date | null;
   trialEndsAt?: Date | null;
   lastPaymentId?: unknown;
+  /** null = unlimited, absent = never set. The distinction is load-bearing. */
+  productCapSnapshot?: number | null;
+  planLabelSnapshot?: string;
+  trialProductCap?: number | null;
 }
 
 /**
@@ -85,37 +91,75 @@ export function nextPeriodStart(
  * Once the entitlement lapses (grace, expired, unpaid) everything is buyable
  * again: that window is exactly when renewal is supposed to happen.
  */
-export function canPurchaseTier(
-  sub: SubscriptionFields | undefined | null,
-  target: TierName,
-  now: Date = new Date(),
-): boolean {
-  const state = resolveSubscriptionState(sub, now);
-  if (state !== 'trial' && state !== 'active') return true;
-
-  const held = effectiveTier(sub, state);
-  if (!held) return true;
-
-  return TIERS[target].productCap > TIERS[held].productCap;
-}
-
-/** The tier whose limits currently apply. Trials borrow TRIAL_TIER's capacity. */
-export function effectiveTier(
+export function canPurchasePlan(
   sub: SubscriptionFields | undefined | null,
   state: SubscriptionState,
-): TierName | null {
-  if (state === 'trial') return TRIAL_TIER;
-  if (state === 'active' || state === 'grace') return sub?.tier ?? null;
-  return null;
+  planCap: number | null,
+  interval: BillingInterval,
+  now: Date = new Date(),
+): boolean {
+  if (state !== 'trial' && state !== 'active') return true;
+  if (capValue(planCap) > effectiveProductCap(sub, state, now)) return true;
+  return INTERVAL_MONTHS[interval] > currentIntervalMonths(sub, now);
 }
 
-/** 0 means "cannot create anything" — expired and unpaid both land here. */
+/**
+ * Months of commitment currently held.
+ *
+ * 0 on a trial: nothing was bought, so every interval reads as longer and a
+ * trial merchant can commit to any of them.
+ */
+export function currentIntervalMonths(
+  sub: SubscriptionFields | undefined | null,
+  now: Date = new Date(),
+): number {
+  if (!sub?.interval || !sub.currentPeriodEnd) return 0;
+  if (now > new Date(sub.currentPeriodEnd)) return 0;
+  return INTERVAL_MONTHS[sub.interval];
+}
+
+/**
+ * A snapshot cap, but only while the entitlement that granted it is live.
+ *
+ * `undefined` is 0 rather than unlimited: an unset snapshot means the record
+ * predates the plans migration, and guessing "unlimited" there would hand out
+ * free capacity. `null` is genuinely unlimited.
+ */
+function capIfLive(cap: number | null | undefined, live: boolean): number {
+  if (!live) return 0;
+  if (cap === undefined) return 0;
+  return capValue(cap);
+}
+
+/**
+ * The product cap in force right now. 0 means "cannot create anything".
+ *
+ * Pure and synchronous by design — this runs on every product create, so it
+ * must never need a plan lookup. It reads only what was snapshotted when the
+ * entitlement was granted, which is also what stops an admin editing a plan
+ * from shrinking a merchant who has already paid.
+ *
+ * The max() matters because a merchant can now buy a SMALLER cap on a LONGER
+ * interval (see canPurchasePlan). Mid-trial that must not shrink the capacity
+ * the trial promised — and it preserves the older intent that someone who
+ * hits their cap and upgrades gets the bigger cap today, not at renewal.
+ */
 export function effectiveProductCap(
   sub: SubscriptionFields | undefined | null,
   state: SubscriptionState,
+  now: Date = new Date(),
 ): number {
-  const tier = effectiveTier(sub, state);
-  return tier ? TIERS[tier].productCap : 0;
+  if (!hasDashboardAccess(state)) return 0;
+
+  const trialLive = !!sub?.trialEndsAt && now <= new Date(sub.trialEndsAt);
+  const paidLive =
+    !!sub?.currentPeriodEnd &&
+    now <= addDays(new Date(sub.currentPeriodEnd), GRACE_DAYS);
+
+  return Math.max(
+    capIfLive(sub?.trialProductCap, trialLive),
+    capIfLive(sub?.productCapSnapshot, paidLive),
+  );
 }
 
 /** States in which the dashboard is fully usable and offers stay live. */
