@@ -28,3 +28,4 @@ export * from './refund.repository';
 export * from './payout.repository';
 export * from './merchant-adjustment.repository';
 export * from './system-settings.repository';
+export * from './subscription-plan.repository';

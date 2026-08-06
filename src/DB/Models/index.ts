@@ -28,3 +28,4 @@ export * from './refund.model';
 export * from './payout.model';
 export * from './merchant-adjustment.model';
 export * from './system-settings.model';
+export * from './subscription-plan.model';
