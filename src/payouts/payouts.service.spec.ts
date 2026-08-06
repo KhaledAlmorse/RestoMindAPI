@@ -4,6 +4,9 @@ function makeRepo() {
   return {
     findMany: jest.fn(),
     findOne: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
   };
 }
 
@@ -494,6 +497,357 @@ describe('PayoutsService.getStatement', () => {
     expect(statement.decision).toEqual({
       action: 'blocked',
       reason: 'no_payout_destination',
+    });
+  });
+});
+
+describe('PayoutsService settlement', () => {
+  let service: PayoutsService;
+  let orderRepository: ReturnType<typeof makeRepo>;
+  let payoutRepository: ReturnType<typeof makeRepo>;
+  let merchantAdjustmentRepository: ReturnType<typeof makeRepo>;
+
+  /** A statement in whatever state the test under it needs. */
+  function statementOf(over: Record<string, any>) {
+    return {
+      restaurantId: 'r1',
+      restaurantName: 'Test Restaurant',
+      periodStart: new Date(0),
+      periodEnd: new Date('2026-08-01T21:00:00Z'),
+      lines: [],
+      totals: {
+        grossCents: 0,
+        commissionCents: 0,
+        commissionNetCents: 0,
+        commissionVatCents: 0,
+        merchantNetCents: 0,
+      },
+      exceptions: [],
+      ...over,
+    } as any;
+  }
+
+  beforeEach(() => {
+    orderRepository = makeRepo();
+    payoutRepository = makeRepo();
+    merchantAdjustmentRepository = makeRepo();
+    payoutRepository.findMany.mockResolvedValue([]);
+
+    service = new PayoutsService(
+      orderRepository as any,
+      makeRepo() as any,
+      makeRepo() as any,
+      makeRepo() as any,
+      payoutRepository as any,
+      merchantAdjustmentRepository as any,
+    );
+  });
+
+  describe('recordPayout', () => {
+    it('refuses to record a payout for a statement that is not payable', async () => {
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: { merchantNetCents: 100 },
+          decision: { action: 'carry', reason: 'below_minimum' },
+        }),
+      );
+
+      await expect(
+        service.recordPayout('r1', { cutoffDate: '2026-08-01' } as any, 'u1'),
+      ).rejects.toThrow(/below_minimum/);
+      expect(payoutRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('says "already settled", not "below minimum", on a second attempt', async () => {
+      // Once a period is settled its orders carry a payoutId, so the statement
+      // comes back empty and the naive answer would be `below_minimum` — which
+      // tells ops the merchant is owed too little when they were already paid.
+      payoutRepository.findOne.mockResolvedValue({ _id: 'p1', status: 'pending' });
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: { merchantNetCents: 0 },
+          decision: { action: 'carry', reason: 'below_minimum' },
+        }),
+      );
+
+      await expect(
+        service.recordPayout(
+          'r1',
+          { cutoffDate: '2026-08-01', amountCents: 0 } as any,
+          'u1',
+        ),
+      ).rejects.toThrow(/already been settled/);
+      expect(payoutRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the recorded amount disagrees with the statement', async () => {
+      // Ops typing a different number than the statement says is a mistake, not
+      // an override — the two must be reconciled before money moves.
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: {
+            merchantNetCents: 20_000,
+            commissionNetCents: 0,
+            commissionVatCents: 0,
+          },
+          decision: { action: 'pay', direction: 'to_merchant' },
+        }),
+      );
+
+      await expect(
+        service.recordPayout(
+          'r1',
+          { cutoffDate: '2026-08-01', amountCents: 19_000 } as any,
+          'u1',
+        ),
+      ).rejects.toThrow(/does not match/);
+      expect(payoutRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('snapshots the statement lines onto the payout', async () => {
+      const lines = [{ kind: 'sale', ref: 'o1', merchantNetCents: 20_000 }];
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: {
+            merchantNetCents: 20_000,
+            commissionNetCents: 2_632,
+            commissionVatCents: 368,
+          },
+          decision: { action: 'pay', direction: 'to_merchant' },
+          lines,
+        }),
+      );
+      payoutRepository.create.mockImplementation(async (doc: any) => ({
+        ...doc,
+        _id: 'p1',
+      }));
+
+      const payout: any = await service.recordPayout(
+        'r1',
+        {
+          cutoffDate: '2026-08-01',
+          amountCents: 20_000,
+          reference: 'NBE-991',
+        } as any,
+        'u1',
+      );
+
+      expect(payout.lines).toEqual(lines);
+      expect(payout.amountCents).toBe(20_000);
+      expect(payout.direction).toBe('to_merchant');
+      expect(payout.status).toBe('pending');
+    });
+
+    it('turns a duplicate-key error into a clear double-payment refusal', async () => {
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: {
+            merchantNetCents: 20_000,
+            commissionNetCents: 0,
+            commissionVatCents: 0,
+          },
+          decision: { action: 'pay', direction: 'to_merchant' },
+        }),
+      );
+      payoutRepository.create.mockRejectedValue({ code: 11000 });
+
+      await expect(
+        service.recordPayout(
+          'r1',
+          { cutoffDate: '2026-08-01', amountCents: 20_000 } as any,
+          'u1',
+        ),
+      ).rejects.toThrow(/already been settled/);
+      // The payout never existed, so nothing may have been marked settled.
+      expect(orderRepository.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('records a negative statement as a collection from the merchant', async () => {
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: {
+            merchantNetCents: -7_500,
+            commissionNetCents: 0,
+            commissionVatCents: 0,
+          },
+          decision: { action: 'collect', direction: 'from_merchant' },
+        }),
+      );
+      payoutRepository.create.mockImplementation(async (doc: any) => ({
+        ...doc,
+        _id: 'p1',
+      }));
+
+      const payout: any = await service.recordPayout(
+        'r1',
+        { cutoffDate: '2026-08-01', amountCents: 7_500 } as any,
+        'u1',
+      );
+
+      expect(payout.direction).toBe('from_merchant');
+      expect(payout.amountCents).toBe(7_500);
+    });
+
+    it('stamps the payout onto its sale orders, and onto nothing else', async () => {
+      // Without this stamp collectSales re-offers every settled order on the
+      // next statement and the merchant is paid twice. A refund line's ref is a
+      // Refund id and an adjustment's a MerchantAdjustment id — stamping either
+      // writes an Order key onto the wrong collection.
+      jest.spyOn(service, 'getStatement').mockResolvedValue(
+        statementOf({
+          totals: {
+            merchantNetCents: 20_000,
+            commissionNetCents: 0,
+            commissionVatCents: 0,
+          },
+          decision: { action: 'pay', direction: 'to_merchant' },
+          lines: [
+            { kind: 'sale', ref: 'o1', merchantNetCents: 25_000 },
+            { kind: 'sale', ref: 'o2', merchantNetCents: 500 },
+            { kind: 'refund', ref: 'f1', merchantNetCents: -5_000 },
+            { kind: 'adjustment', ref: 'a1', merchantNetCents: -500 },
+          ],
+        }),
+      );
+      payoutRepository.create.mockImplementation(async (doc: any) => ({
+        ...doc,
+        _id: 'p1',
+      }));
+
+      await service.recordPayout(
+        'r1',
+        { cutoffDate: '2026-08-01', amountCents: 20_000 } as any,
+        'u1',
+      );
+
+      expect(orderRepository.updateMany).toHaveBeenCalledWith(
+        { _id: { $in: ['o1', 'o2'] } },
+        { $set: { payoutId: 'p1' } },
+      );
+    });
+  });
+
+  describe('completePayout', () => {
+    it('marks a pending payout completed and stamps the time', async () => {
+      payoutRepository.findOne.mockResolvedValue({
+        _id: 'p1',
+        status: 'pending',
+      });
+      payoutRepository.update.mockImplementation(async ({ body }: any) => body);
+
+      const result: any = await service.completePayout(
+        'p1',
+        { reference: 'NBE-991' } as any,
+        'u1',
+      );
+
+      expect(result.status).toBe('completed');
+      expect(result.completedAt).toBeInstanceOf(Date);
+      // A landed transfer keeps its orders settled.
+      expect(orderRepository.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not advance the paid-through mark when a transfer fails', async () => {
+      payoutRepository.findOne.mockResolvedValue({
+        _id: 'p1',
+        status: 'pending',
+      });
+      payoutRepository.update.mockImplementation(async ({ body }: any) => body);
+
+      const result: any = await service.completePayout(
+        'p1',
+        { failureReason: 'IBAN rejected' } as any,
+        'u1',
+      );
+
+      expect(result.status).toBe('failed');
+      expect(result.completedAt).toBeUndefined();
+    });
+
+    it('makes the orders payable again when the transfer bounced', async () => {
+      // $unset, not null — collectSales filters on $exists: false, and a null
+      // field still exists, so the money would be stranded.
+      payoutRepository.findOne.mockResolvedValue({
+        _id: 'p1',
+        status: 'pending',
+      });
+      payoutRepository.update.mockImplementation(async ({ body }: any) => body);
+
+      await service.completePayout(
+        'p1',
+        { failureReason: 'IBAN rejected' } as any,
+        'u1',
+      );
+
+      expect(orderRepository.updateMany).toHaveBeenCalledWith(
+        { payoutId: 'p1' },
+        { $unset: { payoutId: '' } },
+      );
+    });
+
+    it('refuses to re-complete a payout that is already completed', async () => {
+      payoutRepository.findOne.mockResolvedValue({
+        _id: 'p1',
+        status: 'completed',
+      });
+
+      await expect(
+        service.completePayout('p1', { reference: 'x' } as any, 'u1'),
+      ).rejects.toThrow(/already/);
+    });
+  });
+
+  describe('recordAdjustment', () => {
+    it('rejects an adjustment backdated into an already-settled period', async () => {
+      payoutRepository.findMany.mockResolvedValue([
+        { periodEnd: new Date('2026-08-01T00:00:00Z'), status: 'completed' },
+      ]);
+
+      await expect(
+        service.recordAdjustment(
+          'r1',
+          {
+            amountCents: -500,
+            reason: 'chargeback',
+            effectiveAt: '2026-07-15',
+          } as any,
+          'u1',
+        ),
+      ).rejects.toThrow(/already settled/);
+    });
+
+    it('accepts an adjustment dated after the paid-through mark', async () => {
+      payoutRepository.findMany.mockResolvedValue([
+        { periodEnd: new Date('2026-08-01T00:00:00Z'), status: 'completed' },
+      ]);
+      merchantAdjustmentRepository.create.mockImplementation(
+        async (doc: any) => doc,
+      );
+
+      const adjustment: any = await service.recordAdjustment(
+        'r1',
+        {
+          amountCents: -500,
+          reason: 'chargeback',
+          effectiveAt: '2026-08-05',
+        } as any,
+        'u1',
+      );
+
+      expect(adjustment.amountCents).toBe(-500);
+      // Cairo midnight, not UTC — 21:00 the previous day in August.
+      expect(adjustment.effectiveAt).toEqual(new Date('2026-08-04T21:00:00Z'));
+    });
+
+    it('rejects a zero adjustment', async () => {
+      await expect(
+        service.recordAdjustment(
+          'r1',
+          { amountCents: 0, reason: 'oops' } as any,
+          'u1',
+        ),
+      ).rejects.toThrow();
+      expect(merchantAdjustmentRepository.create).not.toHaveBeenCalled();
     });
   });
 });

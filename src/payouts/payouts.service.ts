@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { addDays, getBusinessDayRange } from 'src/Common/Utils';
 import {
   OrderStatusEnum,
@@ -16,6 +21,11 @@ import {
   RestaurantRepository,
 } from 'src/DB/Repositories';
 import { PAYOUT_HOLD_DAYS } from './payout.config';
+import {
+  CompletePayoutDto,
+  CreateAdjustmentDto,
+  RecordPayoutDto,
+} from './dto/payout.dto';
 import {
   LedgerLine,
   PayoutDecision,
@@ -143,6 +153,189 @@ export class PayoutsService {
         ...(await this.stuckRefunds(canonicalId)),
       ],
     };
+  }
+
+  /**
+   * Records that a settlement is being made. Creates the row PENDING; the money
+   * is confirmed separately by completePayout, because a bank transfer can
+   * bounce and only a landed transfer may advance the paid-through mark.
+   */
+  async recordPayout(
+    restaurantId: string,
+    body: RecordPayoutDto,
+    userId: string,
+  ) {
+    const statement = await this.getStatement(restaurantId, body.cutoffDate);
+    const { decision } = statement;
+
+    // Asked before the decision is read, because once a period is settled its
+    // orders carry a payoutId and the statement comes back empty — so a second
+    // attempt would otherwise be refused as `below_minimum`, telling ops the
+    // merchant is owed too little when the truth is that they were already
+    // paid. The unique index still backstops two concurrent attempts that both
+    // read the statement before either stamps.
+    const settled = await this.payoutRepository.findOne({
+      filters: {
+        restaurantId: statement.restaurantId,
+        periodEnd: statement.periodEnd,
+        status: {
+          $in: [PayoutStatusEnum.PENDING, PayoutStatusEnum.COMPLETED],
+        },
+      },
+    });
+    if (settled) {
+      throw new ConflictException(
+        'This period has already been settled for this merchant',
+      );
+    }
+
+    if (decision.action === 'carry' || decision.action === 'blocked') {
+      throw new BadRequestException(
+        `This statement is not payable: ${decision.reason}`,
+      );
+    }
+
+    const expected = Math.abs(statement.totals.merchantNetCents);
+    if (body.amountCents !== expected) {
+      throw new ConflictException(
+        `Amount ${body.amountCents} does not match the statement total ${expected}. Re-read the statement before settling.`,
+      );
+    }
+
+    let payout: any;
+    try {
+      payout = await this.payoutRepository.create({
+        restaurantId: statement.restaurantId,
+        periodStart: statement.periodStart,
+        periodEnd: statement.periodEnd,
+        amountCents: expected,
+        direction: decision.direction,
+        lines: statement.lines,
+        commissionNetCents: statement.totals.commissionNetCents,
+        commissionVatCents: statement.totals.commissionVatCents,
+        reference: body.reference,
+        recordedBy: userId,
+        status: PayoutStatusEnum.PENDING,
+      } as any);
+    } catch (error: any) {
+      // The partial unique index on { restaurantId, periodEnd } is the real
+      // guard against paying twice; this only translates it into an answer.
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          'This period has already been settled for this merchant',
+        );
+      }
+      throw error;
+    }
+
+    await this.stampSettledOrders(statement.lines, payout._id);
+    return payout;
+  }
+
+  /**
+   * Marks the orders this payout settles, so the next statement stops offering
+   * them. `collectSales` selects on the absence of this field rather than on a
+   * date, which is the only thing that keeps a deliberately-skipped order
+   * payable — so nothing else may write it.
+   *
+   * Only `kind === 'sale'` lines: a refund line's `ref` is a Refund id and an
+   * adjustment line's a MerchantAdjustment id, and stamping either would write
+   * an Order key onto the wrong collection's document.
+   *
+   * ponytail: the payout row and the stamps are two writes with no transaction,
+   * matching the rest of this repo. If the stamp fails the payout exists
+   * unstamped and its orders re-list — visible as a duplicate-period 409 on the
+   * next attempt, not as silent double payment. Wrap both in a session if this
+   * ever needs to be atomic.
+   */
+  private async stampSettledOrders(lines: LedgerLine[], payoutId: any) {
+    const saleRefs = lines
+      .filter((line) => line.kind === 'sale')
+      .map((line) => line.ref);
+    if (!saleRefs.length) return;
+
+    await this.orderRepository.updateMany(
+      { _id: { $in: saleRefs } },
+      { $set: { payoutId } },
+    );
+  }
+
+  /** Confirms or fails a recorded transfer. */
+  async completePayout(
+    payoutId: string,
+    body: CompletePayoutDto,
+    userId: string,
+  ) {
+    const payout = await this.payoutRepository.findOne({
+      filters: { _id: payoutId },
+    });
+    if (!payout) throw new NotFoundException('Payout not found');
+    if (payout.status !== PayoutStatusEnum.PENDING) {
+      throw new ConflictException(
+        `This payout is already ${payout.status} and cannot be changed`,
+      );
+    }
+
+    const failed = Boolean(body.failureReason);
+
+    if (failed) {
+      // The transfer bounced, so these orders were never actually settled.
+      // `$unset`, not `$set: { payoutId: null }` — the sales query filters on
+      // `$exists: false`, and a null field still exists. A COMPLETED payout
+      // never clears the mark; that is the point of it.
+      await this.orderRepository.updateMany(
+        { payoutId: payout._id },
+        { $unset: { payoutId: '' } },
+      );
+    }
+
+    return await this.payoutRepository.update({
+      filters: { _id: payout._id },
+      body: {
+        status: failed ? PayoutStatusEnum.FAILED : PayoutStatusEnum.COMPLETED,
+        completedAt: failed ? undefined : new Date(),
+        failureReason: body.failureReason,
+        reference: body.reference ?? payout.reference,
+        recordedBy: userId,
+      } as any,
+    });
+  }
+
+  /**
+   * A signed correction with no order behind it. Rejected if dated into a
+   * period that has already been settled — that statement is immutable, so the
+   * adjustment must land in a live period where someone will actually see it.
+   */
+  async recordAdjustment(
+    restaurantId: string,
+    body: CreateAdjustmentDto,
+    userId: string,
+  ) {
+    // Also guarded by @NotEquals(0) on the DTO. Repeated here because the DTO
+    // only runs on the HTTP path, and a zero adjustment recorded from anywhere
+    // else is a no-op row that still reads as a real correction on a statement.
+    if (!body.amountCents) {
+      throw new BadRequestException('A zero adjustment records nothing');
+    }
+
+    const effectiveAt = body.effectiveAt
+      ? getBusinessDayRange(body.effectiveAt).start
+      : new Date();
+
+    const paidThrough = await this.paidThrough(restaurantId);
+    if (effectiveAt < paidThrough) {
+      throw new ConflictException(
+        `That period has already settled (paid through ${paidThrough.toISOString()}). Date the adjustment after it instead.`,
+      );
+    }
+
+    return await this.merchantAdjustmentRepository.create({
+      restaurantId,
+      amountCents: body.amountCents,
+      reason: body.reason,
+      effectiveAt,
+      createdBy: userId,
+    } as any);
   }
 
   /**
