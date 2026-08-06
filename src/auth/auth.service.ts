@@ -118,13 +118,14 @@ export class AuthService {
     const user = await this.userRepository.findOne({ filters: { email } });
 
     if (!user) {
-      throw new ConflictException('Invalid Email or password');
+      throw new UnauthorizedException('Invalid email or password');
     }
 
     const comparePassword = CompareHash(password, user.password);
     if (!comparePassword) {
-      throw new ConflictException('Invalid Email or password');
+      throw new UnauthorizedException('Invalid email or password');
     }
+
 
     if (user.isActive === false) {
       throw new UnauthorizedException(

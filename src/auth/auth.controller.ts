@@ -27,7 +27,7 @@ import {
   CreateAddressDto,
   UpdateAddressDto,
 } from './dto/auth.dto';
-import { Auth, AuthUser } from 'src/Common/Decorators';
+import { Auth, AuthUser, AuthThrottle } from 'src/Common/Decorators';
 import { type IAuthUser } from 'src/Common/Types';
 import { performanceInterceptor } from 'src/Common/Interceptors/performance.interceptors';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -40,12 +40,14 @@ export class AuthController {
   // ─── Existing Endpoints ──────────────────────────────────────────────────────
 
   @Post('signUp')
+  @AuthThrottle()
   async signUpHandler(@Body() body: singupBodyDto, @Res() res: Response) {
     const result = await this.authService.singup(body);
     res.status(HttpStatus.CREATED).json(result);
   }
 
   @Post('login')
+  @AuthThrottle()
   async loginHandler(@Body() body: loginBodyDto, @Res() res: Response) {
     const result = await this.authService.login(body);
     res.status(HttpStatus.OK).json(result);
@@ -78,12 +80,14 @@ export class AuthController {
   // ─── New Endpoints ───────────────────────────────────────────────────────────
 
   @Post('send-otp')
+  @AuthThrottle()
   async sendOtpHandler(@Body() body: SendOtpDto, @Res() res: Response) {
     const result = await this.authService.sendOtp(body);
     res.status(HttpStatus.OK).json(result);
   }
 
   @Post('forgot-password')
+  @AuthThrottle()
   async forgotPasswordHandler(
     @Body() body: ForgotPasswordDto,
     @Res() res: Response,
@@ -106,6 +110,7 @@ export class AuthController {
   }
 
   @Patch('confirm-reset-otp')
+  @AuthThrottle()
   async confirmResetOtpHandler(
     @Body() body: ConfirmResetOtpDto,
     @Res() res: Response,
@@ -115,6 +120,7 @@ export class AuthController {
   }
 
   @Patch('reset-password')
+  @AuthThrottle()
   async resetPasswordHandler(
     @Body() body: ResetPasswordDto,
     @Res() res: Response,

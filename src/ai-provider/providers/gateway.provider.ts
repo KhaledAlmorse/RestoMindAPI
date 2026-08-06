@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AIProvider, GenerationOptions, ChatMessage } from '../ai-provider.interface';
+import {
+  AIProvider,
+  GenerationOptions,
+  ChatMessage,
+} from '../ai-provider.interface';
 
 @Injectable()
 export class GatewayProvider implements AIProvider {
@@ -7,8 +11,10 @@ export class GatewayProvider implements AIProvider {
   private readonly logger = new Logger(GatewayProvider.name);
   private readonly apiKey: string;
   private readonly gatewayUrl: string;
-  private readonly primaryLlm = process.env.BEDROCK_PRIMARY_LLM || 'anthropic.claude-sonnet-4-6';
-  private readonly embeddingModel = process.env.BEDROCK_PRIMARY_EMBEDDING || 'us.cohere.embed-v4:0';
+  private readonly primaryLlm =
+    process.env.BEDROCK_PRIMARY_LLM || 'anthropic.claude-sonnet-4-6';
+  private readonly embeddingModel =
+    process.env.BEDROCK_PRIMARY_EMBEDDING || 'us.cohere.embed-v4:0';
 
   constructor() {
     this.apiKey = (
@@ -20,7 +26,8 @@ export class GatewayProvider implements AIProvider {
     ).trim();
 
     this.gatewayUrl = (
-      process.env.BEDROCK_GATEWAY_URL || 'https://bedrock-runtime.us-east-1.amazonaws.com'
+      process.env.BEDROCK_GATEWAY_URL ||
+      'https://bedrock-runtime.us-east-1.amazonaws.com'
     ).replace(/\/$/, '');
 
     this.logger.log(
@@ -50,7 +57,9 @@ export class GatewayProvider implements AIProvider {
       messages,
     };
 
-    const authHeader = this.apiKey.startsWith('sbg_') ? this.apiKey : `Bearer ${this.apiKey}`;
+    const authHeader = this.apiKey.startsWith('sbg_')
+      ? this.apiKey
+      : `Bearer ${this.apiKey}`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -92,7 +101,9 @@ export class GatewayProvider implements AIProvider {
       truncate: 'END',
     };
 
-    const authHeader = this.apiKey.startsWith('sbg_') ? this.apiKey : `Bearer ${this.apiKey}`;
+    const authHeader = this.apiKey.startsWith('sbg_')
+      ? this.apiKey
+      : `Bearer ${this.apiKey}`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -117,7 +128,11 @@ export class GatewayProvider implements AIProvider {
     }
 
     const errText = await response.text();
-    this.logger.warn(`Scholarship Gateway embedding HTTP ${response.status}: ${errText}`);
-    throw new Error(`Scholarship Gateway embedding HTTP ${response.status}: ${errText}`);
+    this.logger.warn(
+      `Scholarship Gateway embedding HTTP ${response.status}: ${errText}`,
+    );
+    throw new Error(
+      `Scholarship Gateway embedding HTTP ${response.status}: ${errText}`,
+    );
   }
 }

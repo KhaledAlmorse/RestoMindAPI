@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -28,11 +30,24 @@ import { RecommendationsModule } from './recommendations/recommendations.module'
 import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
 import { VectorStoreModule } from './vector-store/vector-store.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { SanitizedLoggerInterceptor } from './Common/Interceptors/sanitized-logger.interceptor';
+import { AllExceptionsFilter } from './Common/Filters/http-exception.filter';
 
 @Module({
   imports: [
     MongooseModule.forRoot(process.env.DB_URL as string),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl:
+          (process.env.RATE_LIMIT_TTL
+            ? parseInt(process.env.RATE_LIMIT_TTL)
+            : 60) * 1000,
+        limit: process.env.RATE_LIMIT_LIMIT
+          ? parseInt(process.env.RATE_LIMIT_LIMIT)
+          : 100,
+      },
+    ]),
     AiClientModule,
     AuthModule,
     GlobalAuthModule,
@@ -61,6 +76,20 @@ import { AssistantModule } from './assistant/assistant.module';
   ],
 
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: SanitizedLoggerInterceptor,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter,
+    },
+  ],
 })
 export class AppModule {}

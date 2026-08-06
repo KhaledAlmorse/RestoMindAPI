@@ -9,7 +9,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { Auth, AuthUser } from 'src/Common/Decorators';
+import { Auth, AuthUser, AiThrottle } from 'src/Common/Decorators';
 import { IAuthUser } from 'src/Common/Types';
 import { AssistantService } from './services/assistant.service';
 import { ApprovalService } from './services/approval.service';
@@ -28,6 +28,7 @@ export class AssistantController {
 
   @Post('chat')
   @Auth('admin', 'manager', 'staff')
+  @AiThrottle()
   async chat(
     @Body() body: ChatRequestDto,
     @AuthUser() authUser: IAuthUser,
@@ -51,7 +52,9 @@ export class AssistantController {
 
   @Post('approve-action')
   @Auth('admin', 'manager')
+  @AiThrottle()
   async approveAction(
+
     @Body() body: ActionApprovalDto,
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,

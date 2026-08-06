@@ -108,8 +108,9 @@ export class UserService {
           tokenType: 'setup',
         },
         {
-          secret: process.env.ACCESS_TOKEN_SECRET,
-          expiresIn: '72h',
+          secret:
+            process.env.JWT_SETUP_SECRET || process.env.ACCESS_TOKEN_SECRET,
+          expiresIn: (process.env.JWT_SETUP_EXPIRES_IN || '72h') as any,
         },
       );
 
@@ -531,8 +532,8 @@ export class UserService {
         tokenType: 'setup',
       },
       {
-        secret: process.env.ACCESS_TOKEN_SECRET,
-        expiresIn: '72h',
+        secret: process.env.JWT_SETUP_SECRET || process.env.ACCESS_TOKEN_SECRET,
+        expiresIn: (process.env.JWT_SETUP_EXPIRES_IN || '72h') as any,
       },
     );
 
@@ -592,8 +593,8 @@ export class UserService {
         tokenType: 'setup',
       },
       {
-        secret: process.env.ACCESS_TOKEN_SECRET,
-        expiresIn: '72h',
+        secret: process.env.JWT_SETUP_SECRET || process.env.ACCESS_TOKEN_SECRET,
+        expiresIn: (process.env.JWT_SETUP_EXPIRES_IN || '72h') as any,
       },
     );
 

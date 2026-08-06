@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Auth } from 'src/Common/Decorators';
+import { Auth, AuthThrottle } from 'src/Common/Decorators';
 
 import { RolesEnum } from 'src/Common/Types';
 import { PartnershipApplicationsService } from './partnership-applications.service';
@@ -28,6 +28,7 @@ export class PartnershipApplicationsController {
   // ─── Public Routes ─────────────────────────────────────────────────────────
 
   @Post('partnership-applications')
+  @AuthThrottle()
   async submitApplication(@Body() dto: CreatePartnershipApplicationDto) {
     return this.partnershipApplicationsService.submitApplication(dto);
   }
@@ -41,6 +42,7 @@ export class PartnershipApplicationsController {
   }
 
   @Post('auth/setup-account')
+  @AuthThrottle()
   async setupAccount(@Body() dto: SetupAccountDto) {
     return this.partnershipApplicationsService.setupAccount(dto);
   }
