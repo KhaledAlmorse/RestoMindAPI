@@ -23,3 +23,8 @@ export * from './prediction.repository';
 export * from './waste-report.repository';
 export * from './recommendation.repository';
 export * from './partnership-application.repository';
+export * from './knowledge-vector.repository';
+export * from './weekly-executive-snapshot.repository';
+export * from './assistant-action-log.repository';
+export * from './recommendation-action.repository';
+export * from './assistant-chat-history.repository';
