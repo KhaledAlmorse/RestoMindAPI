@@ -158,6 +158,20 @@ export class Order {
   deliveredAt?: Date;
 
   /**
+   * The payout that covers this order's sale line. Set when a payout is
+   * created, cleared if it fails. Absent means "not yet settled" — which is
+   * what the statement query filters on, so an order that was skipped as an
+   * exception stays payable instead of falling below a date watermark forever.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Payout',
+    required: false,
+    index: true,
+  })
+  payoutId?: Types.ObjectId;
+
+  /**
    * Set the first time this order's reserved stock goes back to its offers.
    * Cancellation, payment failure, expiry and refund can all fire against the
    * same order; without this flag the second one restocks a second time.

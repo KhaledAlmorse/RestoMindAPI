@@ -93,24 +93,30 @@ export class PayoutsService {
     });
     if (!restaurant) throw new NotFoundException('Restaurant not found');
 
+    // Every id compared against a ledger line has to be the same string the
+    // line carries, and payout-math builds those with String(objectId) — always
+    // lowercase hex. Deriving it once here makes the whole method immune to an
+    // uppercase-hex route param, which would otherwise drop every refund line
+    // while keeping every sale line, i.e. overpay the merchant.
+    const canonicalId = String((restaurant as any)._id);
+
     // cutoffDate is the EXCLUSIVE end of the period, so '2026-08-01' settles
     // through the end of 31 July Cairo. `.start`, not `.end` — using `.end`
     // would quietly pull an extra day into every statement.
     const periodEnd = getBusinessDayRange(cutoffDateStr).start;
-    const periodStart = await this.paidThrough(restaurantId);
+    const periodStart = await this.paidThrough(canonicalId);
 
     const [saleLines, unpaidExceptions] = await this.collectSales(
-      restaurantId,
-      periodStart,
+      canonicalId,
       periodEnd,
     );
     const refundLedger = await this.collectRefunds(
-      restaurantId,
+      canonicalId,
       periodStart,
       periodEnd,
     );
     const adjustmentLedger = await this.collectAdjustments(
-      restaurantId,
+      canonicalId,
       periodStart,
       periodEnd,
     );
@@ -121,7 +127,7 @@ export class PayoutsService {
     const totals = summarise(lines);
 
     return {
-      restaurantId,
+      restaurantId: canonicalId,
       restaurantName: (restaurant as any).name ?? '',
       periodStart,
       periodEnd,
@@ -133,8 +139,8 @@ export class PayoutsService {
       ),
       exceptions: [
         ...unpaidExceptions,
-        ...(await this.orphanedPayments(restaurantId)),
-        ...(await this.stuckRefunds(restaurantId)),
+        ...(await this.orphanedPayments(canonicalId)),
+        ...(await this.stuckRefunds(canonicalId)),
       ],
     };
   }
@@ -143,6 +149,11 @@ export class PayoutsService {
    * The merchant's paid-through mark: the end of the newest COMPLETED payout.
    * A PENDING or FAILED payout deliberately does not advance it — money that
    * has not landed has not been settled.
+   *
+   * This bounds refunds and adjustments only. Both always produce a line, so
+   * "everything before this date is settled" is true of them. It is NOT true of
+   * sales, where a single order can be deliberately held back as an exception —
+   * those are marked per order instead, see `collectSales`.
    */
   private async paidThrough(restaurantId: string): Promise<Date> {
     const settled =
@@ -160,13 +171,21 @@ export class PayoutsService {
   }
 
   /**
-   * Delivered orders whose hold has elapsed inside this window. The window is
-   * shifted back by the hold rather than filtering afterwards, so the query
-   * uses the { restaurantId, status, deliveredAt } index.
+   * Every sale that is payable and has not been paid yet.
+   *
+   * There is no lower bound: "settled" is a per-order mark (`payoutId`, stamped
+   * when a payout is created and cleared if it fails), not a date. A date
+   * watermark cannot say "everything before this was settled except that one
+   * order" — and an order deliberately held back as a `delivered_unpaid`
+   * exception is exactly that, so under a watermark it would sink below the
+   * window and never be paid once its payment finally settled.
+   *
+   * The upper bound is `periodEnd` shifted back by the hold, applied in the
+   * query rather than afterwards so it still uses the
+   * { restaurantId, status, deliveredAt } index.
    */
   private async collectSales(
     restaurantId: string,
-    periodStart: Date,
     periodEnd: Date,
   ): Promise<[LedgerLine[], StatementException[]]> {
     const orders =
@@ -174,10 +193,8 @@ export class PayoutsService {
         filters: {
           restaurantId,
           status: { $in: PAYABLE_ORDER_STATUSES },
-          deliveredAt: {
-            $gte: addDays(periodStart, -PAYOUT_HOLD_DAYS),
-            $lt: addDays(periodEnd, -PAYOUT_HOLD_DAYS),
-          },
+          payoutId: { $exists: false },
+          deliveredAt: { $lt: addDays(periodEnd, -PAYOUT_HOLD_DAYS) },
         },
       })) ?? [];
 
@@ -186,7 +203,14 @@ export class PayoutsService {
       (
         (await this.paymentRepository.findMany({
           filters: {
-            orderGroupId: { $in: online.map((o) => o.groupOrderId) },
+            // Nullish ids are dropped: Mongoose serialises `undefined` in an
+            // $in as `null`, which matches every payment that has no group and
+            // would mark a groupless order paid.
+            orderGroupId: {
+              $in: online.flatMap((o) =>
+                o.groupOrderId ? [o.groupOrderId] : [],
+              ),
+            },
             purpose: PaymentPurposeEnum.ORDER,
             status: PaymentStatusEnum.PAID,
           },
@@ -199,7 +223,9 @@ export class PayoutsService {
 
     for (const order of orders) {
       const isOnline = order.paymentMethod !== 'Cash on Delivery';
-      if (isOnline && !paidGroupIds.has(String(order.groupOrderId))) {
+      const paid =
+        order.groupOrderId && paidGroupIds.has(String(order.groupOrderId));
+      if (isOnline && !paid) {
         // Delivered but the money never settled. Paying this out would hand
         // the merchant cash RestoMind never received, so it is escalated
         // rather than dropped or guessed at.
@@ -220,6 +246,13 @@ export class PayoutsService {
   /**
    * Refunds that completed inside the window, attributed to this restaurant.
    *
+   * The window is shifted back by the hold exactly as the sales window is.
+   * Unshifted, a refund completing during its own sale's hold would land on the
+   * statement *before* the sale it reverses, invoicing the merchant for money
+   * RestoMind never paid them — the very thing the hold exists to prevent.
+   * The windows stay contiguous, so nothing is lost or double-counted; a refund
+   * of an already-settled sale still lands on a later statement, 7 days later.
+   *
    * Refund rows carry no restaurantId — a group refund deliberately spans
    * several — so the group's orders are loaded to work out each restaurant's
    * pro-rata share.
@@ -237,25 +270,15 @@ export class PayoutsService {
       (await this.refundRepository.findMany({
         filters: {
           status: RefundStatusEnum.SUCCEEDED,
-          completedAt: { $gte: periodStart, $lt: periodEnd },
+          completedAt: {
+            $gte: addDays(periodStart, -PAYOUT_HOLD_DAYS),
+            $lt: addDays(periodEnd, -PAYOUT_HOLD_DAYS),
+          },
         },
       })) ?? [];
     if (!refunds.length) return [];
 
-    const groupIds = [...new Set(refunds.map((r) => String(r.orderGroupId)))];
-    const groupOrders =
-      (await this.orderRepository.findMany({
-        filters: {
-          groupOrderId: { $in: groupIds },
-        },
-      })) ?? [];
-
-    const ordersByGroup = new Map<string, any[]>();
-    for (const order of groupOrders) {
-      const key = String(order.groupOrderId);
-      if (!ordersByGroup.has(key)) ordersByGroup.set(key, []);
-      ordersByGroup.get(key)!.push(order);
-    }
+    const ordersByGroup = await this.ordersByGroupFor(refunds);
 
     return refunds
       .flatMap((refund) =>
@@ -265,6 +288,31 @@ export class PayoutsService {
         ),
       )
       .filter((line) => line.restaurantId === restaurantId);
+  }
+
+  /**
+   * Every order in the given refunds' groups, indexed by group id.
+   *
+   * Deliberately not filtered to one restaurant: `refundLines` divides the
+   * refund pro-rata across the whole group, so a partial list would give the
+   * wrong denominator and overstate this restaurant's share.
+   */
+  private async ordersByGroupFor(
+    refunds: { orderGroupId?: any }[],
+  ): Promise<Map<string, any[]>> {
+    const groupIds = [...new Set(refunds.map((r) => String(r.orderGroupId)))];
+    const orders =
+      (await this.orderRepository.findMany({
+        filters: { groupOrderId: { $in: groupIds } },
+      })) ?? [];
+
+    const byGroup = new Map<string, any[]>();
+    for (const order of orders) {
+      const key = String(order.groupOrderId);
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      byGroup.get(key)!.push(order);
+    }
+    return byGroup;
   }
 
   private async collectAdjustments(
@@ -309,7 +357,13 @@ export class PayoutsService {
       (
         (await this.paymentRepository.findMany({
           filters: {
-            orderGroupId: { $in: stale.map((o) => o.groupOrderId) },
+            // Same nullish guard as collectSales: an order with no group must
+            // never match a payment with no group.
+            orderGroupId: {
+              $in: stale.flatMap((o) =>
+                o.groupOrderId ? [o.groupOrderId] : [],
+              ),
+            },
             purpose: PaymentPurposeEnum.ORDER,
             status: PaymentStatusEnum.PAID,
           },
@@ -318,7 +372,7 @@ export class PayoutsService {
     );
 
     return stale
-      .filter((o) => paidGroupIds.has(String(o.groupOrderId)))
+      .filter((o) => o.groupOrderId && paidGroupIds.has(String(o.groupOrderId)))
       .map((o) => ({
         kind: 'paid_undelivered' as const,
         ref: String(o._id),
@@ -331,6 +385,13 @@ export class PayoutsService {
    * Refunds owed to a customer that the gateway could not move. Surfaced on the
    * statement because until they settle, RestoMind is holding money that
    * belongs to a customer, and it must not be mistaken for merchant float.
+   *
+   * Attributed through `refundLines`, the same pro-rata split the ledger uses,
+   * so a group refund is reported at this restaurant's share rather than the
+   * whole group's total — reporting the total would leak another merchant's
+   * figure and could block this one's payout over someone else's problem.
+   * `refundLines` honours `refund.orderId` itself, so a single-order refund
+   * scopes to its own restaurant for free.
    */
   private async stuckRefunds(
     restaurantId: string,
@@ -345,22 +406,25 @@ export class PayoutsService {
       })) ?? [];
     if (!stuck.length) return [];
 
-    const groupOrders =
-      (await this.orderRepository.findMany({
-        filters: {
-          groupOrderId: { $in: stuck.map((r) => r.orderGroupId) },
-          restaurantId,
-        },
-      })) ?? [];
-    const touched = new Set(groupOrders.map((o) => String(o.groupOrderId)));
+    const ordersByGroup = await this.ordersByGroupFor(stuck);
 
-    return stuck
-      .filter((r) => touched.has(String(r.orderGroupId)))
-      .map((r) => ({
-        kind: 'refund_stuck' as const,
-        ref: String(r._id),
-        amountCents: r.amountCents,
-        detail: `Refund is ${r.status} and has not moved money`,
-      }));
+    const exceptions: StatementException[] = [];
+    for (const refund of stuck) {
+      // A stuck refund has no completedAt, so refundLines dates these to the
+      // epoch — harmless, only amountCents is read.
+      const mine = refundLines(
+        refund as any,
+        ordersByGroup.get(String(refund.orderGroupId)) ?? [],
+      ).filter((line) => line.restaurantId === restaurantId);
+      if (!mine.length) continue;
+
+      exceptions.push({
+        kind: 'refund_stuck',
+        ref: String(refund._id),
+        amountCents: mine.reduce((sum, line) => sum - line.grossCents, 0),
+        detail: `Refund is ${refund.status} and has not moved money`,
+      });
+    }
+    return exceptions;
   }
 }
