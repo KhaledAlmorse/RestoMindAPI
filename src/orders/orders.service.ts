@@ -42,10 +42,7 @@ import {
 } from 'src/subscriptions/subscription-state';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
-import {
-  getApiPublicUrl,
-  getFrontendUrl,
-} from 'src/payments/paymob.config';
+import { getApiPublicUrl, getFrontendUrl } from 'src/payments/paymob.config';
 import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
 import { PaymentType } from 'src/DB/Models/payment.model';
 
@@ -88,11 +85,29 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
    * refund — a per-caller copy is exactly how four code paths drift apart.
    * A single failing item must not strand the rest of the customer's stock,
    * so failures are logged and the loop continues.
+   *
+   * Idempotent: those same four paths can fire against one order (refund then
+   * cancel, webhook then sweeper), and restocking twice invents inventory the
+   * restaurant does not have. The claim is a conditional update on
+   * `stockRestoredAt`, so two concurrent callers cannot both win it.
    */
   async restoreStockForOrder(order: any): Promise<void> {
+    if (!order?._id) return;
+
+    const claimed = await this.orderRepository.findOneAndUpdate({
+      filters: { _id: order._id, stockRestoredAt: { $exists: false } },
+      updateData: { $set: { stockRestoredAt: new Date() } },
+    });
+    if (!claimed) {
+      this.logger.warn(
+        `Stock for order ${String(order._id)} was already restored — skipping`,
+      );
+      return;
+    }
+
     for (const item of order?.items || []) {
       if (!item.offerId) continue;
-      const offerId = (item.offerId as any)._id || item.offerId;
+      const offerId = item.offerId._id || item.offerId;
       try {
         await this.offersService.restockFromCancelledOrderItem(
           offerId,
@@ -941,6 +956,27 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     return { data: await this.formatOrderGroup(group) };
   }
 
+  /**
+   * Refuses to cancel an order group that was paid for online.
+   *
+   * CANCELLED is terminal in the refund policy, so cancelling a paid order
+   * makes its refund permanently impossible through the API and the customer
+   * simply loses the money. The refund flow writes CANCELLED itself, but only
+   * after the money is provably back — that is the only correct ordering, and
+   * this guard is what forces both cancel paths through it.
+   */
+  private async assertRefundNotBypassed(
+    groupOrderId: Types.ObjectId,
+  ): Promise<void> {
+    const payment =
+      await this.paymentsService.findSettledOrderPayment(groupOrderId);
+    if (payment) {
+      throw new ConflictException(
+        'This order was paid online, so it cannot be cancelled directly. Refund it instead (POST /orders/group/:groupId/refunds) — that cancels the order once the money is back with the customer.',
+      );
+    }
+  }
+
   // 2b. PATCH /orders/group/:id/cancel - Cancel Order Group (Client)
   async cancelOrderGroup(groupId: string, currentUser: UserType) {
     this.validateObjectId(groupId);
@@ -999,6 +1035,9 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       return { data: await this.formatOrderGroup(group) };
     }
 
+    // A paid group must be refunded, not cancelled — see the helper.
+    await this.assertRefundNotBypassed(group._id);
+
     // Strict Option A: Check if ANY child order is non-cancellable
     const nonCancellableOrders = childOrders.filter((o: any) => {
       const s = o.status;
@@ -1006,7 +1045,10 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
         s === OrderStatusEnum.PREPARING ||
         s === OrderStatusEnum.READY ||
         s === OrderStatusEnum.OUT_FOR_DELIVERY ||
-        s === OrderStatusEnum.DELIVERED
+        s === OrderStatusEnum.DELIVERED ||
+        // Already refunded after delivery. Overwriting REFUNDED with CANCELLED
+        // would falsify the fulfilment record the forecasting model trains on.
+        s === OrderStatusEnum.REFUNDED
       );
     });
 
@@ -1077,7 +1119,9 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     if (!order) {
       const filters: Record<string, any> = { groupOrderId: targetId };
       if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
-        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+        filters.restaurantId = new Types.ObjectId(
+          currentUser.restaurantId.toString(),
+        );
       }
       order = await this.orderRepository.findOne({
         filters,
@@ -1135,7 +1179,9 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     if (!order) {
       const filters: Record<string, any> = { groupOrderId: targetObjId };
       if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
-        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+        filters.restaurantId = new Types.ObjectId(
+          currentUser.restaurantId.toString(),
+        );
       }
       order = await this.orderRepository.findOne({ filters });
     }
@@ -1168,7 +1214,8 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
 
     if (
       order.status === OrderStatusEnum.DELIVERED ||
-      order.status === OrderStatusEnum.CANCELLED
+      order.status === OrderStatusEnum.CANCELLED ||
+      order.status === OrderStatusEnum.REFUNDED
     ) {
       throw new BadRequestException(
         `Cannot change status of a finalized order (${order.status})`,
@@ -1199,9 +1246,23 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       }
     }
 
+    // A paid order must be refunded, not cancelled — the refund flow writes
+    // CANCELLED itself once the money is back. Checked BEFORE the write, so a
+    // rejected cancellation leaves the order untouched.
+    if (status === OrderStatusEnum.CANCELLED && order.groupOrderId) {
+      await this.assertRefundNotBypassed(order.groupOrderId);
+    }
+
     await this.orderRepository.update({
       filters: { _id: targetObjId },
-      body: { status } as any,
+      body: {
+        status,
+        // Stamped once, here. The refund dispute window is measured from this
+        // and must not move when the order is written to for any other reason.
+        ...(status === OrderStatusEnum.DELIVERED
+          ? { deliveredAt: new Date() }
+          : {}),
+      } as any,
     });
 
     // Handle DELIVERED logic

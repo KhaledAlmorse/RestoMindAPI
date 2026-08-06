@@ -55,8 +55,8 @@ const INTEGRATION_ENV: Record<PaymentMethodEnum, string> = {
  * than a code change and a deploy.
  */
 export function getEnabledMethods(): PaymentMethodEnum[] {
-  return (Object.keys(INTEGRATION_ENV) as PaymentMethodEnum[]).filter((method) =>
-    Boolean(process.env[INTEGRATION_ENV[method]]),
+  return (Object.keys(INTEGRATION_ENV) as PaymentMethodEnum[]).filter(
+    (method) => Boolean(process.env[INTEGRATION_ENV[method]]),
   );
 }
 

@@ -84,7 +84,7 @@ describe('PaymentsService.processCallback', () => {
       repo as any,
       {} as any, // RefundRepository — unused on this path
       {} as any, // PaymobService — unused on this path
-      { [PaymentPurposeEnum.ORDER]: fulfiller } as any,
+      { [PaymentPurposeEnum.ORDER]: fulfiller },
     );
   });
 
@@ -162,7 +162,7 @@ describe('PaymentsService refund reservation', () => {
       status: PaymentStatusEnum.PAID,
       refundedAmountCents: 0,
     });
-    service = new PaymentsService(repo as any, {} as any, {} as any, {} as any);
+    service = new PaymentsService(repo as any, {} as any, {} as any, {});
   });
 
   it('allows a partial refund within the paid amount', async () => {
@@ -230,13 +230,15 @@ describe('PaymentsService late-success auto-refund', () => {
     refundRepo = {
       create: jest.fn(async (doc: any) => ({ ...doc, _id: 'ref1' })),
       findOne: jest.fn(async () => refundStore),
-      update: jest.fn(async ({ body }: any) => Object.assign(refundStore, body)),
+      update: jest.fn(async ({ body }: any) =>
+        Object.assign(refundStore, body),
+      ),
     };
     paymob = {
       refundTransaction: jest.fn(async () => ({ id: 777 })),
       voidTransaction: jest.fn(),
     };
-    service = new PaymentsService(repo as any, refundRepo, paymob, {} as any);
+    service = new PaymentsService(repo as any, refundRepo, paymob, {});
   });
 
   it('refunds in full when a success lands on an expired payment', async () => {
@@ -299,12 +301,9 @@ describe('PaymentsService.reconcileByPaymobOrderId', () => {
     });
     paymob = { getOrderWithTransactions: jest.fn() };
     fulfiller = { onPaid: jest.fn(), onFailed: jest.fn() };
-    service = new PaymentsService(
-      repo as any,
-      {} as any,
-      paymob as any,
-      { [PaymentPurposeEnum.SUBSCRIPTION]: fulfiller } as any,
-    );
+    service = new PaymentsService(repo as any, {} as any, paymob as any, {
+      [PaymentPurposeEnum.SUBSCRIPTION]: fulfiller,
+    });
   });
 
   it('settles a payment whose callback never arrived', async () => {

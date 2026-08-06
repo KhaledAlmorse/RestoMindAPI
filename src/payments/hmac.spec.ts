@@ -43,9 +43,9 @@ describe('buildTransactionHmacString', () => {
   });
 
   it('renders booleans as the literal strings true/false', () => {
-    expect(buildTransactionHmacString({ ...SAMPLE_OBJ, success: false })).toMatch(
-      /false$/,
-    );
+    expect(
+      buildTransactionHmacString({ ...SAMPLE_OBJ, success: false }),
+    ).toMatch(/false$/);
   });
 
   it('does not reformat the raw created_at value', () => {

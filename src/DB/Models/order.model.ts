@@ -135,6 +135,22 @@ export class Order {
     required: true,
   })
   status!: OrderStatusEnum;
+
+  /**
+   * When the order was actually delivered. `updatedAt` is not a substitute —
+   * any later write to the order would silently restart the refund dispute
+   * window.
+   */
+  @Prop({ type: Date, required: false })
+  deliveredAt?: Date;
+
+  /**
+   * Set the first time this order's reserved stock goes back to its offers.
+   * Cancellation, payment failure, expiry and refund can all fire against the
+   * same order; without this flag the second one restocks a second time.
+   */
+  @Prop({ type: Date, required: false })
+  stockRestoredAt?: Date;
 }
 
 const OrderSchema = SchemaFactory.createForClass(Order);

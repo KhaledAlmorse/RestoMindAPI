@@ -68,9 +68,7 @@ export function pickSettledTransaction(
 
 export type TransactionOutcome = 'applied' | 'duplicate' | 'pending';
 export type CallbackOutcome =
-  | TransactionOutcome
-  | 'rejected'
-  | 'unknown_payment';
+  TransactionOutcome | 'rejected' | 'unknown_payment';
 
 @Injectable()
 export class PaymentsService {
@@ -309,7 +307,7 @@ export class PaymentsService {
       return 'applied';
     }
 
-    const settled = (updated ?? payment) as PaymentType;
+    const settled = updated ?? payment;
     if (status === PaymentStatusEnum.PAID) await fulfiller.onPaid(settled);
     else await fulfiller.onFailed(settled);
 
@@ -319,6 +317,25 @@ export class PaymentsService {
   // -------------------------------------------------------------------------
   // Refunds
   // -------------------------------------------------------------------------
+
+  /**
+   * The settled payment behind an order group, if the customer paid online.
+   *
+   * Cancellation paths use this to refuse to cancel money they are not also
+   * giving back — a cancelled order is terminal for refunds, so cancelling a
+   * paid order strands the customer's money permanently.
+   */
+  async findSettledOrderPayment(
+    orderGroupId: Types.ObjectId,
+  ): Promise<PaymentType | null> {
+    return this.paymentRepository.findOne({
+      filters: {
+        orderGroupId,
+        purpose: PaymentPurposeEnum.ORDER,
+        status: PaymentStatusEnum.PAID,
+      },
+    });
+  }
 
   /**
    * Atomically reserves refund headroom BEFORE any gateway call.
@@ -353,10 +370,19 @@ export class PaymentsService {
     paymentId: Types.ObjectId,
     amountCents: number,
   ): Promise<void> {
-    await this.paymentRepository.findOneAndUpdate({
-      filters: { _id: paymentId },
+    // The floor is part of the filter, not a validator: Mongoose does not run
+    // schema `min` on an update, so an unguarded $inc drives the counter
+    // negative and silently invents refund headroom.
+    const released = await this.paymentRepository.findOneAndUpdate({
+      filters: { _id: paymentId, refundedAmountCents: { $gte: amountCents } },
       updateData: { $inc: { refundedAmountCents: -amountCents } },
     });
+
+    if (!released) {
+      this.logger.error(
+        `Refused to release ${amountCents} against payment ${String(paymentId)} — more than is currently reserved`,
+      );
+    }
   }
 
   /**
@@ -384,10 +410,20 @@ export class PaymentsService {
       return RefundStatusEnum.MANUAL_REQUIRED;
     }
 
-    const payment = await this.paymentRepository.findOne({
-      filters: { _id: refund.paymentId },
-    });
+    // A findOne with an undefined _id filter matches EVERYTHING, so the
+    // missing-paymentId case must never reach the query.
+    const payment = refund.paymentId
+      ? await this.paymentRepository.findOne({
+          filters: { _id: refund.paymentId },
+        })
+      : null;
     if (!payment?.paymobTransactionId) {
+      // MANUAL_REQUIRED must uniformly mean "headroom released", so manual
+      // settlement can re-reserve it exactly once. Every other path to this
+      // status already releases; this one used to leave it locked forever.
+      if (payment) {
+        await this.releaseRefundReservation(payment._id, refund.amountCents);
+      }
       await this.settleRefund(refund, RefundStatusEnum.MANUAL_REQUIRED, {
         gatewayError: 'No settled gateway transaction to refund against',
       });
@@ -443,7 +479,7 @@ export class PaymentsService {
 
       // Definite rejection: give the headroom back and record why, verbatim.
       // Wallet refunds land here when the method does not support them.
-      await this.releaseRefundReservation(refund.paymentId, refund.amountCents);
+      await this.releaseRefundReservation(payment._id, refund.amountCents);
       await this.settleRefund(refund, RefundStatusEnum.MANUAL_REQUIRED, {
         gatewayError: String(error?.message ?? error),
       });
@@ -476,10 +512,7 @@ export class PaymentsService {
       } as any,
     });
 
-    const reserved = await this.reserveRefund(
-      payment._id,
-      payment.amountCents,
-    );
+    const reserved = await this.reserveRefund(payment._id, payment.amountCents);
     if (!reserved) {
       this.logger.error(
         `Late-success refund for payment ${String(payment._id)} was already reserved — not refunding again`,

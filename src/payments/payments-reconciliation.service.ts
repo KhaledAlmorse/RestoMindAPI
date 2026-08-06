@@ -93,6 +93,10 @@ export class PaymentsReconciliationService {
 
     for (const refund of stuck ?? []) {
       try {
+        // A findOne with an undefined _id filter matches EVERYTHING and would
+        // hand back an unrelated payment.
+        if (!refund.paymentId) continue;
+
         const payment = await this.paymentRepository.findOne({
           filters: { _id: refund.paymentId },
         });
@@ -103,9 +107,32 @@ export class PaymentsReconciliationService {
             payment.paymobOrderId,
           );
 
-        // A refund appears as its own transaction against the same order.
+        // A refund lands as its own CHILD transaction against the same order.
+        //
+        // The parent's `is_refunded` flag is NOT evidence for THIS refund: on a
+        // group order with two partials it stays true from the first one, and
+        // matching on it would mark a second, never-landed refund as succeeded
+        // — money the customer never received, headroom permanently consumed.
+        // Match the child by amount, and never claim a transaction another
+        // refund row already owns.
+        const alreadyClaimed = new Set(
+          (
+            (await this.refundRepository.findMany({
+              filters: {
+                paymentId: payment._id,
+                paymobRefundTransactionId: { $exists: true },
+              },
+            })) ?? []
+          ).map((r) => r.paymobRefundTransactionId),
+        );
+
         const refundTxn = transactions.find(
-          (t) => t.is_refunded === true || t.is_voided === true,
+          (t) =>
+            t.has_parent_transaction === true &&
+            t.success === true &&
+            t.pending !== true &&
+            Number(t.amount_cents) === refund.amountCents &&
+            !alreadyClaimed.has(t.id),
         );
 
         if (refundTxn) {
@@ -126,7 +153,7 @@ export class PaymentsReconciliationService {
         // The gateway has no record, so the timed-out call never landed. Give
         // the headroom back so a human can legitimately re-issue it.
         await this.paymentsService.releaseRefundReservation(
-          refund.paymentId,
+          payment._id,
           refund.amountCents,
         );
         await this.refundRepository.update({

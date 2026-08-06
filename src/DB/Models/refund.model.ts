@@ -13,8 +13,13 @@ import { RefundSettlementModeEnum, RefundStatusEnum } from 'src/Common/Types';
  */
 @Schema({ timestamps: true })
 export class Refund {
-  @Prop({ type: Types.ObjectId, ref: 'Payment', required: true })
-  paymentId!: Types.ObjectId;
+  /**
+   * Null for a cash-on-delivery refund: there is no gateway payment to refund
+   * against, only cash to hand back. Required would make every COD refund fail
+   * validation before the row ever existed.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Payment', required: false })
+  paymentId?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'OrderGroup', required: true })
   orderGroupId!: Types.ObjectId;

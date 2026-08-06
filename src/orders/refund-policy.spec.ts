@@ -21,15 +21,15 @@ describe('decideRefund — customer', () => {
   });
 
   it('auto-approves while Confirmed', () => {
-    expect(
-      decideRefund(ctx({ orderStatus: OrderStatusEnum.CONFIRMED })),
-    ).toBe('auto');
+    expect(decideRefund(ctx({ orderStatus: OrderStatusEnum.CONFIRMED }))).toBe(
+      'auto',
+    );
   });
 
   it('requires staff approval once Preparing', () => {
-    expect(
-      decideRefund(ctx({ orderStatus: OrderStatusEnum.PREPARING })),
-    ).toBe('needs_approval');
+    expect(decideRefund(ctx({ orderStatus: OrderStatusEnum.PREPARING }))).toBe(
+      'needs_approval',
+    );
   });
 
   it('requires staff approval once Ready', () => {
@@ -113,9 +113,7 @@ describe('decideRefund — staff', () => {
 
   it('refuses a delivered-order refund with no delivery timestamp', () => {
     expect(() =>
-      decideRefund(
-        ctx({ ...staff, orderStatus: OrderStatusEnum.DELIVERED }),
-      ),
+      decideRefund(ctx({ ...staff, orderStatus: OrderStatusEnum.DELIVERED })),
     ).toThrow(/timestamp/i);
   });
 });

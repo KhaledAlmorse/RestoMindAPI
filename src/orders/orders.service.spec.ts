@@ -48,6 +48,9 @@ describe('OrdersService', () => {
       update: jest.fn(),
       updateMany: jest.fn(),
       findManyPaginated: jest.fn(),
+      // Claims the one-shot stock-restore flag; a truthy result means this
+      // caller won the claim and should proceed to restock.
+      findOneAndUpdate: jest.fn().mockResolvedValue({}),
     };
     cartRepo = { findOne: jest.fn(), save: jest.fn() };
     offersServiceMock = { restockFromCancelledOrderItem: jest.fn() };
@@ -402,20 +405,51 @@ describe('OrdersService', () => {
   describe('restoreStockForOrder', () => {
     it('restocks every line item exactly once', async () => {
       await service.restoreStockForOrder({
+        _id: new Types.ObjectId(),
         items: [
           { offerId: 'o1', quantity: 2, lineTotal: 100 },
           { offerId: 'o2', quantity: 1, lineTotal: 50 },
         ],
       } as any);
 
-      expect(offersServiceMock.restockFromCancelledOrderItem).toHaveBeenCalledTimes(2);
-      expect(offersServiceMock.restockFromCancelledOrderItem).toHaveBeenCalledWith('o1', 2, 100);
-      expect(offersServiceMock.restockFromCancelledOrderItem).toHaveBeenCalledWith('o2', 1, 50);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledTimes(2);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledWith('o1', 2, 100);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledWith('o2', 1, 50);
     });
 
     it('skips items with no offerId rather than throwing', async () => {
-      await service.restoreStockForOrder({ items: [{ quantity: 1 }] } as any);
-      expect(offersServiceMock.restockFromCancelledOrderItem).not.toHaveBeenCalled();
+      await service.restoreStockForOrder({
+        _id: new Types.ObjectId(),
+        items: [{ quantity: 1 }],
+      } as any);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('restocks only once when two paths fire against the same order', async () => {
+      // Refund-then-cancel, or webhook-then-sweeper. The second caller loses
+      // the conditional claim on stockRestoredAt and must not restock again.
+      orderRepo.findOneAndUpdate
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(null);
+      const order = {
+        _id: new Types.ObjectId(),
+        items: [{ offerId: 'o1', quantity: 2, lineTotal: 100 }],
+      } as any;
+
+      await service.restoreStockForOrder(order);
+      await service.restoreStockForOrder(order);
+
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledTimes(1);
     });
 
     it('continues restocking after one item fails', async () => {
@@ -425,13 +459,16 @@ describe('OrdersService', () => {
         .mockResolvedValueOnce(undefined);
 
       await service.restoreStockForOrder({
+        _id: new Types.ObjectId(),
         items: [
           { offerId: 'o1', quantity: 1, lineTotal: 10 },
           { offerId: 'o2', quantity: 1, lineTotal: 10 },
         ],
       } as any);
 
-      expect(offersServiceMock.restockFromCancelledOrderItem).toHaveBeenCalledTimes(2);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -480,12 +517,17 @@ describe('OrdersService', () => {
     it('restores stock and parks the group when payment fails', async () => {
       orderGroupRepo.findOneAndUpdate.mockResolvedValue({ _id: groupId });
       orderRepo.findMany.mockResolvedValue([
-        { _id: 'child1', items: [{ offerId: 'o1', quantity: 2, lineTotal: 40 }] },
+        {
+          _id: 'child1',
+          items: [{ offerId: 'o1', quantity: 2, lineTotal: 40 }],
+        },
       ]);
 
       await service.onFailed(payment);
 
-      expect(offersServiceMock.restockFromCancelledOrderItem).toHaveBeenCalledWith('o1', 2, 40);
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).toHaveBeenCalledWith('o1', 2, 40);
       expect(orderRepo.updateMany).toHaveBeenCalledWith(
         { groupOrderId: groupId, status: OrderStatusEnum.AWAITING_PAYMENT },
         { status: OrderStatusEnum.PAYMENT_FAILED },
@@ -500,7 +542,9 @@ describe('OrdersService', () => {
 
       await service.onFailed(payment);
 
-      expect(offersServiceMock.restockFromCancelledOrderItem).not.toHaveBeenCalled();
+      expect(
+        offersServiceMock.restockFromCancelledOrderItem,
+      ).not.toHaveBeenCalled();
       expect(orderRepo.updateMany).not.toHaveBeenCalled();
       expect(orderGroupRepo.findOneAndUpdate).toHaveBeenCalledWith({
         filters: {

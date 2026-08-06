@@ -30,8 +30,13 @@ export class CreateRefundDto {
 }
 
 export class ReviewRefundDto {
-  @IsEnum(['approve', 'reject'])
-  decision!: 'approve' | 'reject';
+  /**
+   * `settle` closes out a refund the gateway could not take (cash on delivery,
+   * a wallet that does not support refunds) once a human has handed the money
+   * back. Without it those refunds are a dead end and the order never moves.
+   */
+  @IsEnum(['approve', 'reject', 'settle'])
+  decision!: 'approve' | 'reject' | 'settle';
 
   @IsOptional()
   @IsString()
