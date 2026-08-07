@@ -105,7 +105,7 @@ export class NotificationService {
   }
 
   /**
-   * Creation method targeted at a restaurant's manager (owner).
+   * Creation method targeted at a restaurant's manager (owner) and staff.
    */
   async createForManager(
     restaurantId: string,
@@ -116,32 +116,67 @@ export class NotificationService {
     relatedEntityType?: string,
   ) {
     this.validateObjectId(restaurantId);
+    const restObjId = new Types.ObjectId(restaurantId);
 
     const restaurant = await this.restaurantRepository.findOne({
-      filters: { _id: new Types.ObjectId(restaurantId) },
+      filters: { _id: restObjId },
     });
 
-    if (!restaurant || !restaurant.ownerUserId) {
-      this.logger.warn(
-        `Cannot create manager notification: Restaurant or ownerUserId not found for ${restaurantId}`,
-      );
-      return null;
+    const targetUserIds = new Set<string>();
+
+    if (restaurant && restaurant.ownerUserId) {
+      const ownerUserId = restaurant.ownerUserId._id
+        ? restaurant.ownerUserId._id.toString()
+        : restaurant.ownerUserId.toString();
+      targetUserIds.add(ownerUserId);
     }
 
-    const ownerUserId = restaurant.ownerUserId._id
-      ? restaurant.ownerUserId._id.toString()
-      : restaurant.ownerUserId.toString();
+    // Find all active managers and staff members belonging to this restaurant
+    const restaurantUsers = await this.userRepository.findMany({
+      filters: {
+        $or: [{ restaurantId: restObjId }, { restaurantId }],
+        role: { $in: [RolesEnum.MANAGER, RolesEnum.STAFF] },
+        isActive: true,
+        isDeleted: false,
+      },
+    });
 
-    return this.createForUser(
-      ownerUserId,
-      'manager',
-      type,
-      title,
-      message,
-      relatedEntityId,
-      relatedEntityType,
-      restaurantId,
-    );
+    if (restaurantUsers && restaurantUsers.length > 0) {
+      for (const u of restaurantUsers) {
+        targetUserIds.add(u._id.toString());
+      }
+    }
+
+    if (targetUserIds.size === 0) {
+      this.logger.warn(
+        `Cannot create restaurant notification: No owner, manager, or staff found for ${restaurantId}`,
+      );
+      return [];
+    }
+
+    const createdNotifications: any[] = [];
+    for (const userId of targetUserIds) {
+      const userDoc = await this.userRepository.findOne({
+        filters: { _id: new Types.ObjectId(userId) },
+      });
+      const userRole = userDoc?.role || 'staff';
+
+      const notification = await this.createForUser(
+        userId,
+        userRole,
+        type,
+        title,
+        message,
+        relatedEntityId,
+        relatedEntityType,
+        restaurantId,
+      );
+      if (notification) {
+        createdNotifications.push(notification);
+      }
+    }
+
+    return createdNotifications;
   }
 
   /**

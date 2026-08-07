@@ -20,7 +20,7 @@ export class NotificationController {
 
   // 1. GET /notifications/unread-count - Unread badge count
   @Get('unread-count')
-  @Auth('manager', 'admin')
+  @Auth('manager', 'admin', 'staff')
   async getUnreadCount(
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
@@ -33,7 +33,7 @@ export class NotificationController {
 
   // 2. GET /notifications/unread - Shorthand unread notifications listing
   @Get('unread')
-  @Auth('manager', 'admin')
+  @Auth('manager', 'admin', 'staff')
   async getUnreadNotifications(
     @Query() query: QueryNotificationsDto,
     @AuthUser() user: IAuthUser,
@@ -48,7 +48,7 @@ export class NotificationController {
 
   // 3. GET /notifications - Paginated notification list
   @Get()
-  @Auth('manager', 'admin')
+  @Auth('manager', 'admin', 'staff')
   async getUserNotifications(
     @Query() query: QueryNotificationsDto,
     @AuthUser() user: IAuthUser,
@@ -63,7 +63,7 @@ export class NotificationController {
 
   // 4. PATCH /notifications/read-all - Mark all caller's notifications read
   @Patch('read-all')
-  @Auth('manager', 'admin')
+  @Auth('manager', 'admin', 'staff')
   async markAllAsRead(
     @AuthUser() user: IAuthUser,
     @Res() res: Response,
@@ -76,7 +76,7 @@ export class NotificationController {
 
   // 5. PATCH /notifications/:id/read - Mark single notification read
   @Patch(':id/read')
-  @Auth('manager', 'admin')
+  @Auth('manager', 'admin', 'staff')
   async markAsRead(
     @Param('id') id: string,
     @AuthUser() user: IAuthUser,
