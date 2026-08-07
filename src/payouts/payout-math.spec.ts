@@ -77,6 +77,7 @@ describe('refundLines', () => {
     paymentMethod: 'Card',
     finalTotalPrice: 60,
     commissionCents: 900,
+    deliveredAt: at('2026-08-01T12:00:00Z'),
   } as any;
   const orderB = {
     _id: 'b',
@@ -84,6 +85,7 @@ describe('refundLines', () => {
     paymentMethod: 'Card',
     finalTotalPrice: 40,
     commissionCents: 600,
+    deliveredAt: at('2026-08-01T12:00:00Z'),
   } as any;
 
   it('reverses the commission pro-rata on a partial refund', () => {
@@ -116,11 +118,36 @@ describe('refundLines', () => {
     // The merchant hands cash back, so their commission debt shrinks.
     const [line] = refundLines(
       { _id: 'f3', orderId: 'c', amountCents: 5_000, completedAt: at('2026-08-02T09:00:00Z') } as any,
-      [{ _id: 'c', restaurantId: 'r1', paymentMethod: 'Cash on Delivery', finalTotalPrice: 50, commissionCents: 750 } as any],
+      [{ _id: 'c', restaurantId: 'r1', paymentMethod: 'Cash on Delivery', finalTotalPrice: 50, commissionCents: 750, deliveredAt: at('2026-08-01T12:00:00Z') } as any],
     );
 
     expect(line.grossCents).toBe(0);
     expect(line.merchantNetCents).toBe(750);
+  });
+
+  it('emits no line for an order that was never delivered', () => {
+    // A cancelled-before-delivery order never produced a sale line, so
+    // reversing its commission would credit the merchant for a sale that was
+    // never booked.
+    const lines = refundLines(
+      { _id: 'f5', orderId: 'c', amountCents: 5_000, completedAt: at('2026-08-02T09:00:00Z') } as any,
+      [{ _id: 'c', restaurantId: 'r1', paymentMethod: 'Cash on Delivery', finalTotalPrice: 50, commissionCents: 750 } as any],
+    );
+
+    expect(lines).toEqual([]);
+  });
+
+  it('reports an undelivered order under includeUndelivered, but never its commission', () => {
+    // The stuck-refund report needs the gross; crediting commission here would
+    // be the very phantom credit the delivered filter exists to stop.
+    const [line] = refundLines(
+      { _id: 'f6', orderId: 'c', amountCents: 5_000, completedAt: at('2026-08-02T09:00:00Z') } as any,
+      [{ _id: 'c', restaurantId: 'r1', paymentMethod: 'Card', finalTotalPrice: 50, commissionCents: 750 } as any],
+      true,
+    );
+
+    expect(line.grossCents).toBe(-5_000);
+    expect(line.commissionCents).toBe(0);
   });
 
   it('never reverses more commission than the order carried', () => {

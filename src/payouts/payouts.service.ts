@@ -625,6 +625,10 @@ export class PayoutsService {
       const mine = refundLines(
         refund as any,
         ordersByGroup.get(String(refund.orderGroupId)) ?? [],
+        // Include never-delivered orders: a card order cancelled before
+        // delivery whose refund the gateway would not move is money RestoMind
+        // still owes the customer, and is exactly what this must surface.
+        true,
       ).filter((line) => line.restaurantId === restaurantId);
       if (!mine.length) continue;
 

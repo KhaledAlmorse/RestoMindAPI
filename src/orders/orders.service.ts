@@ -33,6 +33,7 @@ import {
   OrderStatusEnum,
   PaymentMethodEnum,
   PaymentPurposeEnum,
+  RefundStatusEnum,
   RolesEnum,
   SalesSourceEnum,
   StockTransactionTypeEnum,
@@ -53,6 +54,7 @@ import {
 } from 'src/payouts/payout.config';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 import { RefundsService } from './refunds.service';
+import { NOTHING_COMMITTED_STATUSES } from './refund-policy';
 
 @Injectable()
 export class OrdersService implements OnModuleInit, PaymentFulfiller {
@@ -1074,9 +1076,9 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       );
     }
 
-    if (group.overallStatus === OrderStatusEnum.AWAITING_PAYMENT) {
+    if (NOTHING_COMMITTED_STATUSES.includes(group.overallStatus)) {
       // Nothing was ever paid — there is nothing to refund, and the refund
-      // policy treats AWAITING_PAYMENT as terminal (would throw). Cancel
+      // policy treats these statuses as terminal (would throw). Cancel
       // directly, exactly as before.
       for (const childOrder of childOrders) {
         if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
@@ -1097,18 +1099,24 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
         body: { overallStatus: OrderStatusEnum.CANCELLED } as any,
       });
     } else {
-      // Money could have been committed. requestRefund creates the Refund
-      // record, executes it, and — once the refund succeeds — writes
-      // CANCELLED to every child order and restores stock itself via
-      // applyOrderConsequences. Only PENDING/CONFIRMED groups reach this
-      // branch (nonCancellableOrders above already excludes staff-only and
-      // delivered statuses), and both are in CUSTOMER_AUTO_REFUNDABLE, so the
-      // refund always executes synchronously.
-      await this.refundsService.requestRefund(
+      // Money could have been committed, so route through the refund flow:
+      // requestRefund creates the Refund record, executes it, and — only once
+      // the refund succeeds — writes CANCELLED to every child order and
+      // restores stock via applyOrderConsequences. It can also come back
+      // without cancelling anything (needs_approval on e.g. a
+      // PARTIALLY_REFUNDED group, or MANUAL_REQUIRED/PROCESSING from the
+      // gateway), so surface a conflict rather than a 200 that lies.
+      const refundResult = await this.refundsService.requestRefund(
         groupId,
         { reason: 'Order cancelled by customer' },
         currentUser,
       );
+      if ((refundResult as any).data?.status !== RefundStatusEnum.SUCCEEDED) {
+        throw new ConflictException(
+          (refundResult as any).message ??
+            'This order could not be cancelled automatically — a refund is pending review or manual settlement. Check the Refunds dashboard.',
+        );
+      }
     }
 
     const updatedGroup = await this.orderGroupRepository.findOne({
@@ -1271,12 +1279,13 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     if (status === OrderStatusEnum.CANCELLED) {
       if (
         order.groupOrderId &&
-        order.status !== OrderStatusEnum.AWAITING_PAYMENT
+        !NOTHING_COMMITTED_STATUSES.includes(order.status)
       ) {
         // requestRefund creates the refund, runs gateway/offline execution, and
         // — once the money is provably back — writes CANCELLED, restores stock,
-        // and recomputes the parent group's status itself.
-        await this.refundsService.requestRefund(
+        // and recomputes the parent group's status itself. When it comes back
+        // without succeeding, nothing was cancelled, so say so.
+        const refundResult = await this.refundsService.requestRefund(
           order.groupOrderId.toString(),
           {
             orderId: order._id.toString(),
@@ -1284,10 +1293,16 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
           },
           currentUser,
         );
+        if ((refundResult as any).data?.status !== RefundStatusEnum.SUCCEEDED) {
+          throw new ConflictException(
+            (refundResult as any).message ??
+              'This order could not be cancelled automatically — a refund is pending review or manual settlement. Check the Refunds dashboard.',
+          );
+        }
       } else {
-        // No parent group, or the group never got past AWAITING_PAYMENT — no
-        // money was ever committed, so there is nothing to refund. Cancel
-        // directly, exactly as before.
+        // No parent group, or no money was ever committed (AWAITING_PAYMENT /
+        // PAYMENT_FAILED) — there is nothing to refund. Cancel directly,
+        // exactly as before.
         await this.orderRepository.update({
           filters: { _id: targetObjId },
           body: { status } as any,

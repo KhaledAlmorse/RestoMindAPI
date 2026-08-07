@@ -118,6 +118,13 @@ interface RefundLike {
 export function refundLines(
   refund: RefundLike,
   orders: OrderLike[],
+  /**
+   * Emit a line for an order that was never delivered too, with its commission
+   * forced to zero. Only for reporting callers that read `grossCents` alone
+   * (see `stuckRefunds`), which must still see money owed to a customer on an
+   * order that was cancelled before delivery. The ledger must never pass this.
+   */
+  includeUndelivered = false,
 ): LedgerLine[] {
   const targets = refund.orderId
     ? orders.filter((o) => String(o._id) === String(refund.orderId))
@@ -129,29 +136,41 @@ export function refundLines(
     targets.map((o) => toCents(o.finalTotalPrice)),
   );
 
-  return targets.map((order, i) => {
-    const refunded = shares[i];
-    const orderTotal = toCents(order.finalTotalPrice);
-    // Cap at the commission actually charged: a rounding artefact must never
-    // hand back more commission than was taken.
-    const reversed = Math.min(
-      orderTotal > 0
-        ? Math.round((order.commissionCents * refunded) / orderTotal)
-        : 0,
-      order.commissionCents,
-    );
-    const grossCents = isCod(order.paymentMethod) ? 0 : -refunded;
+  return targets
+    .map((order, i): LedgerLine | null => {
+      // An order that was never delivered never produced a sale line, so
+      // reversing its commission here would hand the merchant money for a
+      // sale that never happened. `deliveredAt` is stamped once and never
+      // cleared, unlike status which moves to REFUNDED/CANCELLED.
+      const delivered = Boolean(order.deliveredAt);
+      if (!delivered && !includeUndelivered) return null;
 
-    return {
-      kind: 'refund' as const,
-      ref: String(refund._id),
-      restaurantId: String(order.restaurantId),
-      occurredAt: refund.completedAt ?? new Date(0),
-      grossCents,
-      commissionCents: -reversed,
-      merchantNetCents: grossCents + reversed,
-    };
-  });
+      const refunded = shares[i];
+      const orderTotal = toCents(order.finalTotalPrice);
+      // Cap at the commission actually charged: a rounding artefact must never
+      // hand back more commission than was taken.
+      const reversed = !delivered
+        ? 0
+        : Math.min(
+            orderTotal > 0
+              ? Math.round((order.commissionCents * refunded) / orderTotal)
+              : 0,
+            order.commissionCents,
+          );
+      const grossCents = isCod(order.paymentMethod) ? 0 : -refunded;
+
+      return {
+        kind: 'refund' as const,
+        ref: String(refund._id),
+        restaurantId: String(order.restaurantId),
+        occurredAt: refund.completedAt ?? new Date(0),
+        grossCents,
+        // Guard the sign so a zero reversal reads as 0, never -0.
+        commissionCents: reversed === 0 ? 0 : -reversed,
+        merchantNetCents: grossCents + reversed,
+      };
+    })
+    .filter((line): line is LedgerLine => line !== null);
 }
 
 interface AdjustmentLike {

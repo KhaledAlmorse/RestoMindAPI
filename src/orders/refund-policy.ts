@@ -18,6 +18,12 @@ const TERMINAL = [
   OrderStatusEnum.AWAITING_PAYMENT,
 ];
 
+/** No money was ever committed for these — cancel directly, no refund needed. */
+export const NOTHING_COMMITTED_STATUSES = [
+  OrderStatusEnum.AWAITING_PAYMENT,
+  OrderStatusEnum.PAYMENT_FAILED,
+];
+
 export type RefundDecision = 'auto' | 'needs_approval';
 
 export interface RefundRequestContext {

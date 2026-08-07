@@ -161,7 +161,10 @@ export class RefundsService {
       lineItemIndexes: body.lineItemIndexes,
       amountCents,
       reason: body.reason,
-      orderWasDelivered: deliveredAt !== null,
+      // The durable stamp, not `deliveredAt` above: that helper only counts
+      // orders whose *current* status is DELIVERED, so a second refund on a
+      // PARTIALLY_REFUNDED order would claim no cash was ever collected.
+      orderWasDelivered: targetOrders.some((o: any) => Boolean(o.deliveredAt)),
       settlementMode: isCod
         ? RefundSettlementModeEnum.OFFLINE
         : RefundSettlementModeEnum.GATEWAY,

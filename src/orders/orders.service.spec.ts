@@ -17,8 +17,12 @@ import {
 } from 'src/DB/Repositories';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
-import { NotFoundException } from '@nestjs/common';
-import { OrderStatusEnum, RolesEnum } from 'src/Common/Types';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  OrderStatusEnum,
+  RefundStatusEnum,
+  RolesEnum,
+} from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
@@ -58,7 +62,10 @@ describe('OrdersService', () => {
     cartRepo = { findOne: jest.fn(), save: jest.fn() };
     offersServiceMock = { restockFromCancelledOrderItem: jest.fn() };
     refundsServiceMock = {
-      requestRefund: jest.fn().mockResolvedValue({ data: {} }),
+      // The happy path: the refund executed and the order is now cancelled.
+      requestRefund: jest
+        .fn()
+        .mockResolvedValue({ data: { status: RefundStatusEnum.SUCCEEDED } }),
     };
     recipeRepo = { findOne: jest.fn() };
     ingredientRepo = { findOne: jest.fn().mockResolvedValue({ unit: 'kg' }) };
@@ -635,6 +642,40 @@ describe('OrdersService', () => {
       );
       expect(orderRepo.update).not.toHaveBeenCalled();
     });
+
+    it('cancels directly and skips the refund flow when the group is PAYMENT_FAILED', async () => {
+      // Nothing was ever collected, and the refund policy treats
+      // PAYMENT_FAILED as terminal — routing it into requestRefund would 403.
+      const { groupId, group, childOrder } = makeGroup(
+        OrderStatusEnum.PAYMENT_FAILED,
+      );
+      orderGroupRepo.findOne.mockResolvedValue(group);
+
+      await service.cancelOrderGroup(groupId.toString(), currentUser);
+
+      expect(refundsServiceMock.requestRefund).not.toHaveBeenCalled();
+      expect(orderRepo.update).toHaveBeenCalledWith({
+        filters: { _id: childOrder._id },
+        body: { status: OrderStatusEnum.CANCELLED },
+      });
+      expect(orderGroupRepo.update).toHaveBeenCalledWith({
+        filters: { _id: group._id },
+        body: { overallStatus: OrderStatusEnum.CANCELLED },
+      });
+    });
+
+    it('throws Conflict when the refund did not actually succeed', async () => {
+      const { groupId, group } = makeGroup(OrderStatusEnum.PENDING);
+      orderGroupRepo.findOne.mockResolvedValue(group);
+      refundsServiceMock.requestRefund.mockResolvedValueOnce({
+        data: { status: RefundStatusEnum.REQUESTED },
+        message: 'Your refund request has been submitted and is awaiting review.',
+      });
+
+      await expect(
+        service.cancelOrderGroup(groupId.toString(), currentUser),
+      ).rejects.toThrow(ConflictException);
+    });
   });
 
   describe('updateOrderStatus to CANCELLED', () => {
@@ -705,6 +746,63 @@ describe('OrdersService', () => {
       expect(restoreStockSpy).toHaveBeenCalledWith(
         expect.objectContaining({ _id: orderId }),
       );
+    });
+
+    it('cancels directly and restores stock when the order is PAYMENT_FAILED', async () => {
+      const orderId = new Types.ObjectId();
+      const groupOrderId = new Types.ObjectId();
+      const order = {
+        _id: orderId,
+        status: OrderStatusEnum.PAYMENT_FAILED,
+        groupOrderId,
+        restaurantId: new Types.ObjectId(),
+        items: [],
+      };
+      orderRepo.findOne
+        .mockResolvedValueOnce(order)
+        .mockResolvedValueOnce({ ...order, status: OrderStatusEnum.CANCELLED });
+      orderRepo.findMany.mockResolvedValue([
+        { ...order, status: OrderStatusEnum.CANCELLED },
+      ]);
+      const restoreStockSpy = jest.spyOn(service, 'restoreStockForOrder');
+
+      await service.updateOrderStatus(
+        orderId.toString(),
+        OrderStatusEnum.CANCELLED,
+        currentUser,
+      );
+
+      expect(refundsServiceMock.requestRefund).not.toHaveBeenCalled();
+      expect(orderRepo.update).toHaveBeenCalledWith({
+        filters: { _id: orderId },
+        body: { status: OrderStatusEnum.CANCELLED },
+      });
+      expect(restoreStockSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ _id: orderId }),
+      );
+    });
+
+    it('throws Conflict when the refund did not actually succeed', async () => {
+      const orderId = new Types.ObjectId();
+      const order = {
+        _id: orderId,
+        status: OrderStatusEnum.PENDING,
+        groupOrderId: new Types.ObjectId(),
+        restaurantId: new Types.ObjectId(),
+        items: [],
+      };
+      orderRepo.findOne.mockResolvedValueOnce(order);
+      refundsServiceMock.requestRefund.mockResolvedValueOnce({
+        data: { status: RefundStatusEnum.MANUAL_REQUIRED },
+      });
+
+      await expect(
+        service.updateOrderStatus(
+          orderId.toString(),
+          OrderStatusEnum.CANCELLED,
+          currentUser,
+        ),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('cancels directly when the order has no groupOrderId at all', async () => {

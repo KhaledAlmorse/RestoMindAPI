@@ -302,6 +302,7 @@ describe('PayoutsService.getStatement', () => {
           paymentMethod: 'Card',
           finalTotalPrice: 60,
           commissionCents: 900,
+          deliveredAt: new Date('2026-07-20T10:00:00Z'),
         },
         {
           _id: 'b',
@@ -310,6 +311,7 @@ describe('PayoutsService.getStatement', () => {
           paymentMethod: 'Card',
           finalTotalPrice: 40,
           commissionCents: 600,
+          deliveredAt: new Date('2026-07-20T10:00:00Z'),
         },
       ]); // group orders for attribution
     refundRepository.findMany.mockResolvedValue([
@@ -426,6 +428,9 @@ describe('PayoutsService.getStatement', () => {
           commissionCents: 750,
         },
       ]); // every order in the stuck refunds' groups
+    // Note: these orders deliberately carry no deliveredAt. A stuck refund on
+    // an order cancelled before delivery is still customer money RestoMind
+    // holds, so it must be reported even though it produces no ledger line.
 
     const statement = await service.getStatement('r1', '2026-08-01');
 

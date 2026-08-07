@@ -330,6 +330,41 @@ describe('requestRefund — orderWasDelivered stamp', () => {
       expect.objectContaining({ orderWasDelivered: false }),
     );
   });
+
+  it('stamps orderWasDelivered: true for a PARTIALLY_REFUNDED order that still carries deliveredAt', async () => {
+    // Cash was collected on delivery; a first line-item refund moved the
+    // status off DELIVERED. The durable stamp is what says money changed
+    // hands — reading current status here would auto-succeed the second
+    // OFFLINE refund as if no cash was ever collected.
+    const groupId = oid();
+    const order = {
+      _id: oid(),
+      status: OrderStatusEnum.PARTIALLY_REFUNDED,
+      deliveredAt: new Date(),
+      restaurantId: oid(),
+      finalTotalPrice: 100,
+      items: [],
+    };
+    const group = {
+      _id: groupId,
+      userId: oid(),
+      paymentMethod: 'Cash on Delivery',
+      finalTotalPrice: 100,
+    };
+    const currentUser = { _id: oid(), role: RolesEnum.ADMIN } as any;
+
+    const { service, refundRepository } = build({ group, orders: [order] });
+
+    await service.requestRefund(
+      String(groupId),
+      { reason: 'Second dispute on the same order' } as any,
+      currentUser,
+    );
+
+    expect(refundRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ orderWasDelivered: true }),
+    );
+  });
 });
 
 describe('listRefunds', () => {

@@ -45,7 +45,7 @@ import { OffersModule } from 'src/offers/offers.module';
     RestaurantModule,
     OffersModule,
   ],
-  controllers: [OrdersController, RefundsController],
+  controllers: [RefundsController, OrdersController],
   providers: [
     OrdersService,
     OrderRepository,
@@ -62,4 +62,4 @@ import { OffersModule } from 'src/offers/offers.module';
   ],
   exports: [OrdersService, OrderRepository, OrderGroupRepository],
 })
-export class OrdersModule {}
+export class OrdersModule { }
