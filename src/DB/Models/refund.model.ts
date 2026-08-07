@@ -78,6 +78,20 @@ export class Refund {
 
   @Prop({ type: Date, required: false })
   completedAt?: Date;
+
+  /**
+   * Whether the order(s) behind this refund had already been delivered when
+   * the refund was created. Lets an OFFLINE (cash-on-delivery) refund know
+   * whether cash was ever actually collected, without PaymentsService
+   * depending on OrdersService/OrderRepository (payments.module.ts documents
+   * that this module must stay independent of OrdersModule to avoid a
+   * circular fulfiller-registry dependency).
+   * Undefined means "unknown / not set by this code path" and must be
+   * treated the same as `true` (assume cash was collected) — never treated
+   * as `false`.
+   */
+  @Prop({ type: Boolean, required: false })
+  orderWasDelivered?: boolean;
 }
 
 const RefundSchema = SchemaFactory.createForClass(Refund);

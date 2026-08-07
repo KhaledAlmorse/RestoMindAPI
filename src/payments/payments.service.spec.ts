@@ -352,6 +352,77 @@ describe('PaymentsService.reconcileByPaymobOrderId', () => {
   });
 });
 
+describe('PaymentsService.executeRefund with OFFLINE settlement', () => {
+  let service: PaymentsService;
+  let refundRepo: any;
+
+  function makeRefundStore(overrides: Record<string, any> = {}) {
+    return {
+      _id: 'ref1',
+      amountCents: 10000,
+      settlementMode: 'offline',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    refundRepo = {
+      findOne: jest.fn(async () => makeRefundStore()),
+      update: jest.fn(async ({ body }: any) => {
+        return Object.assign(makeRefundStore(), body);
+      }),
+    };
+    service = new PaymentsService({} as any, refundRepo, {} as any, {});
+  });
+
+  it('succeeds an OFFLINE refund when orderWasDelivered is false', async () => {
+    refundRepo.findOne = jest.fn(async () =>
+      makeRefundStore({ orderWasDelivered: false }),
+    );
+    const status = await service.executeRefund('ref1' as any);
+    expect(status).toBe('succeeded');
+    expect(refundRepo.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: { _id: 'ref1' },
+      }),
+    );
+    // Verify that the settle call received the SUCCEEDED status and empty metadata
+    expect(refundRepo.update.mock.calls[0][0].body).toMatchObject({
+      status: 'succeeded',
+    });
+  });
+
+  it('requires manual settlement when orderWasDelivered is true', async () => {
+    refundRepo.findOne = jest.fn(async () =>
+      makeRefundStore({ orderWasDelivered: true }),
+    );
+    const status = await service.executeRefund('ref1' as any);
+    expect(status).toBe('manual_required');
+    expect(refundRepo.update).toHaveBeenCalled();
+    // Verify that the settle call received MANUAL_REQUIRED status with gatewayError
+    const updateCall = refundRepo.update.mock.calls[0][0];
+    expect(updateCall.body?.status).toBe('manual_required');
+    expect(updateCall.body?.gatewayError).toBe(
+      'Cash on delivery — settle offline with the customer',
+    );
+  });
+
+  it('requires manual settlement when orderWasDelivered is undefined', async () => {
+    refundRepo.findOne = jest.fn(async () =>
+      makeRefundStore({ orderWasDelivered: undefined }),
+    );
+    const status = await service.executeRefund('ref1' as any);
+    expect(status).toBe('manual_required');
+    expect(refundRepo.update).toHaveBeenCalled();
+    // Verify that the settle call received MANUAL_REQUIRED status with gatewayError
+    const updateCall = refundRepo.update.mock.calls[0][0];
+    expect(updateCall.body?.status).toBe('manual_required');
+    expect(updateCall.body?.gatewayError).toBe(
+      'Cash on delivery — settle offline with the customer',
+    );
+  });
+});
+
 describe('pickSettledTransaction', () => {
   const txn = (over: Record<string, any>) =>
     ({ id: 1, success: false, pending: false, ...over }) as any;

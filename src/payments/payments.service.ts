@@ -411,6 +411,10 @@ export class PaymentsService {
     if (!refund) throw new NotFoundException('Refund not found');
 
     if (refund.settlementMode === RefundSettlementModeEnum.OFFLINE) {
+      if (refund.orderWasDelivered === false) {
+        await this.settleRefund(refund, RefundStatusEnum.SUCCEEDED, {});
+        return RefundStatusEnum.SUCCEEDED;
+      }
       await this.settleRefund(refund, RefundStatusEnum.MANUAL_REQUIRED, {
         gatewayError: 'Cash on delivery — settle offline with the customer',
       });
