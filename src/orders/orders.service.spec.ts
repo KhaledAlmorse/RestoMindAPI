@@ -18,11 +18,7 @@ import {
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import {
-  OrderStatusEnum,
-  RefundStatusEnum,
-  RolesEnum,
-} from 'src/Common/Types';
+import { OrderStatusEnum, RefundStatusEnum, RolesEnum } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
@@ -97,6 +93,7 @@ describe('OrdersService', () => {
           useValue: {
             registerFulfiller: jest.fn(),
             createPayment: jest.fn(),
+            expirePendingOrderPayment: jest.fn().mockResolvedValue(false),
           },
         },
         {
@@ -669,7 +666,8 @@ describe('OrdersService', () => {
       orderGroupRepo.findOne.mockResolvedValue(group);
       refundsServiceMock.requestRefund.mockResolvedValueOnce({
         data: { status: RefundStatusEnum.REQUESTED },
-        message: 'Your refund request has been submitted and is awaiting review.',
+        message:
+          'Your refund request has been submitted and is awaiting review.',
       });
 
       await expect(

@@ -454,3 +454,54 @@ describe('pickSettledTransaction', () => {
     expect(picked?.success).toBe(false);
   });
 });
+
+/**
+ * The customer cancels his own unpaid order while the Paymob tab is still
+ * open. Expiring the payment is what makes a late success refundable instead
+ * of silently kept — so the guard on it has to be exactly right.
+ */
+describe('PaymentsService.expirePendingOrderPayment', () => {
+  const GROUP = 'group1' as any;
+
+  /** Honours the status filter, the way a real conditional update does. */
+  function repoWith(status: PaymentStatusEnum) {
+    const store: Record<string, any> = { _id: 'pay1', status };
+    return {
+      store,
+      findOneAndUpdate: jest.fn(async ({ filters, updateData }: any) => {
+        if (store.status !== filters.status) return null;
+        Object.assign(store, updateData.$set);
+        return store;
+      }),
+    };
+  }
+
+  function serviceFor(repo: any) {
+    return new PaymentsService(repo as any, {} as any, {} as any, {});
+  }
+
+  it('expires a payment that is still pending', async () => {
+    const repo = repoWith(PaymentStatusEnum.PENDING);
+    expect(await serviceFor(repo).expirePendingOrderPayment(GROUP)).toBe(true);
+    expect(repo.store.status).toBe(PaymentStatusEnum.EXPIRED);
+  });
+
+  // The dangerous case: cancelling a group whose money already landed must
+  // not rewrite PAID to EXPIRED, or the refund flow loses its only record
+  // that there is anything to give back.
+  it('refuses to touch a payment that already settled', async () => {
+    const repo = repoWith(PaymentStatusEnum.PAID);
+    expect(await serviceFor(repo).expirePendingOrderPayment(GROUP)).toBe(false);
+    expect(repo.store.status).toBe(PaymentStatusEnum.PAID);
+  });
+
+  it('scopes the update to this group, order payments only', async () => {
+    const repo = repoWith(PaymentStatusEnum.PENDING);
+    await serviceFor(repo).expirePendingOrderPayment(GROUP);
+    expect(repo.findOneAndUpdate.mock.calls[0][0].filters).toEqual({
+      orderGroupId: GROUP,
+      purpose: PaymentPurposeEnum.ORDER,
+      status: PaymentStatusEnum.PENDING,
+    });
+  });
+});

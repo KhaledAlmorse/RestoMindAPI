@@ -345,6 +345,39 @@ export class PaymentsService {
   }
 
   /**
+   * Closes an unpaid order payment so nothing can settle against it for free.
+   *
+   * Called before a customer cancels a group that is still AWAITING_PAYMENT.
+   * His Paymob tab may still be open: without this, a success landing after
+   * the cancellation runs onPaid, finds a group no longer AWAITING_PAYMENT,
+   * returns silently — and we keep his money with nothing left to deliver.
+   * EXPIRED routes that same late success into autoRefundLateSuccess instead.
+   *
+   * Conditional on PENDING, so it can never overwrite a payment that already
+   * settled. A paid group must go through the refund flow, never through here.
+   */
+  async expirePendingOrderPayment(
+    orderGroupId: Types.ObjectId,
+  ): Promise<boolean> {
+    const expired = await this.paymentRepository.findOneAndUpdate({
+      filters: {
+        orderGroupId,
+        purpose: PaymentPurposeEnum.ORDER,
+        status: PaymentStatusEnum.PENDING,
+      },
+      updateData: { $set: { status: PaymentStatusEnum.EXPIRED } },
+    });
+
+    if (expired) {
+      this.logger.log(
+        `Expired unpaid payment ${String(expired._id)} — order group ${String(orderGroupId)} was cancelled before payment`,
+      );
+    }
+
+    return expired !== null;
+  }
+
+  /**
    * Atomically reserves refund headroom BEFORE any gateway call.
    *
    * A single-document conditional $inc is atomic in MongoDB on its own, with

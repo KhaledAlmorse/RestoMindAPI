@@ -1086,6 +1086,13 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       // Nothing was ever paid — there is nothing to refund, and the refund
       // policy treats these statuses as terminal (would throw). Cancel
       // directly, exactly as before.
+      //
+      // Close the payment window FIRST. The customer's Paymob tab can still be
+      // open, and a success landing between these two writes would otherwise
+      // find a group that is no longer AWAITING_PAYMENT, do nothing, and leave
+      // us holding his money.
+      await this.paymentsService.expirePendingOrderPayment(group._id);
+
       for (const childOrder of childOrders) {
         if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
 
