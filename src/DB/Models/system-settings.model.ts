@@ -47,6 +47,18 @@ export class SystemSettings {
    */
   @Prop({ type: Number, required: true, default: 33.3333, min: 0, max: 100 })
   earlyBirdDiscountPercent!: number;
+
+  /**
+   * Marketplace commission applied to a restaurant that has no commissionRate
+   * of its own. A fraction (0.05 === 5%), the same unit as
+   * Restaurant.commissionRate and Order.commissionRate, so no conversion ever
+   * happens between the three — every percent lives in the UI layer only.
+   *
+   * Changing it affects orders created afterwards, never existing ones: each
+   * Order snapshots the rate it was sold under.
+   */
+  @Prop({ type: Number, required: true, default: 0.05, min: 0, max: 1 })
+  defaultCommissionRate!: number;
 }
 
 const SystemSettingsSchema = SchemaFactory.createForClass(SystemSettings);

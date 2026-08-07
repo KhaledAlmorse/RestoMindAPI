@@ -156,6 +156,23 @@ export class PayoutsService {
   }
 
   /**
+   * Settlements already recorded for one merchant, newest first.
+   *
+   * The statement only ever shows what is still owed, so without this a
+   * merchant has no way to see the money that already reached them — the
+   * commonest support question there is.
+   */
+  async getHistory(restaurantId: string) {
+    const payouts =
+      (await this.payoutRepository.findMany({ filters: { restaurantId } })) ??
+      [];
+
+    return payouts.sort(
+      (a, b) => b.periodEnd.getTime() - a.periodEnd.getTime(),
+    );
+  }
+
+  /**
    * Records that a settlement is being made. Creates the row PENDING; the money
    * is confirmed separately by completePayout, because a bank transfer can
    * bounce and only a landed transfer may advance the paid-through mark.

@@ -34,4 +34,11 @@ export class UpdateSystemSettingsDto {
   @Min(0)
   @Max(100)
   earlyBirdDiscountPercent?: number;
+
+  /** A fraction, not a percent: 0.05 is 5%. Matches the Restaurant field. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  defaultCommissionRate?: number;
 }

@@ -40,6 +40,7 @@ export class SystemSettingsService {
       earlyBirdEnabled: settings.earlyBirdEnabled,
       earlyBirdCap: settings.earlyBirdCap,
       earlyBirdDiscountPercent: settings.earlyBirdDiscountPercent,
+      defaultCommissionRate: settings.defaultCommissionRate,
       earlyBirdClaimed,
       earlyBirdSeatsLeft: Math.max(0, settings.earlyBirdCap - earlyBirdClaimed),
     };

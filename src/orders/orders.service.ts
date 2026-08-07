@@ -49,6 +49,7 @@ import {
   commissionCentsFor,
   commissionRateFor,
 } from 'src/payouts/payout.config';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 
 @Injectable()
 export class OrdersService implements OnModuleInit, PaymentFulfiller {
@@ -69,6 +70,7 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     private readonly stockTransactionRepository: StockTransactionRepository,
     private readonly offersService: OffersService,
     private readonly paymentsService: PaymentsService,
+    private readonly systemSettingsService: SystemSettingsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -718,6 +720,12 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       restaurantGroups.get(restId)!.push(entry);
     }
 
+    // Read once for the whole checkout, before the transaction: every order in
+    // one basket must be priced under the same platform default, and an admin
+    // saving a new rate mid-loop must not split the group across two rates.
+    const platformCommissionRate = (await this.systemSettingsService.get())
+      .defaultCommissionRate;
+
     const groupOrderId = new Types.ObjectId();
     const createdOrderIds: Types.ObjectId[] = [];
     let groupTotalOriginalPrice = 0;
@@ -818,7 +826,10 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
         const totalDiscount = totalOriginalPrice - finalTotalPrice;
 
         // Commission is snapshotted per order, at the rate in force right now.
-        const commissionRate = commissionRateFor(entries[0].restaurant ?? {});
+        const commissionRate = commissionRateFor(
+          entries[0].restaurant ?? {},
+          platformCommissionRate,
+        );
         const commissionCents = commissionCentsFor(
           Math.round(finalTotalPrice * 100),
           commissionRate,

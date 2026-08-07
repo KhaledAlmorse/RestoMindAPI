@@ -16,13 +16,27 @@ export const PAYOUT_HOLD_DAYS = 7;
 /** Below this, the statement carries forward rather than triggering a transfer. */
 export const MIN_PAYOUT_CENTS = 5_000; // 50 EGP
 
-/** Applied when a Restaurant has no commissionRate of its own. */
+/**
+ * Fallback when a Restaurant has no commissionRate AND no platform default was
+ * passed. The live default is SystemSettings.defaultCommissionRate, editable by
+ * an admin; this constant only covers callers with no database at hand (the
+ * backfill script, tests) and the schema default it mirrors.
+ */
 export const DEFAULT_COMMISSION_RATE = 0.05;
 
-export function commissionRateFor(restaurant: {
-  commissionRate?: number;
-}): number {
-  return restaurant.commissionRate ?? DEFAULT_COMMISSION_RATE;
+/**
+ * Fractions throughout — 0.05 is 5%. Restaurant, SystemSettings and Order all
+ * store the same unit, so nothing here ever converts; percent exists only in
+ * the UI.
+ *
+ * `?? `, not `||`: a deliberately negotiated 0% commission must survive, and
+ * `||` would silently replace it with the default.
+ */
+export function commissionRateFor(
+  restaurant: { commissionRate?: number },
+  platformDefault: number = DEFAULT_COMMISSION_RATE,
+): number {
+  return restaurant.commissionRate ?? platformDefault;
 }
 
 /**

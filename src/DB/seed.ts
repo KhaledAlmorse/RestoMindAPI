@@ -1,8 +1,75 @@
+import 'reflect-metadata';
 import mongoose, { Types } from 'mongoose';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import slugify from 'slugify';
 import * as bcrypt from 'bcrypt';
+import { SchemaFactory } from '@nestjs/mongoose';
+
+import {
+  User,
+  Otp,
+  RevokedToken,
+  Category,
+  Product,
+  Favorite,
+  Cart,
+  Order,
+  OrderGroup,
+  Restaurant,
+  Offer,
+  Ingredient,
+  Recipe,
+  SalesTransaction,
+  InventoryBatch,
+  StockTransaction,
+  WasteEvent,
+  Supplier,
+  PurchaseOrder,
+  ImportJob,
+  DailyProductionPlan,
+  Prediction,
+  WasteReport,
+  Recommendation,
+  PartnershipApplication,
+  Payment,
+  Refund,
+  Payout,
+  MerchantAdjustment,
+} from './Models';
+
+import {
+  RolesEnum,
+  GenderEnum,
+  OtpTypeEnum,
+  OfferStatusEnum,
+  OfferSourceEnum,
+  OfferDiscountTypeEnum,
+  IngredientUnitEnum,
+  SalesSourceEnum,
+  OrderStatusEnum,
+  StockTransactionTypeEnum,
+  WasteReasonEnum,
+  PurchaseOrderStatusEnum,
+  PurchaseOrderSourceEnum,
+  ImportTypeEnum,
+  ImportJobStatusEnum,
+  ConfidenceLevelEnum,
+  PredictionSourceEnum,
+  ProductionPlanSourceEnum,
+  RiskLevelEnum,
+  RecommendationTypeEnum,
+  RecommendationStatusEnum,
+  BusinessTypeEnum,
+  PartnershipApplicationStatusEnum,
+  PaymentPurposeEnum,
+  PaymentStatusEnum,
+  PaymentMethodEnum,
+  RefundStatusEnum,
+  RefundSettlementModeEnum,
+  PayoutDirectionEnum,
+  PayoutStatusEnum,
+} from '../Common/Types';
 
 // Load environment variables from .env
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -12,672 +79,41 @@ const DB_URL =
   process.env.DB_URL_alt ||
   'mongodb://localhost:27017/Ecommerce_Api_Nestjs';
 
-// ─── 1. Category Schema ────────────────────────────────────────────────────────
-const CategorySchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true, unique: true },
-    description: { type: String, required: true },
-    image: {
-      type: {
-        public_id: { type: String, required: true },
-        secure_url: { type: String, required: true },
-      },
-      _id: false,
-      required: true,
-    },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
+function getModel<T>(cls: any): mongoose.Model<T> {
+  const schema = SchemaFactory.createForClass(cls);
+  return (mongoose.models[cls.name] || mongoose.model(cls.name, schema)) as mongoose.Model<T>;
+}
 
-// ─── 2. User Address & User Schema ──────────────────────────────────────────────
-const UserAddressSchema = new mongoose.Schema(
-  {
-    label: { type: String },
-    fullName: { type: String, required: true },
-    phoneNumber: { type: String, required: true },
-    street: { type: String, required: true },
-    city: { type: String, required: true },
-    country: { type: String },
-    isDefault: { type: Boolean, default: false },
-  },
-  { _id: true },
-);
-
-const UserSchema = new mongoose.Schema(
-  {
-    firstName: { type: String, required: true, minlength: 3, maxlength: 20 },
-    lastName: { type: String, required: true, minlength: 3, maxlength: 20 },
-    email: { type: String, required: true, lowercase: true, index: { name: 'unique_email_idx', unique: true } },
-    password: { type: String, required: true, minlength: 6 },
-    role: {
-      type: String,
-      enum: ['admin', 'manager', 'staff', 'customer'],
-      default: 'customer',
-    },
-    gender: { type: String, enum: ['male', 'female'] },
-    phone: { type: String, required: true, unique: true },
-    isEmailVerified: { type: Boolean, default: false },
-    DOB: { type: Date },
-    passwordChangedAt: { type: Date },
-    isDeleted: { type: Boolean, default: false },
-    image: {
-      type: {
-        public_id: { type: String, required: true },
-        secure_url: { type: String, required: true },
-      },
-      _id: false,
-      required: false,
-    },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant' },
-    isActive: { type: Boolean, default: true },
-    employeeCode: { type: String },
-    department: { type: String },
-    hireDate: { type: Date },
-    employmentStatus: { type: String, enum: ['active', 'inactive', 'terminated'], default: 'active' },
-    notes: { type: String },
-    addresses: { type: [UserAddressSchema], default: [] },
-  },
-  { timestamps: true },
-);
-
-// ─── 3. Restaurant Schema ──────────────────────────────────────────────────────
-const RestaurantSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true },
-    ownerUserId: { type: Types.ObjectId, ref: 'User', required: false, default: null },
-    description: { type: String },
-    image: {
-      type: {
-        public_id: { type: String, required: true },
-        secure_url: { type: String, required: true },
-      },
-      _id: false,
-      required: false,
-    },
-    phone: { type: String },
-    address: {
-      street: { type: String },
-      city: { type: String },
-      district: { type: String },
-      country: { type: String },
-    },
-    isActive: { type: Boolean, default: true },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date },
-  },
-  { timestamps: true },
-);
-RestaurantSchema.index(
-  { ownerUserId: 1 },
-  { unique: true, partialFilterExpression: { isDeleted: false } },
-);
-RestaurantSchema.index(
-  { name: 1 },
-  { unique: true, partialFilterExpression: { isDeleted: false } },
-);
-
-// ─── 4. Product Schema ──────────────────────────────────────────────────────────
-const ProductSchema = new mongoose.Schema(
-  {
-    title: { type: String, required: true },
-    slug: { type: String, required: true, unique: true, index: true },
-    description: { type: String, required: true },
-    longDescription: { type: String, required: true },
-    price: { type: Number, required: true, min: 0 },
-    rating: { type: Number, default: 0, min: 0, max: 5 },
-    reviewsCount: { type: Number, default: 0 },
-    isBestseller: { type: Boolean, default: false },
-    isAvailable: { type: Boolean, default: true },
-    image: {
-      type: {
-        public_id: { type: String, required: true },
-        secure_url: { type: String, required: true },
-      },
-      _id: false,
-      required: true,
-    },
-    category: { type: Types.ObjectId, ref: 'Category', required: true },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    freshnessWindow: { type: Number, required: true },
-    expectedDailySales: { type: Number, default: null, min: 0 },
-    tags: { type: [String], default: [] },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-ProductSchema.index({ restaurantId: 1, title: 1 }, { unique: true });
-
-// ─── 5. Cart Schema ─────────────────────────────────────────────────────────────
-const CartItemSchema = new mongoose.Schema(
-  {
-    offerId: { type: Types.ObjectId, ref: 'Offer', required: true },
-    quantity: { type: Number, required: true, min: 1, default: 1 },
-  },
-  { _id: false },
-);
-
-const CartSchema = new mongoose.Schema(
-  {
-    userId: { type: Types.ObjectId, ref: 'User', required: true, unique: true },
-    items: { type: [CartItemSchema], default: [] },
-  },
-  { timestamps: true },
-);
-
-// ─── 6. Offer Schema ────────────────────────────────────────────────────────────
-const OfferSchema = new mongoose.Schema(
-  {
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    originalPrice: { type: Number, required: true },
-    offerPrice: { type: Number, required: true },
-    discountPercentage: { type: Number, required: true, min: 1, max: 100 },
-    discountType: { type: String, enum: ['percentage', 'fixed'], default: 'percentage' },
-    availableQuantity: { type: Number, required: true, min: 1 },
-    remainingQuantity: { type: Number, required: true, min: 0 },
-    maxPerCustomer: { type: Number, default: null },
-    startDate: { type: Date, required: true },
-    endDate: { type: Date, required: true },
-    status: { type: String, enum: ['draft', 'scheduled', 'active', 'expired', 'cancelled', 'sold_out'], required: true },
-    source: { type: String, enum: ['manual', 'ai_recommendation'], required: true },
-    recommendationId: { type: Types.ObjectId, ref: 'Recommendation', default: null },
-    featured: { type: Boolean, default: false },
-    estimatedWasteReduction: { type: Number, default: null },
-    estimatedRevenueRecovery: { type: Number, default: null },
-    actualUnitsSold: { type: Number, default: null },
-    actualRevenueRecovered: { type: Number, default: null },
-    createdBy: { type: Types.ObjectId, ref: 'User', required: true },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-OfferSchema.index({ productId: 1, status: 1 });
-OfferSchema.index({ restaurantId: 1, status: 1 });
-
-// ─── 7. Favorite Schema ─────────────────────────────────────────────────────────
-const FavoriteSchema = new mongoose.Schema(
-  {
-    userId: { type: Types.ObjectId, ref: 'User', required: true },
-    offerId: { type: Types.ObjectId, ref: 'Offer', required: true },
-  },
-  { timestamps: true },
-);
-FavoriteSchema.index({ userId: 1, offerId: 1 }, { unique: true });
-
-// ─── 8. Order & OrderGroup Schema ───────────────────────────────────────────────
-const OrderItemSchema = new mongoose.Schema(
-  {
-    offerId: { type: Types.ObjectId, ref: 'Offer', required: true },
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    productTitle: { type: String, required: true },
-    productImage: { type: String },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    restaurantName: { type: String, required: true },
-    originalPrice: { type: Number, required: true },
-    offerPrice: { type: Number, required: true },
-    discountPercentage: { type: Number, required: true },
-    quantity: { type: Number, required: true, min: 1 },
-    purchasedAt: { type: Date, required: true, default: Date.now },
-    lineTotal: { type: Number, required: true },
-  },
-  { _id: false },
-);
-
-const OrderSchema = new mongoose.Schema(
-  {
-    groupOrderId: { type: Types.ObjectId, ref: 'OrderGroup' },
-    userId: { type: Types.ObjectId, ref: 'User', required: true },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    items: { type: [OrderItemSchema], required: true },
-    totalOriginalPrice: { type: Number, required: true },
-    totalDiscount: { type: Number, required: true },
-    finalTotalPrice: { type: Number, required: true },
-    totalQuantity: { type: Number, required: true },
-    fullName: { type: String, required: true },
-    phoneNumber: { type: String, required: true },
-    emailAddress: { type: String, required: true },
-    deliveryMethod: { type: String, enum: ['Home Delivery', 'Store Pickup'], required: true },
-    deliveryAddress: {
-      type: {
-        addressId: { type: String },
-        street: { type: String, required: true },
-        city: { type: String, required: true },
-        country: { type: String, required: true },
-      },
-      _id: false,
-      required: false,
-    },
-    specialNotes: { type: String },
-    paymentMethod: { type: String, enum: ['Cash on Delivery'], required: true, default: 'Cash on Delivery' },
-    status: {
-      type: String,
-      enum: ['Pending', 'Confirmed', 'Preparing', 'Ready', 'Out For Delivery', 'Delivered', 'Cancelled'],
-      required: true,
-      default: 'Pending',
-    },
-  },
-  { timestamps: true },
-);
-
-const OrderGroupSchema = new mongoose.Schema(
-  {
-    userId: { type: Types.ObjectId, ref: 'User', required: true },
-    orderIds: { type: [Types.ObjectId], ref: 'Order', required: true },
-    fullName: { type: String, required: true },
-    phoneNumber: { type: String, required: true },
-    emailAddress: { type: String, required: true },
-    deliveryMethod: { type: String, enum: ['Home Delivery', 'Store Pickup'], required: true },
-    deliveryAddress: {
-      type: {
-        addressId: { type: String },
-        street: { type: String, required: true },
-        city: { type: String, required: true },
-        country: { type: String, required: true },
-      },
-      _id: false,
-      required: false,
-    },
-    specialNotes: { type: String },
-    paymentMethod: { type: String, enum: ['Cash on Delivery'], required: true, default: 'Cash on Delivery' },
-    totalOriginalPrice: { type: Number, required: true },
-    totalDiscount: { type: Number, required: true },
-    finalTotalPrice: { type: Number, required: true },
-    totalQuantity: { type: Number, required: true },
-    overallStatus: { type: String, default: 'Pending' },
-  },
-  { timestamps: true },
-);
-
-// ─── 9. Ingredient & Recipe Schema ──────────────────────────────────────────────
-const RecipeIngredientSchema = new mongoose.Schema(
-  {
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    quantityPerPortion: { type: Number, required: true, min: 0 },
-    unit: { type: String, enum: ['kg', 'liter', 'piece'], required: true },
-    yieldPercentage: { type: Number, default: 100, min: 0, max: 100 },
-  },
-  { _id: false },
-);
-
-const IngredientSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    ingredientCode: { type: String, required: true, trim: true },
-    name: { type: String, required: true, trim: true },
-    unit: { type: String, enum: ['kg', 'liter', 'piece'], required: true },
-    shelfLifeDays: { type: Number, required: true, min: 0 },
-    minimumStock: { type: Number, default: 0, min: 0 },
-    safetyStock: { type: Number, default: 0, min: 0 },
-    supplierId: { type: Types.ObjectId, ref: 'Supplier', default: null },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-const RecipeSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    ingredients: { type: [RecipeIngredientSchema], required: true, default: [] },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 10. Sales Transaction Schema ────────────────────────────────────────────────
-const SalesTransactionSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    date: { type: Date, required: true, default: Date.now },
-    quantitySold: { type: Number, required: true, min: 1 },
-    basePrice: { type: Number, required: true, min: 0 },
-    sellingPrice: { type: Number, required: true, min: 0 },
-    promotionActive: { type: Boolean, default: false },
-    featured: { type: Boolean, default: false },
-    stockoutMinutes: { type: Number, default: 0, min: 0 },
-    cancelledOrders: { type: Number, default: 0, min: 0 },
-    returnedOrders: { type: Number, default: 0, min: 0 },
-    salesChannel: { type: String, default: 'marketplace' },
-    source: { type: String, enum: ['csv_import', 'marketplace_order', 'pos_sync'], required: true },
-    importJobId: { type: Types.ObjectId, ref: 'ImportJob', default: null },
-    offerId: { type: Types.ObjectId, ref: 'Offer', default: null },
-    orderId: { type: Types.ObjectId, ref: 'Order', default: null },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 11. Supplier Schema ────────────────────────────────────────────────────────
-const SupplierSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    name: { type: String, required: true, trim: true },
-    email: { type: String, default: '', trim: true },
-    phone: { type: String, default: '', trim: true },
-    leadTimeDays: { type: Number, required: true, default: 1, min: 0 },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 12. Inventory Batch Schema ────────────────────────────────────────────────
-const InventoryBatchSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    batchNumber: { type: String, required: true, trim: true },
-    quantityRemaining: { type: Number, required: true, min: 0 },
-    unitCost: { type: Number, required: true, min: 0 },
-    expiryDate: { type: Date, required: true },
-    receivedDate: { type: Date, required: true, default: Date.now },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 13. Stock Transaction Schema ──────────────────────────────────────────────
-const StockTransactionSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    batchId: { type: Types.ObjectId, ref: 'InventoryBatch', default: null },
-    transactionType: {
-      type: String,
-      enum: ['purchase', 'consumption', 'waste', 'adjustment', 'transfer_in', 'transfer_out', 'return_to_supplier'],
-      required: true,
-    },
-    quantity: { type: Number, required: true, min: 0 },
-    unit: { type: String, enum: ['kg', 'liter', 'piece'], required: true },
-    date: { type: Date, required: true, default: Date.now },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 14. Waste Event Schema ─────────────────────────────────────────────────────
-const WasteEventSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    batchId: { type: Types.ObjectId, ref: 'InventoryBatch', default: null },
-    quantity: { type: Number, required: true, min: 0 },
-    unit: { type: String, enum: ['kg', 'liter', 'piece'], required: true },
-    wasteReason: {
-      type: String,
-      enum: ['expired', 'overproduction', 'preparation_loss', 'spoiled', 'customer_return', 'damaged', 'incorrect_order', 'unknown'],
-      required: true,
-    },
-    estimatedCost: { type: Number, required: true, min: 0 },
-    date: { type: Date, required: true, default: Date.now },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 15. Purchase Order Schema ──────────────────────────────────────────────────
-const PurchaseOrderItemSchema = new mongoose.Schema(
-  {
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    quantity: { type: Number, required: true, min: 0 },
-    unit: { type: String, enum: ['kg', 'liter', 'piece'], required: true },
-    unitCost: { type: Number, required: true, min: 0 },
-  },
-  { _id: false },
-);
-
-const PurchaseOrderSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    supplierId: { type: Types.ObjectId, ref: 'Supplier', required: true },
-    items: { type: [PurchaseOrderItemSchema], required: true, default: [] },
-    status: {
-      type: String,
-      enum: ['draft', 'sent', 'received', 'cancelled'],
-      required: true,
-      default: 'draft',
-    },
-    source: { type: String, enum: ['manual', 'ai_forecast'], default: 'manual' },
-    expectedDeliveryDate: { type: Date, default: null },
-    createdBy: { type: Types.ObjectId, ref: 'User', required: true },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date, default: null },
-  },
-  { timestamps: true },
-);
-
-// ─── 16. Import Job Schema ──────────────────────────────────────────────────────
-const ImportJobSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    uploadedBy: { type: Types.ObjectId, ref: 'User', required: true },
-    importType: { type: String, enum: ['sales_history', 'inventory_transactions', 'recipes', 'menu_items', 'ingredients'], required: true },
-    fileName: { type: String, required: true },
-    columnMapping: { type: Object, default: {} },
-    rawRows: { type: [Array], default: [] },
-    status: {
-      type: String,
-      enum: ['processing', 'validated', 'ai_ingest_pending', 'ai_ingest_failed', 'completed', 'failed'],
-      required: true,
-      default: 'processing',
-    },
-    totalRows: { type: Number, default: 0 },
-    validRows: { type: Number, default: 0 },
-    invalidRows: { type: Number, default: 0 },
-    errors: {
-      type: [
-        new mongoose.Schema(
-          {
-            row: { type: Number, required: true },
-            column: { type: String },
-            message: { type: String, required: true },
-          },
-          { _id: false },
-        ),
-      ],
-      default: [],
-    },
-    aiIngestAttempts: { type: Number, default: 0 },
-    aiIngestLastError: { type: String },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 17. Prediction & Production Plan Schemas ────────────────────────────────
-const DailyBreakdownItemSchema = new mongoose.Schema(
-  {
-    date: { type: String, required: true },
-    predictedQuantity: { type: Number, required: true, default: 0 },
-  },
-  { _id: false },
-);
-
-const PredictionSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    modelVersionId: { type: String, required: true },
-    targetWeek: { type: String, required: true },
-    predictedOrders: { type: Number, required: true },
-    confidence: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
-    source: { type: String, enum: ['ai_model', 'fallback_naive'], required: true },
-    featuresUsed: { type: Object, default: {} },
-    factors: { type: Array, default: [] },
-    dailyBreakdown: { type: [DailyBreakdownItemSchema], default: [] },
-    actualOrders: { type: Number, default: null },
-    errorAbs: { type: Number, default: null },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-const ProductionPlanItemSchema = new mongoose.Schema(
-  {
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    recommendedQty: { type: Number, required: true },
-    lowerBound: { type: Number, default: 0 },
-    upperBound: { type: Number, default: 0 },
-    confidence: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
-    source: { type: String, enum: ['ai_model', 'fallback_yesterday'], required: true },
-    factors: { type: Array, default: [] },
-    actualProducedQty: { type: Number, default: null },
-  },
-  { _id: false },
-);
-
-const DailyProductionPlanSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    date: { type: String, required: true },
-    totalRecommendedQty: { type: Number, required: true },
-    items: { type: [ProductionPlanItemSchema], default: [] },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 18. Waste Report Schema ───────────────────────────────────────────────────
-const WasteReportSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    predictionId: { type: Types.ObjectId, ref: 'Prediction', default: null },
-    ingredientId: { type: Types.ObjectId, ref: 'Ingredient', required: true },
-    expectedConsumption: { type: Number, required: true },
-    usableAvailableStock: { type: Number, required: true },
-    expectedSurplus: { type: Number, required: true },
-    riskLevel: { type: String, enum: ['low', 'medium', 'high'], required: true },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 19. Recommendation Schema ────────────────────────────────────────────────
-const RecommendationSchema = new mongoose.Schema(
-  {
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant', required: true },
-    wasteReportId: { type: Types.ObjectId, ref: 'WasteReport', default: null },
-    productId: { type: Types.ObjectId, ref: 'Product', required: true },
-    type: {
-      type: String,
-      enum: ['apply_discount', 'reduce_purchase', 'stop_production', 'transfer_stock'],
-      required: true,
-    },
-    suggestedValue: { type: Number, default: null },
-    targetRestaurantId: { type: Types.ObjectId, ref: 'Restaurant', default: null },
-    gptExplanation: { type: String, default: null },
-    status: {
-      type: String,
-      enum: ['pending', 'approved', 'edited', 'dismissed'],
-      default: 'pending',
-      required: true,
-    },
-    reviewedBy: { type: Types.ObjectId, ref: 'User', default: null },
-    isDeleted: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 20. OTP Schema ──────────────────────────────────────────────────────────
-const OtpSchema = new mongoose.Schema(
-  {
-    otp: { type: String, required: true },
-    userId: { type: Types.ObjectId, ref: 'User', required: true },
-    type: { type: String, enum: ['confirmation', 'reset-password'], required: true },
-    expiresAt: { type: Date, required: true },
-    isUsed: { type: Boolean, default: false },
-  },
-  { timestamps: true },
-);
-
-// ─── 21. Partnership Application Schema ───────────────────────────────────────
-const PartnershipApplicationSchema = new mongoose.Schema(
-  {
-    businessName: { type: String, required: true },
-    businessType: {
-      type: String,
-      enum: ['bakery', 'restaurant', 'cafe', 'patisserie', 'supermarket', 'hotel', 'catering', 'other'],
-      required: true,
-    },
-    description: { type: String },
-    estimatedOrdersPerDay: { type: Number },
-    estimatedWasteKgPerDay: { type: Number },
-    ownerFirstName: { type: String, required: true },
-    ownerLastName: { type: String, required: true },
-    email: { type: String, required: true },
-    phone: { type: String, required: true },
-    city: { type: String, required: true },
-    district: { type: String },
-    street: { type: String },
-    website: { type: String },
-    facebookPage: { type: String },
-    instagramPage: { type: String },
-    operatingHours: { type: Object },
-    commercialRegistration: { type: String },
-    taxId: { type: String },
-    notes: { type: String },
-    status: {
-      type: String,
-      enum: ['pending', 'under_review', 'approved', 'rejected'],
-      default: 'pending',
-    },
-    rejectionReason: { type: String },
-    reviewedBy: { type: Types.ObjectId, ref: 'User' },
-    approvedBy: { type: Types.ObjectId, ref: 'User' },
-    approvedAt: { type: Date },
-    userId: { type: Types.ObjectId, ref: 'User' },
-    restaurantId: { type: Types.ObjectId, ref: 'Restaurant' },
-    isDeleted: { type: Boolean, default: false },
-    deletedAt: { type: Date },
-  },
-  { timestamps: true },
-);
-PartnershipApplicationSchema.index({ email: 1, status: 1 });
-PartnershipApplicationSchema.index({ status: 1, createdAt: -1 });
-
-// ─── 22. Revoked Token Schema ──────────────────────────────────────────────────
-const RevokedTokenSchema = new mongoose.Schema(
-  {
-    tokenId: { type: String, required: true },
-    userId: { type: Types.ObjectId, ref: 'User', required: true },
-    expiryTime: { type: Date, required: true },
-  },
-  { timestamps: true },
-);
-
-// ─── Register Models ──────────────────────────────────────────────────────────
-const OtpModel = mongoose.models.Otp || mongoose.model('Otp', OtpSchema);
-const UserModel = mongoose.models.User || mongoose.model('User', UserSchema);
-const RestaurantModel = mongoose.models.Restaurant || mongoose.model('Restaurant', RestaurantSchema);
-const CategoryModel = mongoose.models.Category || mongoose.model('Category', CategorySchema);
-const ProductModel = mongoose.models.Product || mongoose.model('Product', ProductSchema);
-const CartModel = mongoose.models.Cart || mongoose.model('Cart', CartSchema);
-const OfferModel = mongoose.models.Offer || mongoose.model('Offer', OfferSchema);
-const FavoriteModel = mongoose.models.Favorite || mongoose.model('Favorite', FavoriteSchema);
-const IngredientModel = mongoose.models.Ingredient || mongoose.model('Ingredient', IngredientSchema);
-const RecipeModel = mongoose.models.Recipe || mongoose.model('Recipe', RecipeSchema);
-const SalesTransactionModel = mongoose.models.SalesTransaction || mongoose.model('SalesTransaction', SalesTransactionSchema);
-const OrderModel = mongoose.models.Order || mongoose.model('Order', OrderSchema);
-const OrderGroupModel = mongoose.models.OrderGroup || mongoose.model('OrderGroup', OrderGroupSchema);
-const SupplierModel = mongoose.models.Supplier || mongoose.model('Supplier', SupplierSchema);
-const InventoryBatchModel = mongoose.models.InventoryBatch || mongoose.model('InventoryBatch', InventoryBatchSchema);
-const StockTransactionModel = mongoose.models.StockTransaction || mongoose.model('StockTransaction', StockTransactionSchema);
-const WasteEventModel = mongoose.models.WasteEvent || mongoose.model('WasteEvent', WasteEventSchema);
-const PurchaseOrderModel = mongoose.models.PurchaseOrder || mongoose.model('PurchaseOrder', PurchaseOrderSchema);
-const ImportJobModel = mongoose.models.ImportJob || mongoose.model('ImportJob', ImportJobSchema);
-const PredictionModel = mongoose.models.Prediction || mongoose.model('Prediction', PredictionSchema);
-const DailyProductionPlanModel = mongoose.models.DailyProductionPlan || mongoose.model('DailyProductionPlan', DailyProductionPlanSchema);
-const WasteReportModel = mongoose.models.WasteReport || mongoose.model('WasteReport', WasteReportSchema);
-const RecommendationModel = mongoose.models.Recommendation || mongoose.model('Recommendation', RecommendationSchema);
-const PartnershipApplicationModel = mongoose.models.PartnershipApplication || mongoose.model('PartnershipApplication', PartnershipApplicationSchema);
-const RevokeTokenModel = mongoose.models.RevokedToken || mongoose.model('RevokedToken', RevokedTokenSchema);
+// ─── Register Mongoose Models from App Schema Classes ──────────────────────
+const OtpModel = getModel<any>(Otp);
+const UserModel = getModel<any>(User);
+const RestaurantModel = getModel<any>(Restaurant);
+const CategoryModel = getModel<any>(Category);
+const ProductModel = getModel<any>(Product);
+const CartModel = getModel<any>(Cart);
+const OfferModel = getModel<any>(Offer);
+const FavoriteModel = getModel<any>(Favorite);
+const IngredientModel = getModel<any>(Ingredient);
+const RecipeModel = getModel<any>(Recipe);
+const SalesTransactionModel = getModel<any>(SalesTransaction);
+const OrderModel = getModel<any>(Order);
+const OrderGroupModel = getModel<any>(OrderGroup);
+const SupplierModel = getModel<any>(Supplier);
+const InventoryBatchModel = getModel<any>(InventoryBatch);
+const StockTransactionModel = getModel<any>(StockTransaction);
+const WasteEventModel = getModel<any>(WasteEvent);
+const PurchaseOrderModel = getModel<any>(PurchaseOrder);
+const ImportJobModel = getModel<any>(ImportJob);
+const PredictionModel = getModel<any>(Prediction);
+const DailyProductionPlanModel = getModel<any>(DailyProductionPlan);
+const WasteReportModel = getModel<any>(WasteReport);
+const RecommendationModel = getModel<any>(Recommendation);
+const PartnershipApplicationModel = getModel<any>(PartnershipApplication);
+const RevokeTokenModel = getModel<any>(RevokedToken);
+const PaymentModel = getModel<any>(Payment);
+const RefundModel = getModel<any>(Refund);
+const PayoutModel = getModel<any>(Payout);
+const MerchantAdjustmentModel = getModel<any>(MerchantAdjustment);
 
 const extraCategoryNames = [
   { name: 'Cakes', desc: 'Layered celebration cakes, cheesecakes, and decadent chocolate gateaux.', img: 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=800&q=80' },
@@ -775,6 +211,10 @@ async function seed() {
     console.log('✅ Connected to MongoDB successfully.');
 
     console.log('🧹 Clearing existing data...');
+    await MerchantAdjustmentModel.deleteMany({});
+    await PayoutModel.deleteMany({});
+    await RefundModel.deleteMany({});
+    await PaymentModel.deleteMany({});
     await PartnershipApplicationModel.deleteMany({});
     await RevokeTokenModel.deleteMany({});
     await OtpModel.deleteMany({});
@@ -810,8 +250,8 @@ async function seed() {
       lastName: 'Admin',
       email: 'admin@restomind.com',
       password: hashedPassword,
-      role: 'admin',
-      gender: 'male',
+      role: RolesEnum.ADMIN,
+      gender: GenderEnum.MALE,
       phone: '+201000000000',
       isEmailVerified: true,
       DOB: new Date('1990-01-01'),
@@ -824,8 +264,8 @@ async function seed() {
       lastName: 'Ahmed',
       email: 'sara@example.com',
       password: customerHashedPassword,
-      role: 'customer',
-      gender: 'female',
+      role: RolesEnum.CUSTOMER,
+      gender: GenderEnum.FEMALE,
       phone: '+201000000002',
       isEmailVerified: true,
       DOB: new Date('1995-06-15'),
@@ -838,8 +278,8 @@ async function seed() {
       lastName: 'Khaled',
       email: 'manager@restomind.com',
       password: managerHashedPassword,
-      role: 'manager',
-      gender: 'male',
+      role: RolesEnum.MANAGER,
+      gender: GenderEnum.MALE,
       phone: '+201000000003',
       isEmailVerified: true,
       DOB: new Date('1988-03-20'),
@@ -857,8 +297,8 @@ async function seed() {
       lastName: 'Mahmoud',
       email: 'staff@restomind.com',
       password: staffHashedPassword,
-      role: 'staff',
-      gender: 'female',
+      role: RolesEnum.STAFF,
+      gender: GenderEnum.FEMALE,
       phone: '+201000000004',
       isEmailVerified: true,
       DOB: new Date('1995-07-10'),
@@ -882,6 +322,18 @@ async function seed() {
       },
       phone: '+201000000001',
       address: { street: '1 Nile Corniche', city: 'Cairo', district: 'Zamalek', country: 'Egypt' },
+      subscription: {
+        tier: 'plus',
+        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      },
+      commissionRate: 0.10,
+      payoutDestination: {
+        method: 'bank',
+        accountName: 'RestoMind Bakery & Cafe Ltd',
+        accountNumber: 'EG1234567890123456789012345',
+        bankName: 'CIB Egypt',
+      },
       isActive: true,
       isDeleted: false,
     });
@@ -906,8 +358,8 @@ async function seed() {
         lastName: u.last,
         email: `${u.first.toLowerCase()}.${u.last.toLowerCase()}@example.com`,
         password: bcrypt.hashSync('User@123', 10),
-        role: i % 4 === 0 ? 'manager' : i % 5 === 0 ? 'staff' : 'customer',
-        gender: i % 2 === 0 ? 'male' : 'female',
+        role: i % 4 === 0 ? RolesEnum.MANAGER : i % 5 === 0 ? RolesEnum.STAFF : RolesEnum.CUSTOMER,
+        gender: i % 2 === 0 ? GenderEnum.MALE : GenderEnum.FEMALE,
         phone: `+20101${String(10000000 + i).slice(0, 8)}`,
         isEmailVerified: true,
         DOB: new Date(1985 + (i % 20), i % 12, (i % 28) + 1),
@@ -946,6 +398,18 @@ async function seed() {
       },
       phone: `+20102${String(20000000 + i).slice(0, 8)}`,
       address: { street: `${i + 1} Main St`, city: 'Cairo', district: 'Central', country: 'Egypt' },
+      subscription: {
+        tier: i % 2 === 0 ? 'scale' : 'plus',
+        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+      commissionRate: 0.10,
+      payoutDestination: {
+        method: 'bank',
+        accountName: `${n} Account`,
+        accountNumber: `EG${String(900000000000000000000000 + i)}`,
+        bankName: 'National Bank of Egypt',
+      },
       isActive: true,
       isDeleted: false,
     }));
@@ -955,8 +419,20 @@ async function seed() {
 
     // Store restaurant lookup list
     const allRestaurants = [
-      { _id: restaurant._id, name: restaurant.name, ownerUserId: adminUser._id },
-      ...insertedRests.map((r) => ({ _id: r._id, name: r.name, ownerUserId: r.ownerUserId })),
+      {
+        _id: restaurant._id,
+        name: restaurant.name,
+        ownerUserId: adminUser._id,
+        // Carried through so seeded orders can snapshot the same rate the
+        // application would have applied at checkout.
+        commissionRate: restaurant.commissionRate as number | undefined,
+      },
+      ...insertedRests.map((r) => ({
+        _id: r._id,
+        name: r.name,
+        ownerUserId: r.ownerUserId,
+        commissionRate: r.commissionRate as number | undefined,
+      })),
     ];
 
     // Link managerUser to default restaurant
@@ -1147,7 +623,6 @@ async function seed() {
       { title: 'Egyptian Biryani Rice', cat: 'Rice Dishes', price: 90, img: 'https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=800&q=80' },
     ];
 
-    // Seed 3-4 products for EVERY restaurant (including extra restaurants)
     for (let rIdx = 0; rIdx < allRestaurants.length; rIdx++) {
       const rest = allRestaurants[rIdx];
       const itemsToPick = [
@@ -1187,31 +662,31 @@ async function seed() {
     // ─── 7. Seed Ingredients (Total Ingredients >= 25) ───────────────────────────
     console.log('🥕 Seeding ingredients...');
     const ingredientDefs = [
-      { name: 'All-Purpose Flour', code: 'ING-FLR-001', unit: 'kg', shelfLifeDays: 180, minStock: 50, safetyStock: 20 },
-      { name: 'Unsalted Butter', code: 'ING-BTR-001', unit: 'kg', shelfLifeDays: 30, minStock: 20, safetyStock: 10 },
-      { name: 'Fresh Eggs', code: 'ING-EGG-001', unit: 'piece', shelfLifeDays: 14, minStock: 100, safetyStock: 40 },
-      { name: 'Whole Milk', code: 'ING-MLK-001', unit: 'liter', shelfLifeDays: 7, minStock: 30, safetyStock: 15 },
-      { name: 'Granulated Sugar', code: 'ING-SUG-001', unit: 'kg', shelfLifeDays: 365, minStock: 40, safetyStock: 15 },
-      { name: 'Active Dry Yeast', code: 'ING-YST-001', unit: 'kg', shelfLifeDays: 365, minStock: 5, safetyStock: 2 },
-      { name: 'Fine Sea Salt', code: 'ING-SLT-001', unit: 'kg', shelfLifeDays: 730, minStock: 10, safetyStock: 5 },
-      { name: 'Dark Chocolate 70%', code: 'ING-CHO-001', unit: 'kg', shelfLifeDays: 180, minStock: 15, safetyStock: 5 },
-      { name: 'Extra Virgin Olive Oil', code: 'ING-OIL-001', unit: 'liter', shelfLifeDays: 365, minStock: 20, safetyStock: 8 },
-      { name: 'Fresh Cream (Eshta)', code: 'ING-CRM-001', unit: 'liter', shelfLifeDays: 5, minStock: 10, safetyStock: 5 },
-      { name: 'Pistachios (Shelled)', code: 'ING-PST-001', unit: 'kg', shelfLifeDays: 120, minStock: 5, safetyStock: 2 },
-      { name: 'Rosewater', code: 'ING-ROS-001', unit: 'liter', shelfLifeDays: 365, minStock: 5, safetyStock: 2 },
-      { name: 'Semolina', code: 'ING-SEM-001', unit: 'kg', shelfLifeDays: 180, minStock: 30, safetyStock: 10 },
-      { name: 'Fava Beans (Dried)', code: 'ING-FVB-001', unit: 'kg', shelfLifeDays: 365, minStock: 25, safetyStock: 10 },
-      { name: 'Fresh Tomatoes', code: 'ING-TMT-001', unit: 'kg', shelfLifeDays: 7, minStock: 20, safetyStock: 8 },
-      { name: 'Arabica Coffee Beans', code: 'ING-COF-001', unit: 'kg', shelfLifeDays: 90, minStock: 5, safetyStock: 2 },
-      { name: 'Condensed Milk', code: 'ING-CNM-001', unit: 'liter', shelfLifeDays: 365, minStock: 10, safetyStock: 4 },
-      { name: 'Mascarpone Cheese', code: 'ING-MAS-001', unit: 'kg', shelfLifeDays: 14, minStock: 10, safetyStock: 4 },
-      { name: 'Ladyfinger Biscuits', code: 'ING-LAD-001', unit: 'kg', shelfLifeDays: 60, minStock: 8, safetyStock: 3 },
-      { name: 'Avocados', code: 'ING-AVO-001', unit: 'piece', shelfLifeDays: 5, minStock: 30, safetyStock: 10 },
-      { name: 'Mozzarella Cheese', code: 'ING-MOZ-001', unit: 'kg', shelfLifeDays: 20, minStock: 15, safetyStock: 5 },
-      { name: 'Blueberries (Fresh)', code: 'ING-BLU-001', unit: 'kg', shelfLifeDays: 7, minStock: 10, safetyStock: 3 },
-      { name: 'Pure Maple Syrup', code: 'ING-MAP-001', unit: 'liter', shelfLifeDays: 180, minStock: 8, safetyStock: 2 },
-      { name: 'Romaine Lettuce', code: 'ING-LET-001', unit: 'kg', shelfLifeDays: 5, minStock: 15, safetyStock: 5 },
-      { name: 'Red Lentils', code: 'ING-LNT-001', unit: 'kg', shelfLifeDays: 365, minStock: 25, safetyStock: 10 },
+      { name: 'All-Purpose Flour', code: 'ING-FLR-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 180, minStock: 50, safetyStock: 20 },
+      { name: 'Unsalted Butter', code: 'ING-BTR-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 30, minStock: 20, safetyStock: 10 },
+      { name: 'Fresh Eggs', code: 'ING-EGG-001', unit: IngredientUnitEnum.PIECE, shelfLifeDays: 14, minStock: 100, safetyStock: 40 },
+      { name: 'Whole Milk', code: 'ING-MLK-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 7, minStock: 30, safetyStock: 15 },
+      { name: 'Granulated Sugar', code: 'ING-SUG-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 365, minStock: 40, safetyStock: 15 },
+      { name: 'Active Dry Yeast', code: 'ING-YST-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 365, minStock: 5, safetyStock: 2 },
+      { name: 'Fine Sea Salt', code: 'ING-SLT-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 730, minStock: 10, safetyStock: 5 },
+      { name: 'Dark Chocolate 70%', code: 'ING-CHO-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 180, minStock: 15, safetyStock: 5 },
+      { name: 'Extra Virgin Olive Oil', code: 'ING-OIL-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 365, minStock: 20, safetyStock: 8 },
+      { name: 'Fresh Cream (Eshta)', code: 'ING-CRM-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 5, minStock: 10, safetyStock: 5 },
+      { name: 'Pistachios (Shelled)', code: 'ING-PST-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 120, minStock: 5, safetyStock: 2 },
+      { name: 'Rosewater', code: 'ING-ROS-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 365, minStock: 5, safetyStock: 2 },
+      { name: 'Semolina', code: 'ING-SEM-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 180, minStock: 30, safetyStock: 10 },
+      { name: 'Fava Beans (Dried)', code: 'ING-FVB-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 365, minStock: 25, safetyStock: 10 },
+      { name: 'Fresh Tomatoes', code: 'ING-TMT-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 7, minStock: 20, safetyStock: 8 },
+      { name: 'Arabica Coffee Beans', code: 'ING-COF-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 90, minStock: 5, safetyStock: 2 },
+      { name: 'Condensed Milk', code: 'ING-CNM-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 365, minStock: 10, safetyStock: 4 },
+      { name: 'Mascarpone Cheese', code: 'ING-MAS-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 14, minStock: 10, safetyStock: 4 },
+      { name: 'Ladyfinger Biscuits', code: 'ING-LAD-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 60, minStock: 8, safetyStock: 3 },
+      { name: 'Avocados', code: 'ING-AVO-001', unit: IngredientUnitEnum.PIECE, shelfLifeDays: 5, minStock: 30, safetyStock: 10 },
+      { name: 'Mozzarella Cheese', code: 'ING-MOZ-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 20, minStock: 15, safetyStock: 5 },
+      { name: 'Blueberries (Fresh)', code: 'ING-BLU-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 7, minStock: 10, safetyStock: 3 },
+      { name: 'Pure Maple Syrup', code: 'ING-MAP-001', unit: IngredientUnitEnum.LITER, shelfLifeDays: 180, minStock: 8, safetyStock: 2 },
+      { name: 'Romaine Lettuce', code: 'ING-LET-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 5, minStock: 15, safetyStock: 5 },
+      { name: 'Red Lentils', code: 'ING-LNT-001', unit: IngredientUnitEnum.KG, shelfLifeDays: 365, minStock: 25, safetyStock: 10 },
     ];
     const insertedIngredients = await IngredientModel.insertMany(
       ingredientDefs.map((ing) => ({
@@ -1288,7 +763,15 @@ async function seed() {
 
     // ─── 11. Seed Stock Transactions (Total Transactions >= 25) ───────────────────
     console.log('📊 Seeding stock transactions...');
-    const txTypes = ['purchase', 'consumption', 'waste', 'adjustment', 'transfer_in', 'transfer_out', 'return_to_supplier'];
+    const txTypes = [
+      StockTransactionTypeEnum.PURCHASE,
+      StockTransactionTypeEnum.CONSUMPTION,
+      StockTransactionTypeEnum.WASTE,
+      StockTransactionTypeEnum.ADJUSTMENT,
+      StockTransactionTypeEnum.TRANSFER_IN,
+      StockTransactionTypeEnum.TRANSFER_OUT,
+      StockTransactionTypeEnum.RETURN_TO_SUPPLIER,
+    ];
     const stockTxData = insertedIngredients.map((ing, i) => ({
       restaurantId: ing.restaurantId,
       ingredientId: ing._id,
@@ -1304,7 +787,16 @@ async function seed() {
 
     // ─── 12. Seed Waste Events (Total Waste Events >= 20) ─────────────────────────
     console.log('🗑️ Seeding waste events...');
-    const wasteReasons = ['expired', 'overproduction', 'preparation_loss', 'spoiled', 'customer_return', 'damaged', 'incorrect_order', 'unknown'];
+    const wasteReasons = [
+      WasteReasonEnum.EXPIRED,
+      WasteReasonEnum.OVERPRODUCTION,
+      WasteReasonEnum.PREPARATION_LOSS,
+      WasteReasonEnum.SPOILED,
+      WasteReasonEnum.CUSTOMER_RETURN,
+      WasteReasonEnum.DAMAGED,
+      WasteReasonEnum.INCORRECT_ORDER,
+      WasteReasonEnum.UNKNOWN,
+    ];
     const wasteData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const ing = insertedIngredients[i % insertedIngredients.length];
@@ -1325,7 +817,12 @@ async function seed() {
 
     // ─── 13. Seed Purchase Orders (Total Purchase Orders >= 20) ────────────────────
     console.log('📝 Seeding purchase orders...');
-    const poStatuses = ['draft', 'sent', 'received', 'cancelled'];
+    const poStatuses = [
+      PurchaseOrderStatusEnum.DRAFT,
+      PurchaseOrderStatusEnum.SENT,
+      PurchaseOrderStatusEnum.RECEIVED,
+      PurchaseOrderStatusEnum.CANCELLED,
+    ];
     const poData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const sup = insertedSuppliers[i % insertedSuppliers.length];
@@ -1342,7 +839,7 @@ async function seed() {
           },
         ],
         status: poStatuses[i % poStatuses.length],
-        source: i % 2 === 0 ? 'ai_forecast' : 'manual',
+        source: i % 2 === 0 ? PurchaseOrderSourceEnum.AI_FORECAST : PurchaseOrderSourceEnum.MANUAL,
         expectedDeliveryDate: new Date(Date.now() + (i + 1) * 24 * 60 * 60 * 1000),
         createdBy: managerUser._id,
         isDeleted: false,
@@ -1368,21 +865,21 @@ async function seed() {
         const originalPrice = prod.price;
         let offerPrice: number;
         let discountPercentage: number;
-        let discountType: string;
+        let discountType: OfferDiscountTypeEnum;
 
         if (useFixedPrice) {
-          discountType = 'fixed';
+          discountType = OfferDiscountTypeEnum.FIXED;
           offerPrice = Math.max(5, Math.round(originalPrice * 0.7));
           discountPercentage = Math.round((1 - offerPrice / originalPrice) * 100);
         } else {
-          discountType = 'percentage';
+          discountType = OfferDiscountTypeEnum.PERCENTAGE;
           discountPercentage = 15 + ((rIdx + pIdx) % 35);
           offerPrice = Math.max(5, Math.round(originalPrice * (1 - discountPercentage / 100)));
         }
 
         offersData.push({
           productId: prod._id,
-          restaurantId: rest._id, // Strictly connected to the product's restaurant!
+          restaurantId: rest._id,
           originalPrice,
           offerPrice,
           discountPercentage,
@@ -1392,8 +889,8 @@ async function seed() {
           maxPerCustomer: 5,
           startDate: isActive ? new Date() : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
           endDate: isActive ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) : new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-          status: isActive ? 'active' : 'expired',
-          source: globalOfferIndex % 2 === 0 ? 'manual' : 'ai_recommendation',
+          status: isActive ? OfferStatusEnum.ACTIVE : OfferStatusEnum.EXPIRED,
+          source: globalOfferIndex % 2 === 0 ? OfferSourceEnum.MANUAL : OfferSourceEnum.AI_RECOMMENDATION,
           featured: globalOfferIndex % 3 === 0,
           estimatedWasteReduction: 12,
           estimatedRevenueRecovery: 250,
@@ -1434,9 +931,29 @@ async function seed() {
 
     // ─── 17. Seed Orders & OrderGroups (Total Orders >= 25, OrderGroups >= 20) ───
     console.log('📋 Seeding orders & order groups...');
-    const orderStatuses = ['Pending', 'Confirmed', 'Preparing', 'Ready', 'Out For Delivery', 'Delivered', 'Cancelled'];
+    const orderStatuses = [
+      OrderStatusEnum.PENDING,
+      OrderStatusEnum.CONFIRMED,
+      OrderStatusEnum.PREPARING,
+      OrderStatusEnum.READY,
+      OrderStatusEnum.OUT_FOR_DELIVERY,
+      OrderStatusEnum.DELIVERED,
+      OrderStatusEnum.CANCELLED,
+    ];
     const allOrderIds: Types.ObjectId[] = [];
+    const ordersData: any[] = [];
+    const orderGroupsData: any[] = [];
 
+    /**
+     * Orders and groups are built together, one group per order, and the group
+     * id is generated up front so it can be written on BOTH sides.
+     *
+     * The link is not cosmetic. `GET /orders/refunds` scopes a merchant to
+     * `orderGroupId ∈ (their orders' groupOrderId)`, so an order without a
+     * group means a manager sees an empty refunds page while the rows exist —
+     * and payouts read the same link to decide whether a delivered order was
+     * ever paid for.
+     */
     for (let i = 0; i < 25; i++) {
       const off = insertedOffers[i % insertedOffers.length];
       const prod = allProducts.find((p) => p._id.equals(off.productId)) || allProducts[0];
@@ -1444,67 +961,106 @@ async function seed() {
       const qty = 1 + (i % 3);
       const lineTotal = off.offerPrice * qty;
       const isDelivery = i % 2 === 0;
+      const status = orderStatuses[i % orderStatuses.length];
 
-      const order = await OrderModel.create({
+      // Two thirds of the marketplace pays online. Cash-on-delivery orders
+      // carry no gateway payment, so a seed that is 100% COD leaves every
+      // payment and every gateway refund pointing at nothing.
+      const paymentMethod =
+        i % 3 === 0 ? 'Cash on Delivery' : i % 3 === 1 ? 'Card' : 'Wallet';
+
+      // Delivered well outside PAYOUT_HOLD_DAYS (7), so the merchant statement
+      // has payable lines the day the database is seeded rather than a week
+      // later.
+      const placedAt = new Date(Date.now() - (40 - i) * 24 * 60 * 60 * 1000);
+      const deliveredAt =
+        status === OrderStatusEnum.DELIVERED
+          ? new Date(placedAt.getTime() + 2 * 60 * 60 * 1000)
+          : undefined;
+
+      // Snapshot, exactly as orders.service does it: the rate in force now,
+      // stored per order so changing a commission never rewrites history.
+      const commissionRate = rest.commissionRate ?? 0.05;
+      const commissionCents = Math.round(lineTotal * 100 * commissionRate);
+
+      const groupOrderId = new Types.ObjectId();
+      const orderId = new Types.ObjectId();
+      allOrderIds.push(orderId);
+
+      const addressBlock = { street: '12 Nile St', city: 'Cairo', country: 'Egypt' };
+
+      ordersData.push({
+        _id: orderId,
+        groupOrderId,
         userId: customerUser._id,
-        restaurantId: off.restaurantId, // Correctly linked to the offer's restaurant
+        restaurantId: off.restaurantId,
         items: [
           {
             offerId: off._id,
             productId: prod._id,
             productTitle: prod.title,
             productImage: prod.image?.secure_url || '',
-            restaurantId: off.restaurantId, // Correctly linked to the offer's restaurant
-            restaurantName: rest.name, // Correctly linked to the offer's restaurant name
+            restaurantId: off.restaurantId,
+            restaurantName: rest.name,
             originalPrice: off.originalPrice,
             offerPrice: off.offerPrice,
             discountPercentage: off.discountPercentage,
             quantity: qty,
-            purchasedAt: new Date(Date.now() - (25 - i) * 6 * 60 * 60 * 1000),
+            purchasedAt: placedAt,
             lineTotal,
           },
         ],
         totalOriginalPrice: off.originalPrice * qty,
         totalDiscount: (off.originalPrice - off.offerPrice) * qty,
         finalTotalPrice: lineTotal,
+        commissionRate,
+        commissionCents,
         totalQuantity: qty,
         fullName: 'Sara Ahmed',
         phoneNumber: '+201000000002',
         emailAddress: 'sara@example.com',
         deliveryMethod: isDelivery ? 'Home Delivery' : 'Store Pickup',
-        ...(isDelivery ? { deliveryAddress: { street: '12 Nile St', city: 'Cairo', country: 'Egypt' } } : {}),
-        paymentMethod: 'Cash on Delivery',
-        status: orderStatuses[i % orderStatuses.length],
+        ...(isDelivery ? { deliveryAddress: addressBlock } : {}),
+        paymentMethod,
+        status,
+        ...(deliveredAt ? { deliveredAt } : {}),
+        createdAt: placedAt,
       });
-      allOrderIds.push(order._id);
-    }
-    console.log(`✅ Orders seeded: ${allOrderIds.length}`);
 
-    const orderGroupsData: any[] = [];
-    for (let i = 0; i < 20; i++) {
-      const ogOrders = [allOrderIds[i % allOrderIds.length]];
+      // Group totals are the sum of its orders — here, the one order. Made up
+      // figures would put the payout ledger and the group at odds.
       orderGroupsData.push({
+        _id: groupOrderId,
         userId: customerUser._id,
-        orderIds: ogOrders,
+        orderIds: [orderId],
         fullName: 'Sara Ahmed',
         phoneNumber: '+201000000002',
         emailAddress: 'sara@example.com',
-        deliveryMethod: 'Home Delivery',
-        deliveryAddress: { street: '12 Nile St', city: 'Cairo', country: 'Egypt' },
-        paymentMethod: 'Cash on Delivery',
-        totalOriginalPrice: 200 + i * 10,
-        totalDiscount: 20,
-        finalTotalPrice: 180 + i * 10,
-        totalQuantity: 2,
-        overallStatus: 'Pending',
+        deliveryMethod: isDelivery ? 'Home Delivery' : 'Store Pickup',
+        ...(isDelivery ? { deliveryAddress: addressBlock } : {}),
+        paymentMethod,
+        totalOriginalPrice: off.originalPrice * qty,
+        totalDiscount: (off.originalPrice - off.offerPrice) * qty,
+        finalTotalPrice: lineTotal,
+        totalQuantity: qty,
+        overallStatus: status,
+        createdAt: placedAt,
       });
     }
+
+    const insertedOrders = await OrderModel.insertMany(ordersData);
+    console.log(`✅ Orders seeded: ${insertedOrders.length}`);
     const insertedOrderGroups = await OrderGroupModel.insertMany(orderGroupsData);
     console.log(`✅ Order Groups seeded: ${insertedOrderGroups.length}`);
 
+    /** Online groups only — a COD group must never get a gateway payment. */
+    const payableGroups = orderGroupsData.filter(
+      (g) => g.paymentMethod !== 'Cash on Delivery',
+    );
+
     // ─── 18. Seed Sales Transactions (Total Sales Transactions >= 25) ──────────────
     console.log('💰 Seeding sales transactions...');
-    const salesSources = ['csv_import', 'marketplace_order', 'pos_sync'];
+    const salesSources = [SalesSourceEnum.CSV_IMPORT, SalesSourceEnum.MARKETPLACE_ORDER, SalesSourceEnum.POS_SYNC];
     const salesData: any[] = [];
     for (let i = 0; i < 25; i++) {
       const prod = allProducts[i % allProducts.length];
@@ -1538,8 +1094,8 @@ async function seed() {
         modelVersionId: 'v1.2.0',
         targetWeek: `2026-08-${String((i % 4) * 7 + 3).padStart(2, '0')}`,
         predictedOrders: 100 + i * 12,
-        confidence: i % 3 === 0 ? 'high' : i % 2 === 0 ? 'medium' : 'low',
-        source: i % 2 === 0 ? 'ai_model' : 'fallback_naive',
+        confidence: i % 3 === 0 ? ConfidenceLevelEnum.HIGH : i % 2 === 0 ? ConfidenceLevelEnum.MEDIUM : ConfidenceLevelEnum.LOW,
+        source: i % 2 === 0 ? PredictionSourceEnum.AI_MODEL : PredictionSourceEnum.FALLBACK_NAIVE,
         featuresUsed: { seasonality: true, lag_7: 100 + i * 10 },
         dailyBreakdown: [
           { date: '2026-08-03', predictedQuantity: 15 + i },
@@ -1574,8 +1130,8 @@ async function seed() {
             recommendedQty: 20 + (i % 5) * 5,
             lowerBound: 15,
             upperBound: 30,
-            confidence: i % 2 === 0 ? 'high' : 'medium',
-            source: i % 2 === 0 ? 'ai_model' : 'fallback_yesterday',
+            confidence: i % 2 === 0 ? ConfidenceLevelEnum.HIGH : ConfidenceLevelEnum.MEDIUM,
+            source: i % 2 === 0 ? ProductionPlanSourceEnum.AI_MODEL : ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
             actualProducedQty: 22 + (i % 5) * 5,
           })),
           isDeleted: false,
@@ -1587,8 +1143,20 @@ async function seed() {
 
     // ─── 21. Seed Import Jobs (Total Import Jobs >= 20) ───────────────────────────
     console.log('📁 Seeding import jobs...');
-    const importTypes = ['sales_history', 'inventory_transactions', 'recipes', 'menu_items', 'ingredients'];
-    const importStatuses = ['processing', 'validated', 'ai_ingest_pending', 'completed', 'failed'];
+    const importTypes = [
+      ImportTypeEnum.SALES_HISTORY,
+      ImportTypeEnum.INVENTORY_TRANSACTIONS,
+      ImportTypeEnum.RECIPES,
+      ImportTypeEnum.MENU_ITEMS,
+      ImportTypeEnum.INGREDIENTS,
+    ];
+    const importStatuses = [
+      ImportJobStatusEnum.PROCESSING,
+      ImportJobStatusEnum.VALIDATED,
+      ImportJobStatusEnum.AI_INGEST_PENDING,
+      ImportJobStatusEnum.COMPLETED,
+      ImportJobStatusEnum.FAILED,
+    ];
     const importJobsData: any[] = [];
     for (let i = 0; i < 20; i++) {
       importJobsData.push({
@@ -1610,7 +1178,7 @@ async function seed() {
 
     // ─── 22. Seed Waste Reports (Total Waste Reports >= 20) ───────────────────────
     console.log('📊 Seeding waste reports...');
-    const riskLevels = ['low', 'medium', 'high'];
+    const riskLevels = [RiskLevelEnum.LOW, RiskLevelEnum.MEDIUM, RiskLevelEnum.HIGH];
     const wasteReportData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const ing = insertedIngredients[i % insertedIngredients.length];
@@ -1631,8 +1199,18 @@ async function seed() {
 
     // ─── 23. Seed Recommendations (Total Recommendations >= 20) ───────────────────
     console.log('💡 Seeding recommendations...');
-    const recTypes = ['apply_discount', 'reduce_purchase', 'stop_production', 'transfer_stock'];
-    const recStatuses = ['pending', 'approved', 'edited', 'dismissed'];
+    const recTypes = [
+      RecommendationTypeEnum.APPLY_DISCOUNT,
+      RecommendationTypeEnum.REDUCE_PURCHASE,
+      RecommendationTypeEnum.STOP_PRODUCTION,
+      RecommendationTypeEnum.TRANSFER_STOCK,
+    ];
+    const recStatuses = [
+      RecommendationStatusEnum.PENDING,
+      RecommendationStatusEnum.APPROVED,
+      RecommendationStatusEnum.EDITED,
+      RecommendationStatusEnum.DISMISSED,
+    ];
     const recData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const wr = insertedWasteReports[i % insertedWasteReports.length];
@@ -1660,18 +1238,42 @@ async function seed() {
       otpsData.push({
         otp: String(100000 + i * 1111).slice(0, 6),
         userId: allUserIds[i % allUserIds.length],
-        type: i % 2 === 0 ? 'confirmation' : 'reset-password',
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-        isUsed: i % 3 === 0,
+        otpType: i % 2 === 0 ? OtpTypeEnum.CONFIRMATION : OtpTypeEnum.RESET_PASSWORD,
+        expireTime: new Date(Date.now() + 15 * 60 * 1000),
       });
     }
     const insertedOtps = await OtpModel.insertMany(otpsData);
     console.log(`✅ OTPs seeded: ${insertedOtps.length}`);
 
+    // ─── 24b. Seed Revoked Tokens (Total Revoked Tokens >= 10) ─────────────────────
+    console.log('🔒 Seeding revoked tokens...');
+    const revokedTokensData: any[] = [];
+    for (let i = 0; i < 10; i++) {
+      revokedTokensData.push({
+        tokenId: `TOKEN-REV-2026-${String(i + 1).padStart(4, '0')}`,
+        userId: allUserIds[i % allUserIds.length],
+        expiryTime: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+    }
+    const insertedRevokedTokens = await RevokeTokenModel.insertMany(revokedTokensData);
+    console.log(`✅ Revoked Tokens seeded: ${insertedRevokedTokens.length}`);
+
     // ─── 25. Seed Partnership Applications (Total Applications >= 20) ──────────────
     console.log('🤝 Seeding partnership applications...');
-    const businessTypes = ['bakery', 'restaurant', 'cafe', 'patisserie', 'supermarket', 'hotel', 'catering', 'other'];
-    const appStatuses = ['pending', 'under_review', 'approved', 'rejected'];
+    const businessTypes = [
+      BusinessTypeEnum.BAKERY,
+      BusinessTypeEnum.RESTAURANT,
+      BusinessTypeEnum.CAFE,
+      BusinessTypeEnum.CATERING,
+      BusinessTypeEnum.SUPERMARKET,
+    ];
+    const appStatuses = [
+      PartnershipApplicationStatusEnum.PENDING,
+      PartnershipApplicationStatusEnum.UNDER_REVIEW,
+      PartnershipApplicationStatusEnum.APPROVED,
+      PartnershipApplicationStatusEnum.REJECTED,
+      PartnershipApplicationStatusEnum.ONBOARDED,
+    ];
     const partnershipAppsData: any[] = [];
     const applicantNames = [
       { first: 'Youssef', last: 'Nabil', bName: 'Nabil Artisan Bakery' },
@@ -1699,8 +1301,8 @@ async function seed() {
     for (let i = 0; i < applicantNames.length; i++) {
       const app = applicantNames[i];
       const status = appStatuses[i % appStatuses.length];
-      const isApproved = status === 'approved';
-      const isRejected = status === 'rejected';
+      const isApproved = status === PartnershipApplicationStatusEnum.APPROVED || status === PartnershipApplicationStatusEnum.ONBOARDED;
+      const isRejected = status === PartnershipApplicationStatusEnum.REJECTED;
 
       partnershipAppsData.push({
         businessName: app.bName,
@@ -1738,7 +1340,231 @@ async function seed() {
     const insertedPartnershipApps = await PartnershipApplicationModel.insertMany(partnershipAppsData);
     console.log(`✅ Partnership Applications seeded: ${insertedPartnershipApps.length}`);
 
-    console.log('🎉 Database seeding complete!');
+    // ─── 26. Seed Payments (Total Payments >= 20) ──────────────────────────────────
+    console.log('💳 Seeding payment transactions...');
+    const paymentsData: any[] = [];
+    const payStatuses = [
+      PaymentStatusEnum.PAID,
+      PaymentStatusEnum.PENDING,
+      PaymentStatusEnum.PAID,
+      PaymentStatusEnum.FAILED,
+      PaymentStatusEnum.EXPIRED,
+    ];
+
+    // One payment per online group, so every online order has a settled
+    // payment behind it. Without this the payout statement reports every
+    // delivered card order as a `delivered_unpaid` exception instead of paying
+    // it, and the whole merchant balance reads as zero.
+    payableGroups.forEach((group, i) => {
+      const status = payStatuses[i % payStatuses.length];
+      paymentsData.push({
+        purpose: PaymentPurposeEnum.ORDER,
+        orderGroupId: group._id,
+        userId: customerUser._id,
+        // Must equal the group total: `resolveAmountCents` refunds
+        // `amountCents - refundedAmountCents` for a whole-group refund.
+        amountCents: Math.round(group.finalTotalPrice * 100),
+        currency: 'EGP',
+        method:
+          group.paymentMethod === 'Card'
+            ? PaymentMethodEnum.CARD
+            : PaymentMethodEnum.WALLET,
+        integrationId: 100000 + i,
+        specialReference: `PAY-REF-2026-${String(i + 1).padStart(4, '0')}`,
+        paymobTransactionId: status === PaymentStatusEnum.PAID ? 800000 + i : undefined,
+        paymobOrderId: 900000 + i,
+        status,
+        refundedAmountCents: 0,
+        hmacVerifiedAt: status === PaymentStatusEnum.PAID ? new Date(Date.now() - i * 6 * 60 * 60 * 1000) : undefined,
+        createdAt: group.createdAt,
+      });
+    });
+
+    // Subscription payments — the only revenue on the admin dashboard that is
+    // actually RestoMind's, alongside commission. Spread over the last three
+    // months so a 7d/30d window comparison has something to compare.
+    const subTiers = ['starter', 'plus', 'scale'];
+    const subPrices = [29900, 49900, 99900];
+    for (let i = 0; i < 12; i++) {
+      const restId = allRestaurantIds[i % allRestaurantIds.length];
+      const tierIndex = i % subTiers.length;
+      const paidAt = new Date(Date.now() - i * 7 * 24 * 60 * 60 * 1000);
+
+      paymentsData.push({
+        purpose: PaymentPurposeEnum.SUBSCRIPTION,
+        restaurantId: restId,
+        tier: subTiers[tierIndex],
+        planLabel: subTiers[tierIndex].replace(/^./, (c) => c.toUpperCase()),
+        interval: 'monthly',
+        periodStart: paidAt,
+        periodEnd: new Date(paidAt.getTime() + 30 * 24 * 60 * 60 * 1000),
+        userId: allRestaurants.find((r) => r._id.equals(restId))?.ownerUserId || adminUser._id,
+        amountCents: subPrices[tierIndex],
+        currency: 'EGP',
+        method: PaymentMethodEnum.CARD,
+        integrationId: 200000 + i,
+        specialReference: `SUB-REF-2026-${String(i + 1).padStart(4, '0')}`,
+        paymobTransactionId: 810000 + i,
+        paymobOrderId: 910000 + i,
+        status: PaymentStatusEnum.PAID,
+        refundedAmountCents: 0,
+        hmacVerifiedAt: paidAt,
+        createdAt: paidAt,
+      });
+    }
+
+    const insertedPayments = await PaymentModel.insertMany(paymentsData);
+    console.log(`✅ Payments seeded: ${insertedPayments.length}`);
+
+    // ─── 27. Seed Refunds (Total Refunds >= 10) ────────────────────────────────────
+    console.log('💸 Seeding refund transactions...');
+    const refundsData: any[] = [];
+    const refundStatuses = [
+      RefundStatusEnum.SUCCEEDED,
+      RefundStatusEnum.REQUESTED,
+      RefundStatusEnum.APPROVED,
+      RefundStatusEnum.REJECTED,
+      RefundStatusEnum.PROCESSING,
+    ];
+
+    const paidPayments = insertedPayments.filter((p) => p.status === PaymentStatusEnum.PAID && p.purpose === PaymentPurposeEnum.ORDER);
+    const groupTotalsById = new Map(
+      orderGroupsData.map((g) => [String(g._id), Math.round(g.finalTotalPrice * 100)]),
+    );
+
+    for (let i = 0; i < paidPayments.length; i++) {
+      const pay = paidPayments[i];
+      const status = refundStatuses[i % refundStatuses.length];
+      // Capped at the payment: a refund larger than what was actually paid is
+      // rejected by `reserveRefund` in real life, so seeding one produces a
+      // row the application itself considers impossible.
+      const groupTotal = groupTotalsById.get(String(pay.orderGroupId)) ?? pay.amountCents;
+      const amountCents = Math.min(2000 + i * 500, groupTotal);
+
+      refundsData.push({
+        paymentId: pay._id,
+        orderGroupId: pay.orderGroupId,
+        amountCents,
+        reason: i % 2 === 0 ? 'Customer order item damaged in transport' : 'Incorrect item delivered by restaurant',
+        // Every one of these is against an online payment, so GATEWAY is
+        // correct here — a COD group would need OFFLINE and no paymentId.
+        settlementMode: RefundSettlementModeEnum.GATEWAY,
+        status,
+        // Refunds are a support action now, so admin initiates and reviews.
+        initiatedBy: adminUser._id,
+        reviewedBy: status !== RefundStatusEnum.REQUESTED ? adminUser._id : undefined,
+        reviewedAt: status !== RefundStatusEnum.REQUESTED ? new Date() : undefined,
+        // Dated inside the payout window so a succeeded refund actually shows
+        // up as a reversal line on the merchant's statement.
+        completedAt:
+          status === RefundStatusEnum.SUCCEEDED
+            ? new Date(Date.now() - (10 + i) * 24 * 60 * 60 * 1000)
+            : undefined,
+        gatewayOperation: 'refund',
+        paymobRefundTransactionId: status === RefundStatusEnum.SUCCEEDED ? 850000 + i : undefined,
+      });
+    }
+    const insertedRefunds = await RefundModel.insertMany(refundsData);
+    console.log(`✅ Refunds seeded: ${insertedRefunds.length}`);
+
+    // The reservation the application would have taken when each refund was
+    // requested. Left at 0, a whole-group refund would offer the full amount
+    // again on top of what is already refunded.
+    for (const refund of insertedRefunds) {
+      if (
+        refund.status === RefundStatusEnum.REJECTED ||
+        refund.status === RefundStatusEnum.FAILED
+      ) {
+        continue;
+      }
+      await PaymentModel.updateOne(
+        { _id: refund.paymentId },
+        { $inc: { refundedAmountCents: refund.amountCents } },
+      );
+    }
+
+    // ─── 28. Seed Payouts (Total Payouts >= 10) ───────────────────────────────────
+    console.log('🏦 Seeding merchant payouts...');
+    const payoutsData: any[] = [];
+    const payoutStatuses = [
+      PayoutStatusEnum.COMPLETED,
+      PayoutStatusEnum.PENDING,
+      PayoutStatusEnum.COMPLETED,
+      PayoutStatusEnum.FAILED,
+    ];
+
+    for (let i = 0; i < Math.min(10, allRestaurants.length); i++) {
+      const rest = allRestaurants[i];
+      const status = payoutStatuses[i % payoutStatuses.length];
+      const periodStart = new Date(Date.now() - (i + 2) * 7 * 24 * 60 * 60 * 1000);
+      const periodEnd = new Date(Date.now() - (i + 1) * 7 * 24 * 60 * 60 * 1000);
+
+      payoutsData.push({
+        restaurantId: rest._id,
+        periodStart,
+        periodEnd,
+        amountCents: 350000 + i * 45000,
+        direction: PayoutDirectionEnum.TO_MERCHANT,
+        lines: [
+          { type: 'gross_sales', amountCents: 400000 + i * 50000 },
+          { type: 'commission_deducted', amountCents: -(40000 + i * 5000) },
+        ],
+        commissionNetCents: 35087 + i * 4385,
+        commissionVatCents: 4912 + i * 614,
+        reference: status === PayoutStatusEnum.COMPLETED ? `CIB-TRF-2026-${1000 + i}` : undefined,
+        recordedBy: adminUser._id,
+        status,
+        completedAt: status === PayoutStatusEnum.COMPLETED ? periodEnd : undefined,
+        failureReason: status === PayoutStatusEnum.FAILED ? 'Invalid bank IBAN length provided' : undefined,
+      });
+    }
+    const insertedPayouts = await PayoutModel.insertMany(payoutsData);
+    console.log(`✅ Payouts seeded: ${insertedPayouts.length}`);
+
+    // ─── 29. Seed Merchant Adjustments (Total Adjustments >= 10) ──────────────────
+    console.log('⚖️ Seeding merchant adjustments...');
+    const adjustmentsData: any[] = [];
+    const adjReasons = [
+      'Goodwill credit for customer service delay',
+      'Commission adjustment on cash sales refund',
+      'Late chargeback recovery debit',
+      'Special promotional platform rebate',
+      'Adjustment for manual order discrepancy',
+    ];
+
+    for (let i = 0; i < 10; i++) {
+      const rest = allRestaurants[i % allRestaurants.length];
+      adjustmentsData.push({
+        restaurantId: rest._id,
+        amountCents: (i % 2 === 0 ? 1 : -1) * (2500 + i * 500),
+        reason: adjReasons[i % adjReasons.length],
+        effectiveAt: new Date(Date.now() - i * 2 * 24 * 60 * 60 * 1000),
+        createdBy: adminUser._id,
+      });
+    }
+    const insertedAdjustments = await MerchantAdjustmentModel.insertMany(adjustmentsData);
+    console.log(`✅ Merchant Adjustments seeded: ${insertedAdjustments.length}`);
+
+    console.log('\n======================================================');
+    console.log('🎉 DATABASE SEEDING COMPLETED SUCCESSFULLY!');
+    console.log('======================================================');
+    console.log('🔑 CREATED ACCOUNTS CREDENTIALS:');
+    console.log('------------------------------------------------------');
+    console.log('1️⃣ ADMIN ACCOUNT:');
+    console.log('   Email: admin@restomind.com');
+    console.log('   Password: Admin@123');
+    console.log('   Role: admin\n');
+    console.log('2️⃣ MANAGER ACCOUNT:');
+    console.log('   Email: manager@restomind.com');
+    console.log('   Password: Manager@123');
+    console.log('   Role: manager');
+    console.log('   Restaurant: RestoMind Bakery & Cafe\n');
+    console.log('3️⃣ CUSTOMER ACCOUNT:');
+    console.log('   Email: sara@example.com');
+    console.log('   Password: Customer@123');
+    console.log('   Role: customer');
+    console.log('======================================================\n');
+
     await mongoose.disconnect();
     process.exit(0);
   } catch (error) {

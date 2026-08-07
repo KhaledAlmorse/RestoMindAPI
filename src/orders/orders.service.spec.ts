@@ -20,6 +20,7 @@ import { NotFoundException } from '@nestjs/common';
 import { OrderStatusEnum, RolesEnum } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -83,6 +84,12 @@ describe('OrdersService', () => {
           useValue: {
             registerFulfiller: jest.fn(),
             createPayment: jest.fn(),
+          },
+        },
+        {
+          provide: SystemSettingsService,
+          useValue: {
+            get: jest.fn().mockResolvedValue({ defaultCommissionRate: 0.05 }),
           },
         },
         {

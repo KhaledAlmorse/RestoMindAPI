@@ -19,6 +19,19 @@ describe('commissionRateFor', () => {
     // A merchant on a zero-commission promo must not silently be charged 15%.
     expect(commissionRateFor({ commissionRate: 0 })).toBe(0);
   });
+
+  it('uses the admin-configured platform default over the constant', () => {
+    // SystemSettings.defaultCommissionRate is the live default; the constant
+    // only covers callers with no database (the backfill script, tests).
+    expect(commissionRateFor({}, 0.12)).toBe(0.12);
+  });
+
+  it('still prefers a per-restaurant rate over the platform default', () => {
+    // The whole point of the override: a negotiated rate wins, and an admin
+    // moving the platform default must not silently reprice that merchant.
+    expect(commissionRateFor({ commissionRate: 0.2 }, 0.12)).toBe(0.2);
+    expect(commissionRateFor({ commissionRate: 0 }, 0.12)).toBe(0);
+  });
 });
 
 describe('commissionCentsFor', () => {

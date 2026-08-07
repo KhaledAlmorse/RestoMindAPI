@@ -14,9 +14,16 @@ import { RefundsService } from './refunds.service';
 export class RefundsController {
   constructor(private readonly refundsService: RefundsService) {}
 
-  /** Refund a whole group, one restaurant's order, or specific line items. */
+  /**
+   * Refund a whole group, one restaurant's order, or specific line items.
+   *
+   * Admin only — refunds are a support action. A merchant refunding their own
+   * order reverses their own commission and moves a customer's money with no
+   * second pair of eyes; a customer self-refunding does the same after the
+   * goods have left the kitchen. Both now route through support instead.
+   */
   @Post('group/:groupId/refunds')
-  @Auth('customer', 'manager', 'admin', 'staff')
+  @Auth('admin')
   requestRefund(
     @Param('groupId') groupId: string,
     @Body() body: CreateRefundDto,
@@ -25,9 +32,16 @@ export class RefundsController {
     return this.refundsService.requestRefund(groupId, body, user.user);
   }
 
-  /** Approve or reject a customer request that needed a human. */
+  /**
+   * Approve, reject or hand-settle a refund.
+   *
+   * Admin only, matching creation: reviewing is what actually moves the money,
+   * and `decision: 'settle'` marks a gateway-failed refund as paid by hand.
+   * Rows still sitting in REQUESTED from before support-only refunds are
+   * resolved here too.
+   */
   @Patch('refunds/:refundId/review')
-  @Auth('manager', 'admin')
+  @Auth('admin')
   reviewRefund(
     @Param('refundId') refundId: string,
     @Body() body: ReviewRefundDto,

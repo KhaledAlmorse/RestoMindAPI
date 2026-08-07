@@ -6,7 +6,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { OfferStatusEnum } from 'src/Common/Types';
+import {
+  OfferStatusEnum,
+  PaymentPurposeEnum,
+  PaymentStatusEnum,
+  PayoutStatusEnum,
+  RefundStatusEnum,
+} from 'src/Common/Types';
 import {
   Offer,
   OfferType,
@@ -14,20 +20,31 @@ import {
   OrderGroup,
   OrderGroupType,
   OrderType,
+  Payment,
+  PaymentType,
+  Payout,
+  PayoutType,
+  Refund,
+  RefundType,
   Restaurant,
   RestaurantType,
   User,
   UserType,
 } from 'src/DB/Models';
+import { splitVat } from 'src/Common/Utils';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
 import {
   DashboardStatsResponse,
   FulfillmentMethodItem,
   ManagerDashboardStatsResponse,
+  PlatformKpis,
   RankedItem,
 } from './interfaces/dashboard.interface';
 
 const TAX_PERCENTAGE = 14;
+
+/** Money is stored in piasters and reported to the dashboard in EGP. */
+const toEgp = (cents: number): number => Number((cents / 100).toFixed(2));
 
 @Injectable()
 export class DashboardService {
@@ -42,6 +59,12 @@ export class DashboardService {
     private readonly restaurantModel: Model<RestaurantType>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserType>,
+    @InjectModel(Payment.name)
+    private readonly paymentModel: Model<PaymentType>,
+    @InjectModel(Refund.name)
+    private readonly refundModel: Model<RefundType>,
+    @InjectModel(Payout.name)
+    private readonly payoutModel: Model<PayoutType>,
   ) {}
 
   // ─── Date Parsing & Validation ─────────────────────────────────────────────
@@ -282,6 +305,207 @@ export class DashboardService {
     ];
   }
 
+  // ─── Platform Money (admin only) ───────────────────────────────────────────
+
+  /**
+   * What RestoMind itself earns and owes over the window.
+   *
+   * Deliberately separate from the order aggregations above, which measure the
+   * MERCHANTS' money passing through the marketplace. Reading GMV as platform
+   * revenue — and then subtracting 14% "tax" from it — is the specific mistake
+   * this block exists to replace.
+   *
+   * Commission is read from `commissionCents` on the order, never re-derived
+   * from the restaurant's current rate: each order snapshots the rate it was
+   * sold under, and re-deriving would rewrite history the moment an admin
+   * changes a commission.
+   */
+  private async getPlatformKpis(
+    startDate: Date,
+    endDate: Date,
+    prevStartDate: Date,
+    prevEndDate: Date,
+  ): Promise<PlatformKpis> {
+    // Commission accrues when the order is delivered, matching the payout
+    // ledger — an order that was never delivered earns nothing.
+    const commissionByPeriod = await this.orderModel.aggregate([
+      {
+        $facet: {
+          current: [
+            {
+              $match: {
+                status: 'Delivered',
+                deliveredAt: { $gte: startDate, $lte: endDate },
+              },
+            },
+            { $group: { _id: null, cents: { $sum: '$commissionCents' } } },
+          ],
+          previous: [
+            {
+              $match: {
+                status: 'Delivered',
+                deliveredAt: { $gte: prevStartDate, $lt: prevEndDate },
+              },
+            },
+            { $group: { _id: null, cents: { $sum: '$commissionCents' } } },
+          ],
+        },
+      },
+    ]);
+
+    const commissionFacet = commissionByPeriod[0] || {};
+    const commissionCents = commissionFacet.current?.[0]?.cents || 0;
+    const prevCommissionCents = commissionFacet.previous?.[0]?.cents || 0;
+    // The stored figure is VAT-inclusive, matching the subscription pricing
+    // convention. Only the net part is actually RestoMind's.
+    const { netCents, vatCents } = splitVat(commissionCents);
+
+    // Subscription money, split by plan in the same pass — an admin asking
+    // "which plan pays for this company" needs the split, not just the total.
+    const subscriptionAgg = await this.paymentModel.aggregate([
+      {
+        $match: {
+          purpose: PaymentPurposeEnum.SUBSCRIPTION,
+          status: PaymentStatusEnum.PAID,
+        },
+      },
+      {
+        $facet: {
+          current: [
+            { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
+            {
+              $group: {
+                _id: { $ifNull: ['$tier', 'unknown'] },
+                label: { $first: { $ifNull: ['$planLabel', '$tier'] } },
+                cents: { $sum: '$amountCents' },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { cents: -1 } },
+          ],
+          previous: [
+            {
+              $match: { createdAt: { $gte: prevStartDate, $lt: prevEndDate } },
+            },
+            { $group: { _id: null, cents: { $sum: '$amountCents' } } },
+          ],
+        },
+      },
+    ]);
+
+    const subFacet = subscriptionAgg[0] || {};
+    const perPlan: any[] = subFacet.current || [];
+    const subscriptionCents = perPlan.reduce((sum, p) => sum + (p.cents || 0), 0);
+    const prevSubscriptionCents = subFacet.previous?.[0]?.cents || 0;
+
+    const now = new Date();
+    const [
+      paidSubscriptions,
+      trialSubscriptions,
+      refundAgg,
+      refundsPending,
+      payoutAgg,
+    ] = await Promise.all([
+      this.restaurantModel.countDocuments({
+        isDeleted: false,
+        'subscription.currentPeriodEnd': { $gt: now },
+      }),
+      // A merchant who has since bought a plan is counted as paid above, so
+      // the trial count excludes anyone with a live paid period.
+      this.restaurantModel.countDocuments({
+        isDeleted: false,
+        'subscription.trialEndsAt': { $gt: now },
+        $or: [
+          { 'subscription.currentPeriodEnd': { $exists: false } },
+          { 'subscription.currentPeriodEnd': { $lte: now } },
+        ],
+      }),
+      this.refundModel.aggregate([
+        {
+          $match: {
+            status: RefundStatusEnum.SUCCEEDED,
+            completedAt: { $gte: startDate, $lte: endDate },
+          },
+        },
+        { $group: { _id: null, cents: { $sum: '$amountCents' } } },
+      ]),
+      this.refundModel.countDocuments({
+        status: {
+          $in: [
+            RefundStatusEnum.REQUESTED,
+            RefundStatusEnum.PROCESSING,
+            RefundStatusEnum.MANUAL_REQUIRED,
+            RefundStatusEnum.FAILED,
+          ],
+        },
+      }),
+      this.payoutModel.aggregate([
+        {
+          $facet: {
+            // Not windowed: a transfer sitting PENDING is money owed right
+            // now, and ageing out of the chart would not make it less owed.
+            pending: [
+              { $match: { status: PayoutStatusEnum.PENDING } },
+              {
+                $group: {
+                  _id: null,
+                  cents: { $sum: '$amountCents' },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
+            completed: [
+              {
+                $match: {
+                  status: PayoutStatusEnum.COMPLETED,
+                  completedAt: { $gte: startDate, $lte: endDate },
+                },
+              },
+              { $group: { _id: null, cents: { $sum: '$amountCents' } } },
+            ],
+          },
+        },
+      ]),
+    ]);
+
+    const payoutFacet = payoutAgg[0] || {};
+
+    return {
+      commission: {
+        current: toEgp(commissionCents),
+        previous: toEgp(prevCommissionCents),
+        changePercent: this.calculateChangePercent(
+          commissionCents,
+          prevCommissionCents,
+        ),
+      },
+      commissionVat: toEgp(vatCents),
+      commissionNet: toEgp(netCents),
+      subscriptionRevenue: {
+        current: toEgp(subscriptionCents),
+        previous: toEgp(prevSubscriptionCents),
+        changePercent: this.calculateChangePercent(
+          subscriptionCents,
+          prevSubscriptionCents,
+        ),
+      },
+      totalRevenue: toEgp(commissionCents + subscriptionCents),
+      paidSubscriptions,
+      trialSubscriptions,
+      revenueByPlan: perPlan.map((p) => ({
+        tier: String(p._id ?? 'unknown'),
+        label: p.label || String(p._id ?? 'Unknown plan'),
+        amount: toEgp(p.cents || 0),
+        count: p.count || 0,
+      })),
+      refundedAmount: toEgp(refundAgg?.[0]?.cents || 0),
+      refundsPending,
+      payoutsPending: toEgp(payoutFacet.pending?.[0]?.cents || 0),
+      payoutsPendingCount: payoutFacet.pending?.[0]?.count || 0,
+      payoutsCompleted: toEgp(payoutFacet.completed?.[0]?.cents || 0),
+    };
+  }
+
   // ─── GET /dashboard/admin ──────────────────────────────────────────────────
 
   async getAdminDashboard(
@@ -406,6 +630,13 @@ export class DashboardService {
     const fulfillmentMethods =
       await this.getFulfillmentMethods(dateMatchFilter);
 
+    const platform = await this.getPlatformKpis(
+      startDate,
+      endDate,
+      prevStartDate,
+      prevEndDate,
+    );
+
     return {
       kpis: {
         revenue: {
@@ -429,6 +660,7 @@ export class DashboardService {
         avgOrderValue,
         totalUsers,
         totalRestaurants,
+        platform,
       },
       topProducts,
       topCategories,
@@ -491,6 +723,10 @@ export class DashboardService {
                 _id: null,
                 total: { $sum: '$finalTotalPrice' },
                 count: { $sum: 1 },
+                // Piasters, snapshotted per order. Summing the stored figure
+                // is what keeps this consistent with the payout statement.
+                commissionCents: { $sum: '$commissionCents' },
+                rateSum: { $sum: '$commissionRate' },
               },
             },
           ],
@@ -534,6 +770,21 @@ export class DashboardService {
     const prevOrders = facet.prevOrdersCount?.[0]?.count || 0;
     const prevRevenue = facet.prevRevenue?.[0]?.total || 0;
     const pendingOrders = facet.pendingOrdersCount?.[0]?.count || 0;
+
+    const commissionCharged = toEgp(
+      facet.currentRevenue?.[0]?.commissionCents || 0,
+    );
+    // Averaged over the delivered orders rather than read from the restaurant:
+    // the live rate can differ from what these orders were actually sold under.
+    const commissionRate =
+      currentDeliveredOrdersCount > 0
+        ? Number(
+            (
+              (facet.currentRevenue?.[0]?.rateSum || 0) /
+              currentDeliveredOrdersCount
+            ).toFixed(4),
+          )
+        : (restaurant.commissionRate ?? 0);
 
     // Active offers for manager's restaurant
     const activeOffers = restaurant.isActive
@@ -587,6 +838,11 @@ export class DashboardService {
         netProfit,
         taxDeduction,
         avgOrderValue,
+        commissionCharged,
+        commissionRate,
+        netAfterCommission: Number(
+          (currentRevenue - commissionCharged).toFixed(2),
+        ),
       },
       topProducts,
       topCategories,

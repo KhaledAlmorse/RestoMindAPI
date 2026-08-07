@@ -55,6 +55,19 @@ export class PayoutsController {
     );
   }
 
+  /** A merchant's own settled payouts. Same scoping rule as the statement. */
+  @Get('history')
+  @Auth('manager', 'staff')
+  getMyHistory(@AuthUser() user: IAuthUser) {
+    return this.payoutsService.getHistory(this.requireRestaurantId(user));
+  }
+
+  @Get('history/:restaurantId')
+  @Auth('admin')
+  getHistoryOf(@Param('restaurantId') restaurantId: string) {
+    return this.payoutsService.getHistory(restaurantId);
+  }
+
   @Get('statement/:restaurantId')
   @Auth('admin')
   getOne(
