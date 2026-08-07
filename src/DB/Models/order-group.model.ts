@@ -57,7 +57,7 @@ export class OrderGroup {
 
   @Prop({
     type: String,
-    enum: ['Cash on Delivery'],
+    enum: ['Cash on Delivery', 'Card', 'Wallet'],
     default: 'Cash on Delivery',
     required: true,
   })

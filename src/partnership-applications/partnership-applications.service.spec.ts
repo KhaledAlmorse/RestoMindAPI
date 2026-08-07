@@ -11,6 +11,8 @@ import {
   UserRepository,
 } from 'src/DB/Repositories';
 import { TokenService } from 'src/Common/Services';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BusinessTypeEnum,
   PartnershipApplicationStatusEnum,
@@ -77,6 +79,17 @@ describe('PartnershipApplicationsService', () => {
       startSession: jest.fn().mockResolvedValue(mockSession),
     };
 
+    // Platform defaults: trials on, early-bird seats available.
+    const mockSystemSettings = {
+      get: jest.fn().mockResolvedValue({
+        freeTrialEnabled: true,
+        trialDurationDays: 14,
+        earlyBirdEnabled: true,
+        earlyBirdCap: 30,
+      }),
+      countEarlyBirds: jest.fn().mockResolvedValue(0),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PartnershipApplicationsService,
@@ -84,6 +97,9 @@ describe('PartnershipApplicationsService', () => {
         { provide: UserRepository, useValue: mockUserRepo },
         { provide: RestaurantRepository, useValue: mockRestaurantRepo },
         { provide: TokenService, useValue: mockTokenSvc },
+        { provide: SystemSettingsService, useValue: mockSystemSettings },
+        // Emits an application-created event; the listener is not under test.
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         { provide: 'DatabaseConnection', useValue: connection },
       ],
     }).compile();

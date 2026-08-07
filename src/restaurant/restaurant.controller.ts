@@ -85,6 +85,17 @@ export class RestaurantController {
       if (!user.user.restaurantId || user.user.restaurantId.toString() !== id) {
         throw new ForbiddenException('You can only update your own restaurant');
       }
+      // Both fields decide money: the rate RestoMind earns and the account the
+      // payout lands in. A merchant editing their own restaurant must not be
+      // able to zero their commission or redirect a settlement.
+      if (
+        body.commissionRate !== undefined ||
+        body.payoutDestination !== undefined
+      ) {
+        throw new ForbiddenException(
+          'Commission and payout details are set by RestoMind support',
+        );
+      }
     }
     const result = await this.restaurantService.updateRestaurant(
       id,

@@ -1,9 +1,13 @@
 import {
   BadRequestException,
   ForbiddenException,
+  ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, isValidObjectId, Types } from 'mongoose';
@@ -27,16 +31,38 @@ import { Decrypt } from 'src/Common/Security';
 import {
   OfferStatusEnum,
   OrderStatusEnum,
+  PaymentMethodEnum,
+  PaymentPurposeEnum,
+  RefundStatusEnum,
   RolesEnum,
   SalesSourceEnum,
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
+import {
+  hasDashboardAccess,
+  resolveSubscriptionState,
+} from 'src/subscriptions/subscription-state';
 import { OffersService } from 'src/offers/offers.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { PaymentsService } from 'src/payments/payments.service';
+import {
+  getApiPublicUrl,
+  getFrontendUrl,
+  getPaymentWindowMs,
+} from 'src/payments/paymob.config';
+import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
+import { PaymentType } from 'src/DB/Models/payment.model';
+import {
+  commissionCentsFor,
+  commissionRateFor,
+} from 'src/payouts/payout.config';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
+import { RefundsService } from './refunds.service';
+import { NOTHING_COMMITTED_STATUSES } from './refund-policy';
 
 @Injectable()
-export class OrdersService {
+export class OrdersService implements OnModuleInit, PaymentFulfiller {
   private readonly logger = new Logger(OrdersService.name);
 
   constructor(
@@ -54,13 +80,163 @@ export class OrdersService {
     private readonly stockTransactionRepository: StockTransactionRepository,
     private readonly offersService: OffersService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly paymentsService: PaymentsService,
+    @Inject(forwardRef(() => RefundsService))
+    private readonly refundsService: RefundsService,
+    private readonly systemSettingsService: SystemSettingsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
+
+  onModuleInit(): void {
+    this.paymentsService.registerFulfiller(PaymentPurposeEnum.ORDER, this);
+  }
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
       throw new BadRequestException(`Invalid ObjectId: ${id}`);
     }
+  }
+
+  /**
+   * Returns an order's reserved stock to its offers.
+   *
+   * One implementation shared by cancellation, payment failure, expiry and
+   * refund — a per-caller copy is exactly how four code paths drift apart.
+   * A single failing item must not strand the rest of the customer's stock,
+   * so failures are logged and the loop continues.
+   *
+   * Idempotent: those same four paths can fire against one order (refund then
+   * cancel, webhook then sweeper), and restocking twice invents inventory the
+   * restaurant does not have. The claim is a conditional update on
+   * `stockRestoredAt`, so two concurrent callers cannot both win it.
+   */
+  async restoreStockForOrder(order: any): Promise<void> {
+    if (!order?._id) return;
+
+    const claimed = await this.orderRepository.findOneAndUpdate({
+      filters: { _id: order._id, stockRestoredAt: { $exists: false } },
+      updateData: { $set: { stockRestoredAt: new Date() } },
+    });
+    if (!claimed) {
+      this.logger.warn(
+        `Stock for order ${String(order._id)} was already restored — skipping`,
+      );
+      return;
+    }
+
+    for (const item of order?.items || []) {
+      if (!item.offerId) continue;
+      const offerId = item.offerId._id || item.offerId;
+      try {
+        await this.offersService.restockFromCancelledOrderItem(
+          offerId,
+          item.quantity,
+          item.lineTotal || 0,
+        );
+      } catch (error: any) {
+        this.logger.error(
+          `Failed to restock offer ${String(offerId)} for order ${String(order?._id)}: ${error?.message}`,
+        );
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // PaymentFulfiller
+  // ---------------------------------------------------------------------
+
+  /**
+   * Online payment confirmed. Promote the reserved group to a live order.
+   *
+   * Idempotent: only a group still in AWAITING_PAYMENT is promoted, so a
+   * webhook retry or a reconciliation sweep landing on the same payment is a
+   * no-op rather than a second promotion.
+   */
+  async onPaid(payment: PaymentType): Promise<void> {
+    if (!payment.orderGroupId) return;
+
+    const group = await this.orderGroupRepository.findOne({
+      filters: { _id: payment.orderGroupId },
+    });
+    if (!group || group.overallStatus !== OrderStatusEnum.AWAITING_PAYMENT) {
+      return;
+    }
+
+    await this.orderRepository.updateMany(
+      {
+        groupOrderId: group._id,
+        status: OrderStatusEnum.AWAITING_PAYMENT,
+      },
+      { status: OrderStatusEnum.PENDING },
+    );
+    await this.orderGroupRepository.update({
+      filters: { _id: group._id },
+      body: { overallStatus: OrderStatusEnum.PENDING } as any,
+    });
+
+    // The cart is cleared here, not at creation — a failed payment must not
+    // also destroy the customer's cart.
+    const cart = await this.cartRepository.findOne({
+      filters: { userId: group.userId },
+    });
+    if (cart) {
+      cart.items = [];
+      await this.cartRepository.save(cart);
+    }
+
+    this.logger.log(`Order group ${String(group._id)} paid and promoted`);
+  }
+
+  /**
+   * Payment failed or expired. Return the reserved stock and park the group.
+   *
+   * The status transition is CLAIMED FIRST, conditionally on the group still
+   * being AWAITING_PAYMENT. That ordering is the only thing preventing the
+   * webhook and the reconciliation sweeper from both restocking the same
+   * items — this codebase has no working transactions to fall back on.
+   */
+  async onFailed(payment: PaymentType): Promise<void> {
+    if (!payment.orderGroupId) return;
+
+    const claimed = await this.orderGroupRepository.findOneAndUpdate({
+      filters: {
+        _id: payment.orderGroupId,
+        overallStatus: OrderStatusEnum.AWAITING_PAYMENT,
+      },
+      updateData: {
+        $set: { overallStatus: OrderStatusEnum.PAYMENT_FAILED },
+      },
+    });
+    // Someone else already handled it — do not restock a second time.
+    if (!claimed) return;
+
+    const childOrders = await this.orderRepository.findMany({
+      filters: { groupOrderId: payment.orderGroupId },
+    });
+    for (const child of childOrders || []) {
+      await this.restoreStockForOrder(child);
+    }
+
+    await this.orderRepository.updateMany(
+      {
+        groupOrderId: payment.orderGroupId,
+        status: OrderStatusEnum.AWAITING_PAYMENT,
+      },
+      { status: OrderStatusEnum.PAYMENT_FAILED },
+    );
+
+    this.logger.warn(
+      `Order group ${String(payment.orderGroupId)} payment failed; stock restored`,
+    );
+  }
+
+  /**
+   * Public wrapper so the refund flow recomputes a group's status with the
+   * same rules as cancellation — the two must never disagree about what a
+   * mixed group means.
+   */
+  computeGroupStatus(childOrders: any[]): string {
+    return this.computeOverallStatus(childOrders);
   }
 
   private computeOverallStatus(childOrders: any[]): string {
@@ -360,6 +536,34 @@ export class OrdersService {
       throw new NotFoundException('User not found');
     }
 
+    const isOnlinePayment = body.paymentMethod !== 'Cash on Delivery';
+    const initialStatus = isOnlinePayment
+      ? OrderStatusEnum.AWAITING_PAYMENT
+      : OrderStatusEnum.PENDING;
+
+    if (isOnlinePayment) {
+      // A customer holding an unpaid group younger than the intention
+      // lifetime cannot start a second one — that would reserve the stock
+      // twice for the same person. Same window as the intention and the
+      // sweeper's grace, so an older group is one the sweeper has already
+      // released rather than one still holding stock.
+      const pendingGroup = await this.orderGroupRepository.findOne({
+        filters: {
+          userId: new Types.ObjectId(userId),
+          overallStatus: OrderStatusEnum.AWAITING_PAYMENT,
+          createdAt: { $gte: new Date(Date.now() - getPaymentWindowMs()) },
+        },
+      });
+      if (pendingGroup) {
+        throw new ConflictException({
+          code: 'PAYMENT_IN_PROGRESS',
+          message:
+            'You already have an order awaiting payment. Complete or cancel it before starting another.',
+          orderGroupId: String(pendingGroup._id),
+        });
+      }
+    }
+
     const fullName = `${dbUser.firstName} ${dbUser.lastName}`.trim();
 
     let userPhone = dbUser.phone;
@@ -465,6 +669,17 @@ export class OrdersService {
           `Offer for "${product.title || 'product'}" is currently ${offer.status}`,
         );
       }
+
+      // Second line of defence, closing the up-to-5-minute window between a
+      // subscription lapsing and the offers cron suspending its offers. The
+      // restaurant document is already populated above, so this costs nothing.
+      if (
+        !hasDashboardAccess(resolveSubscriptionState(restaurant?.subscription))
+      ) {
+        throw new BadRequestException(
+          `"${restaurant?.name || 'This restaurant'}" is not currently accepting orders`,
+        );
+      }
       if (now < offer.startDate || now > offer.endDate) {
         throw new BadRequestException(
           `Offer for "${product.title || 'product'}" is outside its active period`,
@@ -519,6 +734,12 @@ export class OrdersService {
       }
       restaurantGroups.get(restId)!.push(entry);
     }
+
+    // Read once for the whole checkout, before the transaction: every order in
+    // one basket must be priced under the same platform default, and an admin
+    // saving a new rate mid-loop must not split the group across two rates.
+    const platformCommissionRate = (await this.systemSettingsService.get())
+      .defaultCommissionRate;
 
     const groupOrderId = new Types.ObjectId();
     const createdOrderIds: Types.ObjectId[] = [];
@@ -620,6 +841,16 @@ export class OrdersService {
 
         const totalDiscount = totalOriginalPrice - finalTotalPrice;
 
+        // Commission is snapshotted per order, at the rate in force right now.
+        const commissionRate = commissionRateFor(
+          entries[0].restaurant ?? {},
+          platformCommissionRate,
+        );
+        const commissionCents = commissionCentsFor(
+          Math.round(finalTotalPrice * 100),
+          commissionRate,
+        );
+
         groupTotalQuantity += totalQuantity;
         groupTotalOriginalPrice += totalOriginalPrice;
         groupFinalTotalPrice += finalTotalPrice;
@@ -633,6 +864,8 @@ export class OrdersService {
           totalOriginalPrice,
           totalDiscount,
           finalTotalPrice,
+          commissionRate,
+          commissionCents,
           totalQuantity,
           fullName,
           phoneNumber: userPhone,
@@ -641,7 +874,7 @@ export class OrdersService {
           deliveryAddress: resolvedAddress,
           specialNotes: body.specialNotes,
           paymentMethod: body.paymentMethod,
-          status: OrderStatusEnum.PENDING,
+          status: initialStatus,
         });
 
         createdOrderIds.push(newOrder._id);
@@ -666,13 +899,16 @@ export class OrdersService {
         totalDiscount: groupTotalDiscount,
         finalTotalPrice: groupFinalTotalPrice,
         totalQuantity: groupTotalQuantity,
-        overallStatus: OrderStatusEnum.PENDING,
+        overallStatus: initialStatus,
       });
     });
 
-    // Clear customer cart
-    cart.items = [];
-    await this.cartRepository.save(cart);
+    // For online payments the cart is cleared by the webhook (onPaid), not
+    // here — a failed payment must not also destroy the customer's cart.
+    if (!isOnlinePayment) {
+      cart.items = [];
+      await this.cartRepository.save(cart);
+    }
 
     // Fire-and-forget notification event emission for manager notifications
     try {
@@ -700,6 +936,48 @@ export class OrdersService {
         },
       ],
     });
+
+    if (isOnlinePayment) {
+      // If this throws, the group is already AWAITING_PAYMENT with stock
+      // reserved. Deliberately not unwound inline: the reconciliation sweeper
+      // expires it and onFailed() restores the stock through the one code
+      // path that does it correctly. Let the error surface and let the
+      // customer retry.
+      const { checkoutUrl } = await this.paymentsService.createPayment({
+        purpose: PaymentPurposeEnum.ORDER,
+        userId: new Types.ObjectId(userId),
+        orderGroupId: groupOrderId,
+        amountCents: Math.round(groupFinalTotalPrice * 100),
+        method:
+          body.paymentMethod === 'Card'
+            ? PaymentMethodEnum.CARD
+            : PaymentMethodEnum.WALLET,
+        billingData: {
+          first_name: dbUser.firstName,
+          last_name: dbUser.lastName,
+          phone_number: userPhone,
+          email: dbUser.email,
+          street: resolvedAddress?.street || 'NA',
+          city: resolvedAddress?.city || 'Cairo',
+          country: 'EGY',
+        },
+        items: [
+          {
+            name: `RestoMind order ${groupOrderId.toString()}`,
+            amount: Math.round(groupFinalTotalPrice * 100),
+            quantity: 1,
+          },
+        ],
+        notificationUrl: `${getApiPublicUrl()}/payments/webhook`,
+        redirectionUrl: `${getFrontendUrl()}/checkout/result?group=${groupOrderId.toString()}`,
+        expirationSeconds: getPaymentWindowMs() / 1000,
+      });
+
+      return {
+        data: await this.formatOrderGroup(populatedGroup),
+        checkoutUrl,
+      };
+    }
 
     return { data: await this.formatOrderGroup(populatedGroup) };
   }
@@ -803,7 +1081,10 @@ export class OrdersService {
         s === OrderStatusEnum.PREPARING ||
         s === OrderStatusEnum.READY ||
         s === OrderStatusEnum.OUT_FOR_DELIVERY ||
-        s === OrderStatusEnum.DELIVERED
+        s === OrderStatusEnum.DELIVERED ||
+        // Already refunded after delivery. Overwriting REFUNDED with CANCELLED
+        // would falsify the fulfilment record the forecasting model trains on.
+        s === OrderStatusEnum.REFUNDED
       );
     });
 
@@ -824,33 +1105,55 @@ export class OrdersService {
       );
     }
 
-    // Perform cancellation for all active child orders in group
-    for (const childOrder of childOrders) {
-      if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
+    if (NOTHING_COMMITTED_STATUSES.includes(group.overallStatus)) {
+      // Nothing was ever paid — there is nothing to refund, and the refund
+      // policy treats these statuses as terminal (would throw). Cancel
+      // directly, exactly as before.
+      //
+      // Close the payment window FIRST. The customer's Paymob tab can still be
+      // open, and a success landing between these two writes would otherwise
+      // find a group that is no longer AWAITING_PAYMENT, do nothing, and leave
+      // us holding his money.
+      await this.paymentsService.expirePendingOrderPayment(group._id);
 
-      // Update child order status to CANCELLED
-      await this.orderRepository.update({
-        filters: { _id: childOrder._id },
-        body: { status: OrderStatusEnum.CANCELLED } as any,
+      for (const childOrder of childOrders) {
+        if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
+
+        // Update child order status to CANCELLED
+        await this.orderRepository.update({
+          filters: { _id: childOrder._id },
+          body: { status: OrderStatusEnum.CANCELLED } as any,
+        });
+
+        // Restore inventory and update offer metrics
+        await this.restoreStockForOrder(childOrder);
+      }
+
+      // Update parent OrderGroup overallStatus
+      await this.orderGroupRepository.update({
+        filters: { _id: group._id },
+        body: { overallStatus: OrderStatusEnum.CANCELLED } as any,
       });
-
-      // Restore inventory and update offer metrics
-      for (const item of childOrder.items || []) {
-        if (!item.offerId) continue;
-        const offerId = item.offerId?._id || item.offerId;
-        await this.offersService.restockFromCancelledOrderItem(
-          offerId,
-          item.quantity,
-          item.lineTotal || 0,
+    } else {
+      // Money could have been committed, so route through the refund flow:
+      // requestRefund creates the Refund record, executes it, and — only once
+      // the refund succeeds — writes CANCELLED to every child order and
+      // restores stock via applyOrderConsequences. It can also come back
+      // without cancelling anything (needs_approval on e.g. a
+      // PARTIALLY_REFUNDED group, or MANUAL_REQUIRED/PROCESSING from the
+      // gateway), so surface a conflict rather than a 200 that lies.
+      const refundResult = await this.refundsService.requestRefund(
+        groupId,
+        { reason: 'Order cancelled by customer' },
+        currentUser,
+      );
+      if ((refundResult as any).data?.status !== RefundStatusEnum.SUCCEEDED) {
+        throw new ConflictException(
+          (refundResult as any).message ??
+            'This order could not be cancelled automatically — a refund is pending review or manual settlement. Check the Refunds dashboard.',
         );
       }
     }
-
-    // Update parent OrderGroup overallStatus
-    await this.orderGroupRepository.update({
-      filters: { _id: group._id },
-      body: { overallStatus: OrderStatusEnum.CANCELLED } as any,
-    });
 
     const updatedGroup = await this.orderGroupRepository.findOne({
       filters: { _id: group._id },
@@ -882,7 +1185,9 @@ export class OrdersService {
     if (!order) {
       const filters: Record<string, any> = { groupOrderId: targetId };
       if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
-        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+        filters.restaurantId = new Types.ObjectId(
+          currentUser.restaurantId.toString(),
+        );
       }
       order = await this.orderRepository.findOne({
         filters,
@@ -940,7 +1245,9 @@ export class OrdersService {
     if (!order) {
       const filters: Record<string, any> = { groupOrderId: targetObjId };
       if (currentUser.role === RolesEnum.MANAGER && currentUser.restaurantId) {
-        filters.restaurantId = new Types.ObjectId(currentUser.restaurantId.toString());
+        filters.restaurantId = new Types.ObjectId(
+          currentUser.restaurantId.toString(),
+        );
       }
       order = await this.orderRepository.findOne({ filters });
     }
@@ -973,7 +1280,8 @@ export class OrdersService {
 
     if (
       order.status === OrderStatusEnum.DELIVERED ||
-      order.status === OrderStatusEnum.CANCELLED
+      order.status === OrderStatusEnum.CANCELLED ||
+      order.status === OrderStatusEnum.REFUNDED
     ) {
       throw new BadRequestException(
         `Cannot change status of a finalized order (${order.status})`,
@@ -1004,9 +1312,72 @@ export class OrdersService {
       }
     }
 
+    if (status === OrderStatusEnum.CANCELLED) {
+      if (
+        order.groupOrderId &&
+        !NOTHING_COMMITTED_STATUSES.includes(order.status)
+      ) {
+        // requestRefund creates the refund, runs gateway/offline execution, and
+        // — once the money is provably back — writes CANCELLED, restores stock,
+        // and recomputes the parent group's status itself. When it comes back
+        // without succeeding, nothing was cancelled, so say so.
+        const refundResult = await this.refundsService.requestRefund(
+          order.groupOrderId.toString(),
+          {
+            orderId: order._id.toString(),
+            reason: 'Order cancelled by restaurant',
+          },
+          currentUser,
+        );
+        if ((refundResult as any).data?.status !== RefundStatusEnum.SUCCEEDED) {
+          throw new ConflictException(
+            (refundResult as any).message ??
+              'This order could not be cancelled automatically — a refund is pending review or manual settlement. Check the Refunds dashboard.',
+          );
+        }
+      } else {
+        // No parent group, or no money was ever committed (AWAITING_PAYMENT /
+        // PAYMENT_FAILED) — there is nothing to refund. Cancel directly,
+        // exactly as before.
+        await this.orderRepository.update({
+          filters: { _id: targetObjId },
+          body: { status } as any,
+        });
+        await this.restoreStockForOrder(order);
+        if (order.groupOrderId) {
+          const siblingOrders = await this.orderRepository.findMany({
+            filters: { groupOrderId: order.groupOrderId },
+          });
+          const newOverallStatus = this.computeOverallStatus(
+            siblingOrders || [],
+          );
+          await this.orderGroupRepository.update({
+            filters: { _id: order.groupOrderId },
+            body: { overallStatus: newOverallStatus } as any,
+          });
+        }
+      }
+
+      const cancelledOrder = await this.orderRepository.findOne({
+        filters: { _id: targetObjId },
+        populationArray: [
+          { path: 'userId', select: '-password' },
+          { path: 'restaurantId' },
+        ],
+      });
+      return { data: this.formatChildOrder(cancelledOrder) };
+    }
+
     await this.orderRepository.update({
       filters: { _id: targetObjId },
-      body: { status } as any,
+      body: {
+        status,
+        // Stamped once, here. The refund dispute window is measured from this
+        // and must not move when the order is written to for any other reason.
+        ...(status === OrderStatusEnum.DELIVERED
+          ? { deliveredAt: new Date() }
+          : {}),
+      } as any,
     });
 
     // Handle DELIVERED logic
@@ -1061,19 +1432,6 @@ export class OrdersService {
       } catch (err: any) {
         this.logger.warn(
           `Failed to sync sales transaction for delivered order ${id}: ${err.message}`,
-        );
-      }
-    }
-
-    // Handle CANCELLED logic
-    if (status === OrderStatusEnum.CANCELLED) {
-      for (const item of order.items || []) {
-        if (!item.offerId) continue;
-        const offerId = (item.offerId as any)._id || item.offerId;
-        await this.offersService.restockFromCancelledOrderItem(
-          offerId,
-          item.quantity,
-          item.lineTotal || 0,
         );
       }
     }

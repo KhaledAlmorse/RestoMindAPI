@@ -34,6 +34,10 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { NotificationModule } from './notification/notification.module';
 import { SanitizedLoggerInterceptor } from './Common/Interceptors/sanitized-logger.interceptor';
 import { AllExceptionsFilter } from './Common/Filters/http-exception.filter';
+import { PaymentsModule } from './payments/payments.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { PayoutsModule } from './payouts/payouts.module';
+import { SystemSettingsModule } from './system-settings/system-settings.module';
 
 @Module({
   imports: [
@@ -77,6 +81,12 @@ import { AllExceptionsFilter } from './Common/Filters/http-exception.filter';
     VectorStoreModule,
     AssistantModule,
     NotificationModule,
+    PaymentsModule.forRoot(),
+    // Before SubscriptionsModule: its @Global service is read during
+    // SubscriptionsService.onModuleInit, which gates the trial backfill.
+    SystemSettingsModule,
+    SubscriptionsModule,
+    PayoutsModule,
   ],
 
   controllers: [AppController],

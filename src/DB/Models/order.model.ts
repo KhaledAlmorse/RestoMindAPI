@@ -81,6 +81,19 @@ export class Order {
   @Prop({ type: Number, required: true })
   finalTotalPrice!: number;
 
+  /**
+   * The commission rate this order was sold under. Snapshot, not a lookup —
+   * re-deriving commission from the restaurant's current rate would silently
+   * rewrite the value of every historical order the moment pricing changes,
+   * and there would be no way to prove what was agreed at the time.
+   */
+  @Prop({ type: Number, required: true, default: 0 })
+  commissionRate!: number;
+
+  /** Integer piasters. Rounded once, at creation. */
+  @Prop({ type: Number, required: true, default: 0 })
+  commissionCents!: number;
+
   @Prop({ type: Number, required: true })
   totalQuantity!: number;
 
@@ -122,7 +135,7 @@ export class Order {
 
   @Prop({
     type: String,
-    enum: ['Cash on Delivery'],
+    enum: ['Cash on Delivery', 'Card', 'Wallet'],
     default: 'Cash on Delivery',
     required: true,
   })
@@ -135,9 +148,42 @@ export class Order {
     required: true,
   })
   status!: OrderStatusEnum;
+
+  /**
+   * When the order was actually delivered. `updatedAt` is not a substitute —
+   * any later write to the order would silently restart the refund dispute
+   * window.
+   */
+  @Prop({ type: Date, required: false })
+  deliveredAt?: Date;
+
+  /**
+   * The payout that covers this order's sale line. Set when a payout is
+   * created, cleared if it fails. Absent means "not yet settled" — which is
+   * what the statement query filters on, so an order that was skipped as an
+   * exception stays payable instead of falling below a date watermark forever.
+   */
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Payout',
+    required: false,
+    index: true,
+  })
+  payoutId?: Types.ObjectId;
+
+  /**
+   * Set the first time this order's reserved stock goes back to its offers.
+   * Cancellation, payment failure, expiry and refund can all fire against the
+   * same order; without this flag the second one restocks a second time.
+   */
+  @Prop({ type: Date, required: false })
+  stockRestoredAt?: Date;
 }
 
 const OrderSchema = SchemaFactory.createForClass(Order);
+
+// Statement window: one restaurant's delivered orders in a deliveredAt range.
+OrderSchema.index({ restaurantId: 1, status: 1, deliveredAt: 1 });
 
 export const OrderModel = MongooseModule.forFeature([
   { name: Order.name, schema: OrderSchema },

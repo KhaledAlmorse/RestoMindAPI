@@ -1,0 +1,179 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { PaymentStatusEnum, RefundStatusEnum } from 'src/Common/Types';
+import { PaymentRepository, RefundRepository } from 'src/DB/Repositories';
+import { getPaymentWindowMs } from './paymob.config';
+import { PaymobService } from './paymob.service';
+import { PaymentsService, pickSettledTransaction } from './payments.service';
+
+/** Stop sweeping eventually, so a dead payment is not polled forever. */
+const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const REFUND_STUCK_MS = 10 * 60 * 1000;
+
+@Injectable()
+export class PaymentsReconciliationService {
+  private readonly logger = new Logger(PaymentsReconciliationService.name);
+
+  constructor(
+    private readonly paymentRepository: PaymentRepository,
+    private readonly refundRepository: RefundRepository,
+    private readonly paymobService: PaymobService,
+    private readonly paymentsService: PaymentsService,
+  ) {}
+
+  /**
+   * Resolves payments that never got a callback.
+   *
+   * Never blind-expires. A missing callback is very often a PAID order —
+   * expiring it without asking would cancel something the customer paid for.
+   * Wallet payments normally reach us only through this path, because
+   * `notification_url` on the Intention applies to card integrations only.
+   *
+   * Ticks every minute, but only touches payments older than the payment
+   * window — the tick is the resolution, the window is the policy. A tick
+   * coarser than the window is dead time during which an abandoned checkout
+   * keeps holding stock for no reason.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async sweepPendingPayments(): Promise<void> {
+    const now = Date.now();
+    const stale = await this.paymentRepository.findMany({
+      filters: {
+        status: PaymentStatusEnum.PENDING,
+        createdAt: {
+          $lte: new Date(now - getPaymentWindowMs()),
+          $gte: new Date(now - PENDING_MAX_AGE_MS),
+        },
+      },
+    });
+
+    for (const payment of stale ?? []) {
+      if (!payment.paymobOrderId) continue;
+
+      try {
+        const { transactions } =
+          await this.paymobService.getOrderWithTransactions(
+            payment.paymobOrderId,
+          );
+
+        const settled = pickSettledTransaction(transactions);
+        if (settled) {
+          // Same code path as a verified callback, so the two can never
+          // disagree about what a transaction means.
+          await this.paymentsService.applyTransactionOutcome(payment, settled);
+          continue;
+        }
+
+        // Genuinely never paid. Expire it and let the fulfiller compensate
+        // (restore stock, release the order).
+        await this.paymentRepository.update({
+          filters: { _id: payment._id },
+          body: { status: PaymentStatusEnum.EXPIRED } as any,
+        });
+        this.logger.log(`Expired unpaid payment ${String(payment._id)}`);
+      } catch (error: any) {
+        // An inquiry failure must never expire anything — try again next tick.
+        this.logger.error(
+          `Sweep failed for payment ${String(payment._id)}: ${error?.message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Resolves refunds whose gateway call timed out.
+   *
+   * Resolution is by INQUIRY only, never by re-issuing — re-issuing a refund
+   * whose outcome is unknown is how you refund twice.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async reconcileProcessingRefunds(): Promise<void> {
+    const stuck = await this.refundRepository.findMany({
+      filters: {
+        status: RefundStatusEnum.PROCESSING,
+        createdAt: { $lte: new Date(Date.now() - REFUND_STUCK_MS) },
+      },
+    });
+
+    for (const refund of stuck ?? []) {
+      try {
+        // A findOne with an undefined _id filter matches EVERYTHING and would
+        // hand back an unrelated payment.
+        if (!refund.paymentId) continue;
+
+        const payment = await this.paymentRepository.findOne({
+          filters: { _id: refund.paymentId },
+        });
+        if (!payment?.paymobOrderId) continue;
+
+        const { transactions } =
+          await this.paymobService.getOrderWithTransactions(
+            payment.paymobOrderId,
+          );
+
+        // A refund lands as its own CHILD transaction against the same order.
+        //
+        // The parent's `is_refunded` flag is NOT evidence for THIS refund: on a
+        // group order with two partials it stays true from the first one, and
+        // matching on it would mark a second, never-landed refund as succeeded
+        // — money the customer never received, headroom permanently consumed.
+        // Match the child by amount, and never claim a transaction another
+        // refund row already owns.
+        const alreadyClaimed = new Set(
+          (
+            (await this.refundRepository.findMany({
+              filters: {
+                paymentId: payment._id,
+                paymobRefundTransactionId: { $exists: true },
+              },
+            })) ?? []
+          ).map((r) => r.paymobRefundTransactionId),
+        );
+
+        const refundTxn = transactions.find(
+          (t) =>
+            t.has_parent_transaction === true &&
+            t.success === true &&
+            t.pending !== true &&
+            Number(t.amount_cents) === refund.amountCents &&
+            !alreadyClaimed.has(t.id),
+        );
+
+        if (refundTxn) {
+          await this.refundRepository.update({
+            filters: { _id: refund._id },
+            body: {
+              status: RefundStatusEnum.SUCCEEDED,
+              paymobRefundTransactionId: refundTxn.id,
+              completedAt: new Date(),
+            } as any,
+          });
+          this.logger.log(
+            `Reconciled refund ${String(refund._id)} as succeeded`,
+          );
+          continue;
+        }
+
+        // The gateway has no record, so the timed-out call never landed. Give
+        // the headroom back so a human can legitimately re-issue it.
+        await this.paymentsService.releaseRefundReservation(
+          payment._id,
+          refund.amountCents,
+        );
+        await this.refundRepository.update({
+          filters: { _id: refund._id },
+          body: {
+            status: RefundStatusEnum.MANUAL_REQUIRED,
+            gatewayError:
+              'Gateway call timed out and no matching refund transaction was found on inquiry',
+            completedAt: new Date(),
+          } as any,
+        });
+      } catch (error: any) {
+        this.logger.error(
+          `Refund reconciliation failed for ${String(refund._id)}: ${error?.message}`,
+        );
+      }
+    }
+  }
+}
