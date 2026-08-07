@@ -22,6 +22,11 @@ export enum OfferStatusEnum {
   EXPIRED = 'expired',
   CANCELLED = 'cancelled',
   SOLD_OUT = 'sold_out',
+  /**
+   * Billing consequence, distinct from CANCELLED (a merchant decision).
+   * Reactivation must be able to tell the two apart.
+   */
+  SUSPENDED = 'suspended',
 }
 
 export enum OfferSourceEnum {
@@ -49,6 +54,16 @@ export enum OrderStatusEnum {
   OUT_FOR_DELIVERY = 'Out For Delivery',
   DELIVERED = 'Delivered',
   CANCELLED = 'Cancelled',
+  /** Online payment started, stock reserved, money not yet confirmed. */
+  AWAITING_PAYMENT = 'Awaiting Payment',
+  PAYMENT_FAILED = 'Payment Failed',
+  /**
+   * Fully refunded AFTER delivery. Distinct from CANCELLED: the order was
+   * delivered, and calling it cancelled would falsify the fulfilment record
+   * and corrupt the sales history the forecasting model trains on.
+   */
+  REFUNDED = 'Refunded',
+  PARTIALLY_REFUNDED = 'Partially Refunded',
 }
 
 export enum StockTransactionTypeEnum {
@@ -156,4 +171,51 @@ export enum PartnershipApplicationStatusEnum {
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
   ONBOARDED = 'ONBOARDED',
+}
+
+export enum PaymentPurposeEnum {
+  SUBSCRIPTION = 'subscription',
+  ORDER = 'order',
+}
+
+export enum PaymentStatusEnum {
+  PENDING = 'pending',
+  PAID = 'paid',
+  FAILED = 'failed',
+  EXPIRED = 'expired',
+}
+
+export enum PaymentMethodEnum {
+  CARD = 'card',
+  WALLET = 'wallet',
+}
+
+export enum RefundStatusEnum {
+  REQUESTED = 'requested',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  PROCESSING = 'processing',
+  SUCCEEDED = 'succeeded',
+  FAILED = 'failed',
+  MANUAL_REQUIRED = 'manual_required',
+}
+
+export enum RefundSettlementModeEnum {
+  GATEWAY = 'gateway',
+  OFFLINE = 'offline',
+}
+
+export enum PayoutDirectionEnum {
+  /** RestoMind transfers the merchant their share. */
+  TO_MERCHANT = 'to_merchant',
+  /** The merchant pays RestoMind commission owed on cash-on-delivery sales. */
+  FROM_MERCHANT = 'from_merchant',
+}
+
+export enum PayoutStatusEnum {
+  /** Recorded, transfer not yet confirmed by the bank. */
+  PENDING = 'pending',
+  COMPLETED = 'completed',
+  /** The transfer bounced. Does not advance the merchant's paid-through mark. */
+  FAILED = 'failed',
 }

@@ -3,7 +3,6 @@ import {
   ExecutionContext,
   Injectable,
   HttpException,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -55,7 +54,12 @@ export class AuthGuard implements CanActivate {
       const { id } = decoded as { id: string };
       const user = await this.userRepository.findOne({ filters: { _id: id } });
       if (!user) {
-        throw new NotFoundException('User not found, please Login ');
+        // 401, not 404: the resource the caller asked for is not missing —
+        // their token is. Answering 404 makes every client treat a dead
+        // session as an application error, so the stale cookie is never
+        // cleared and the user sees "User not found" on every page until
+        // they happen to sign out by hand.
+        throw new UnauthorizedException('User not found, please Login ');
       }
 
       if (user.isActive === false) {

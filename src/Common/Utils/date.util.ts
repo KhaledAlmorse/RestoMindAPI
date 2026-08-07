@@ -125,6 +125,104 @@ export function getBusinessDayRange(dateStr: string): {
   };
 }
 
+type CairoParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+/** The Cairo wall-clock components of an instant. */
+function getBusinessParts(instant: Date): CairoParts {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIMEZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const parts = formatter
+    .formatToParts(instant)
+    .reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== 'literal') acc[p.type] = p.value;
+      return acc;
+    }, {});
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
+}
+
+/**
+ * Shifts an instant by rewriting its *Cairo* calendar components, then
+ * re-deriving the UTC instant from them.
+ *
+ * Doing the arithmetic on the local calendar rather than on the epoch value is
+ * what keeps the wall-clock time of day fixed across a DST transition: adding
+ * 14 days to 15:00 Cairo yields 15:00 Cairo, not 14:00, even when the offset
+ * changed from +3 to +2 in between.
+ */
+function shiftBusinessCalendar(
+  instant: Date,
+  shift: (parts: CairoParts) => CairoParts,
+): Date {
+  const target = shift(getBusinessParts(instant));
+
+  // Treat the target components as if they were UTC, then correct by the
+  // Cairo offset that actually applies *at that* moment — probing the
+  // candidate rather than the original is what makes this DST-correct.
+  const naive = Date.UTC(
+    target.year,
+    target.month - 1,
+    target.day,
+    target.hour,
+    target.minute,
+    target.second,
+    instant.getUTCMilliseconds(),
+  );
+  const offsetMs = getTimeZoneOffsetMs(new Date(naive), BUSINESS_TIMEZONE);
+  return new Date(naive - offsetMs);
+}
+
+/**
+ * Adds days to an instant, preserving the Cairo wall-clock time of day.
+ *
+ * A naive `+ n * 86400000` drifts by an hour whenever the span crosses Egypt's
+ * DST boundary, which silently moves a subscription's expiry. Accepts negative
+ * values.
+ */
+export function addDays(instant: Date, days: number): Date {
+  return shiftBusinessCalendar(instant, (parts) => ({
+    ...parts,
+    day: parts.day + days,
+  }));
+}
+
+/**
+ * Adds calendar months, clamping to the last valid day of the target month:
+ * 31 Jan + 1 month is 28 Feb (29 in a leap year), never 3 March. Accepts
+ * negative values.
+ */
+export function addMonths(instant: Date, months: number): Date {
+  return shiftBusinessCalendar(instant, (parts) => {
+    const zeroBased = parts.month - 1 + months;
+    const year = parts.year + Math.floor(zeroBased / 12);
+    const month = (((zeroBased % 12) + 12) % 12) + 1;
+    // Day 0 of the following month is the last day of this one.
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return { ...parts, year, month, day: Math.min(parts.day, lastDay) };
+  });
+}
+
 /** True only for a well-formed AND real calendar date. */
 export function isValidDateString(dateStr: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;

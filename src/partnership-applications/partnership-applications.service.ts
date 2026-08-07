@@ -18,6 +18,8 @@ import {
 import { PartnershipApplicationStatusEnum, RolesEnum } from 'src/Common/Types';
 import { TokenService } from 'src/Common/Services';
 import { sendEmail } from 'src/Common/Utils/send-email.utils';
+import { addDays } from 'src/Common/Utils';
+import { SystemSettingsService } from 'src/system-settings/system-settings.service';
 import { CreatePartnershipApplicationDto } from './dto/create-partnership-application.dto';
 import { QueryPartnershipApplicationDto } from './dto/query-partnership-application.dto';
 import { RejectPartnershipApplicationDto } from './dto/reject-partnership-application.dto';
@@ -35,6 +37,7 @@ export class PartnershipApplicationsService {
     private readonly restaurantRepository: RestaurantRepository,
     private readonly tokenService: TokenService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly systemSettingsService: SystemSettingsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -518,6 +521,39 @@ export class PartnershipApplicationsService {
           status: PartnershipApplicationStatusEnum.ONBOARDED,
         } as any,
       });
+
+      // The trial clock starts when the owner actually reaches the product,
+      // not when the admin approved it — an approval email left unread for a
+      // week should cost the merchant nothing.
+      if (application.restaurantId) {
+        const settings = await this.systemSettingsService.get();
+        const update: Record<string, any> = {};
+
+        if (settings.freeTrialEnabled) {
+          update['subscription.trialEndsAt'] = addDays(
+            new Date(),
+            settings.trialDurationDays,
+          );
+        }
+
+        // The seat is claimed once, here, and never recomputed. Counting at
+        // checkout instead would let renewals eat the seats, would reprice a
+        // merchant who was promised the early-bird rate, and would let two
+        // merchants claim the last seat at the same time.
+        if (settings.earlyBirdEnabled) {
+          const claimed = await this.systemSettingsService.countEarlyBirds();
+          if (claimed < settings.earlyBirdCap) {
+            update['subscription.earlyBird'] = true;
+          }
+        }
+
+        if (Object.keys(update).length) {
+          await this.restaurantRepository.update({
+            filters: { _id: application.restaurantId },
+            body: update as any,
+          });
+        }
+      }
     }
 
     return {

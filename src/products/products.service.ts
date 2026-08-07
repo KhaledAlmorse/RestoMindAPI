@@ -14,6 +14,7 @@ import {
   IngredientRepository,
   UserRepository,
 } from 'src/DB/Repositories';
+import { assertProductCapacity } from './product-cap';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
@@ -24,6 +25,11 @@ import slugify from 'slugify';
 import { OfferStatusEnum, RolesEnum } from 'src/Common/Types';
 import type { IAuthUser } from 'src/Common/Types';
 import { OffersService } from 'src/offers/offers.service';
+import { SubscriptionPlansService } from 'src/subscriptions/subscription-plans.service';
+import {
+  effectiveProductCap,
+  resolveSubscriptionState,
+} from 'src/subscriptions/subscription-state';
 
 @Injectable()
 export class ProductsService {
@@ -37,6 +43,7 @@ export class ProductsService {
     private readonly recipeRepository: RecipeRepository,
     private readonly ingredientRepository: IngredientRepository,
     private readonly userRepository: UserRepository,
+    private readonly plansService: SubscriptionPlansService,
   ) {}
 
   private validateObjectId(id: string) {
@@ -121,6 +128,38 @@ export class ProductsService {
     });
     if (!restaurant) {
       throw new NotFoundException('Restaurant not found');
+    }
+
+    // Checked before the Cloudinary upload below, so a rejected create never
+    // wastes an upload. Admins are not tenants and bypass the cap, matching
+    // the existing bypass in RestaurantOwnerGuard.
+    if (authUser.user.role !== RolesEnum.ADMIN) {
+      const productCount = await this.productRepository.countDocuments({
+        restaurantId: targetRestaurantId,
+        isDeleted: false,
+      });
+
+      // Loaded here rather than inside assertProductCapacity so that check
+      // stays pure and synchronous — it runs on every create.
+      const cap = effectiveProductCap(
+        restaurant.subscription,
+        resolveSubscriptionState(restaurant.subscription),
+      );
+      const nextPlan = await this.plansService.nextPlanAbove(cap);
+
+      assertProductCapacity(
+        restaurant.subscription,
+        productCount,
+        nextPlan
+          ? {
+              slug: nextPlan.slug,
+              label: nextPlan.label,
+              // Quote the monthly price: it is the cheapest way to unlock
+              // capacity today, which is what a blocked merchant needs.
+              priceEGP: (nextPlan.prices?.monthly ?? 0) / 100,
+            }
+          : null,
+      );
     }
 
     // Generate unique slug: restaurant-name + "-" + product-title

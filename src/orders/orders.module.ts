@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
+import { RefundsService } from './refunds.service';
+import { RefundsController } from './refunds.controller';
 import {
   OrderRepository,
   OrderGroupRepository,
@@ -43,7 +45,7 @@ import { OffersModule } from 'src/offers/offers.module';
     RestaurantModule,
     OffersModule,
   ],
-  controllers: [OrdersController],
+  controllers: [RefundsController, OrdersController],
   providers: [
     OrdersService,
     OrderRepository,
@@ -56,7 +58,8 @@ import { OffersModule } from 'src/offers/offers.module';
     IngredientRepository,
     InventoryBatchRepository,
     StockTransactionRepository,
+    RefundsService,
   ],
   exports: [OrdersService, OrderRepository, OrderGroupRepository],
 })
-export class OrdersModule {}
+export class OrdersModule { }

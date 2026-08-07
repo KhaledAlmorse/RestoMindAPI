@@ -15,6 +15,11 @@ export class OfferRulesService {
     OfferStatusEnum.SCHEDULED,
     OfferStatusEnum.ACTIVE,
     OfferStatusEnum.SOLD_OUT,
+    // A suspended offer still owns its time slot: it comes back the moment
+    // the subscription is paid. Without this, a merchant who pays and creates
+    // an overlapping offer before the next cron tick would end up with two
+    // competing offers for the same product and window.
+    OfferStatusEnum.SUSPENDED,
   ];
 
   private readonly STATUS_TRANSITIONS: Record<
@@ -37,6 +42,9 @@ export class OfferRulesService {
     ],
     [OfferStatusEnum.EXPIRED]: [],
     [OfferStatusEnum.CANCELLED]: [],
+    // System-only state. A merchant cannot manually move an offer out of
+    // suspension — paying the subscription is what restores it, via the cron.
+    [OfferStatusEnum.SUSPENDED]: [],
   };
 
   constructor(private readonly offerRepository: OfferRepository) {}

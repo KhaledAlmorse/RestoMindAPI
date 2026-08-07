@@ -23,6 +23,8 @@ import {
 
 import { RestaurantModule } from 'src/restaurant/restaurant.module';
 import { OffersModule } from 'src/offers/offers.module';
+// No cycle: SubscriptionsModule imports only DB model modules, never this one.
+import { SubscriptionsModule } from 'src/subscriptions/subscriptions.module';
 
 @Module({
   imports: [
@@ -34,6 +36,7 @@ import { OffersModule } from 'src/offers/offers.module';
     RecipeModel,
     IngredientModel,
     UserModel,
+    SubscriptionsModule,
   ],
   controllers: [ProductsController],
   providers: [

@@ -19,7 +19,10 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "migrate:order-groups": "ts-node -r tsconfig-paths/register src/scripts/migrate-order-groups.ts",
-    "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts"
+    "backfill:order-commission": "ts-node -r tsconfig-paths/register src/scripts/backfill-order-commission.ts",
+    "repair:cart-user-ids": "ts-node -r tsconfig-paths/register src/scripts/repair-cart-user-ids.ts",
+    "seed:subscription-plans": "ts-node -r tsconfig-paths/register src/scripts/seed-subscription-plans.ts",
+    "seed": "ts-node -r tsconfig-paths/register src/DB/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1102.0",
