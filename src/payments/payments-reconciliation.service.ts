@@ -2,11 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PaymentStatusEnum, RefundStatusEnum } from 'src/Common/Types';
 import { PaymentRepository, RefundRepository } from 'src/DB/Repositories';
+import { getPaymentWindowMs } from './paymob.config';
 import { PaymobService } from './paymob.service';
 import { PaymentsService, pickSettledTransaction } from './payments.service';
 
-/** A payment older than this with no resolution gets actively inquired about. */
-const PENDING_GRACE_MS = 15 * 60 * 1000;
 /** Stop sweeping eventually, so a dead payment is not polled forever. */
 const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const REFUND_STUCK_MS = 10 * 60 * 1000;
@@ -29,15 +28,20 @@ export class PaymentsReconciliationService {
    * expiring it without asking would cancel something the customer paid for.
    * Wallet payments normally reach us only through this path, because
    * `notification_url` on the Intention applies to card integrations only.
+   *
+   * Ticks every minute, but only touches payments older than the payment
+   * window — the tick is the resolution, the window is the policy. A tick
+   * coarser than the window is dead time during which an abandoned checkout
+   * keeps holding stock for no reason.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron(CronExpression.EVERY_MINUTE)
   async sweepPendingPayments(): Promise<void> {
     const now = Date.now();
     const stale = await this.paymentRepository.findMany({
       filters: {
         status: PaymentStatusEnum.PENDING,
         createdAt: {
-          $lte: new Date(now - PENDING_GRACE_MS),
+          $lte: new Date(now - getPaymentWindowMs()),
           $gte: new Date(now - PENDING_MAX_AGE_MS),
         },
       },

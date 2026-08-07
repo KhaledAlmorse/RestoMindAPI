@@ -76,6 +76,40 @@ export function getIntegrationId(method: PaymentMethodEnum): number {
   return parsed;
 }
 
+/** Minutes an unpaid checkout may hold its stock, when nothing is configured. */
+const DEFAULT_PAYMENT_WINDOW_MINUTES = 5;
+
+/**
+ * How long an abandoned checkout may hold its reserved stock.
+ *
+ * One value feeding four coupled call sites: the Paymob intention's own
+ * lifetime, the reconciliation sweeper's grace period, and the guard that stops
+ * a customer opening a second checkout while one is live. They must not drift
+ * apart — a grace shorter than the intention expires an order the customer can
+ * still legitimately pay for, and that late success then has to be
+ * auto-refunded (see PaymentsService.autoRefundLateSuccess). A grace longer
+ * than the guard window lets a customer start a second order while the first
+ * still holds stock.
+ *
+ * Read per call rather than captured at module load, so the value is settable
+ * per environment without a code change and tests can vary it.
+ */
+export function getPaymentWindowMs(): number {
+  const raw = process.env.PAYMENT_WINDOW_MINUTES;
+  const minutes =
+    raw === undefined || raw === '' ? DEFAULT_PAYMENT_WINDOW_MINUTES : Number(raw);
+
+  // Strict rather than falling back to the default: a typo'd value silently
+  // becoming 5 minutes is a stock-holding window nobody can explain later.
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new InternalServerErrorException(
+      `PAYMENT_WINDOW_MINUTES must be a positive number of minutes, got "${raw}"`,
+    );
+  }
+
+  return Math.round(minutes * 60 * 1000);
+}
+
 /**
  * The Unified Checkout redirect. Public key only — the Secret Key must never
  * reach the browser.

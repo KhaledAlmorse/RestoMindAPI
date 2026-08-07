@@ -45,7 +45,11 @@ import {
 } from 'src/subscriptions/subscription-state';
 import { OffersService } from 'src/offers/offers.service';
 import { PaymentsService } from 'src/payments/payments.service';
-import { getApiPublicUrl, getFrontendUrl } from 'src/payments/paymob.config';
+import {
+  getApiPublicUrl,
+  getFrontendUrl,
+  getPaymentWindowMs,
+} from 'src/payments/paymob.config';
 import { PaymentFulfiller } from 'src/payments/payment-fulfiller';
 import { PaymentType } from 'src/DB/Models/payment.model';
 import {
@@ -538,12 +542,14 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     if (isOnlinePayment) {
       // A customer holding an unpaid group younger than the intention
       // lifetime cannot start a second one — that would reserve the stock
-      // twice for the same person.
+      // twice for the same person. Same window as the intention and the
+      // sweeper's grace, so an older group is one the sweeper has already
+      // released rather than one still holding stock.
       const pendingGroup = await this.orderGroupRepository.findOne({
         filters: {
           userId: new Types.ObjectId(userId),
           overallStatus: OrderStatusEnum.AWAITING_PAYMENT,
-          createdAt: { $gte: new Date(Date.now() - 15 * 60 * 1000) },
+          createdAt: { $gte: new Date(Date.now() - getPaymentWindowMs()) },
         },
       });
       if (pendingGroup) {
@@ -941,7 +947,7 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
         ],
         notificationUrl: `${getApiPublicUrl()}/payments/webhook`,
         redirectionUrl: `${getFrontendUrl()}/checkout/result?group=${groupOrderId.toString()}`,
-        expirationSeconds: 900,
+        expirationSeconds: getPaymentWindowMs() / 1000,
       });
 
       return {
