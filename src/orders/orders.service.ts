@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection, isValidObjectId, Types } from 'mongoose';
@@ -50,6 +52,7 @@ import {
   commissionRateFor,
 } from 'src/payouts/payout.config';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
+import { RefundsService } from './refunds.service';
 
 @Injectable()
 export class OrdersService implements OnModuleInit, PaymentFulfiller {
@@ -70,6 +73,8 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     private readonly stockTransactionRepository: StockTransactionRepository,
     private readonly offersService: OffersService,
     private readonly paymentsService: PaymentsService,
+    @Inject(forwardRef(() => RefundsService))
+    private readonly refundsService: RefundsService,
     private readonly systemSettingsService: SystemSettingsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -980,27 +985,6 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
     return { data: await this.formatOrderGroup(group) };
   }
 
-  /**
-   * Refuses to cancel an order group that was paid for online.
-   *
-   * CANCELLED is terminal in the refund policy, so cancelling a paid order
-   * makes its refund permanently impossible through the API and the customer
-   * simply loses the money. The refund flow writes CANCELLED itself, but only
-   * after the money is provably back — that is the only correct ordering, and
-   * this guard is what forces both cancel paths through it.
-   */
-  private async assertRefundNotBypassed(
-    groupOrderId: Types.ObjectId,
-  ): Promise<void> {
-    const payment =
-      await this.paymentsService.findSettledOrderPayment(groupOrderId);
-    if (payment) {
-      throw new ConflictException(
-        'This order was paid online, so it cannot be cancelled directly. Refund it instead (POST /orders/group/:groupId/refunds) — that cancels the order once the money is back with the customer.',
-      );
-    }
-  }
-
   // 2b. PATCH /orders/group/:id/cancel - Cancel Order Group (Client)
   async cancelOrderGroup(groupId: string, currentUser: UserType) {
     this.validateObjectId(groupId);
@@ -1059,9 +1043,6 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       return { data: await this.formatOrderGroup(group) };
     }
 
-    // A paid group must be refunded, not cancelled — see the helper.
-    await this.assertRefundNotBypassed(group._id);
-
     // Strict Option A: Check if ANY child order is non-cancellable
     const nonCancellableOrders = childOrders.filter((o: any) => {
       const s = o.status;
@@ -1093,25 +1074,42 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       );
     }
 
-    // Perform cancellation for all active child orders in group
-    for (const childOrder of childOrders) {
-      if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
+    if (group.overallStatus === OrderStatusEnum.AWAITING_PAYMENT) {
+      // Nothing was ever paid — there is nothing to refund, and the refund
+      // policy treats AWAITING_PAYMENT as terminal (would throw). Cancel
+      // directly, exactly as before.
+      for (const childOrder of childOrders) {
+        if (childOrder.status === OrderStatusEnum.CANCELLED) continue;
 
-      // Update child order status to CANCELLED
-      await this.orderRepository.update({
-        filters: { _id: childOrder._id },
-        body: { status: OrderStatusEnum.CANCELLED } as any,
+        // Update child order status to CANCELLED
+        await this.orderRepository.update({
+          filters: { _id: childOrder._id },
+          body: { status: OrderStatusEnum.CANCELLED } as any,
+        });
+
+        // Restore inventory and update offer metrics
+        await this.restoreStockForOrder(childOrder);
+      }
+
+      // Update parent OrderGroup overallStatus
+      await this.orderGroupRepository.update({
+        filters: { _id: group._id },
+        body: { overallStatus: OrderStatusEnum.CANCELLED } as any,
       });
-
-      // Restore inventory and update offer metrics
-      await this.restoreStockForOrder(childOrder);
+    } else {
+      // Money could have been committed. requestRefund creates the Refund
+      // record, executes it, and — once the refund succeeds — writes
+      // CANCELLED to every child order and restores stock itself via
+      // applyOrderConsequences. Only PENDING/CONFIRMED groups reach this
+      // branch (nonCancellableOrders above already excludes staff-only and
+      // delivered statuses), and both are in CUSTOMER_AUTO_REFUNDABLE, so the
+      // refund always executes synchronously.
+      await this.refundsService.requestRefund(
+        groupId,
+        { reason: 'Order cancelled by customer' },
+        currentUser,
+      );
     }
-
-    // Update parent OrderGroup overallStatus
-    await this.orderGroupRepository.update({
-      filters: { _id: group._id },
-      body: { overallStatus: OrderStatusEnum.CANCELLED } as any,
-    });
 
     const updatedGroup = await this.orderGroupRepository.findOne({
       filters: { _id: group._id },
@@ -1270,11 +1268,53 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
       }
     }
 
-    // A paid order must be refunded, not cancelled — the refund flow writes
-    // CANCELLED itself once the money is back. Checked BEFORE the write, so a
-    // rejected cancellation leaves the order untouched.
-    if (status === OrderStatusEnum.CANCELLED && order.groupOrderId) {
-      await this.assertRefundNotBypassed(order.groupOrderId);
+    if (status === OrderStatusEnum.CANCELLED) {
+      if (
+        order.groupOrderId &&
+        order.status !== OrderStatusEnum.AWAITING_PAYMENT
+      ) {
+        // requestRefund creates the refund, runs gateway/offline execution, and
+        // — once the money is provably back — writes CANCELLED, restores stock,
+        // and recomputes the parent group's status itself.
+        await this.refundsService.requestRefund(
+          order.groupOrderId.toString(),
+          {
+            orderId: order._id.toString(),
+            reason: 'Order cancelled by restaurant',
+          },
+          currentUser,
+        );
+      } else {
+        // No parent group, or the group never got past AWAITING_PAYMENT — no
+        // money was ever committed, so there is nothing to refund. Cancel
+        // directly, exactly as before.
+        await this.orderRepository.update({
+          filters: { _id: targetObjId },
+          body: { status } as any,
+        });
+        await this.restoreStockForOrder(order);
+        if (order.groupOrderId) {
+          const siblingOrders = await this.orderRepository.findMany({
+            filters: { groupOrderId: order.groupOrderId },
+          });
+          const newOverallStatus = this.computeOverallStatus(
+            siblingOrders || [],
+          );
+          await this.orderGroupRepository.update({
+            filters: { _id: order.groupOrderId },
+            body: { overallStatus: newOverallStatus } as any,
+          });
+        }
+      }
+
+      const cancelledOrder = await this.orderRepository.findOne({
+        filters: { _id: targetObjId },
+        populationArray: [
+          { path: 'userId', select: '-password' },
+          { path: 'restaurantId' },
+        ],
+      });
+      return { data: this.formatChildOrder(cancelledOrder) };
     }
 
     await this.orderRepository.update({
@@ -1343,11 +1383,6 @@ export class OrdersService implements OnModuleInit, PaymentFulfiller {
           `Failed to sync sales transaction for delivered order ${id}: ${err.message}`,
         );
       }
-    }
-
-    // Handle CANCELLED logic
-    if (status === OrderStatusEnum.CANCELLED) {
-      await this.restoreStockForOrder(order);
     }
 
     // Recalculate parent OrderGroup overallStatus

@@ -267,6 +267,91 @@ describe('assertRestaurantScope', () => {
   });
 });
 
+describe('requestRefund — orderWasDelivered stamp', () => {
+  it('stamps orderWasDelivered: true when a staff-initiated refund targets a delivered order within the dispute window', async () => {
+    const groupId = oid();
+    const orderId = oid();
+    const order = {
+      _id: orderId,
+      status: OrderStatusEnum.DELIVERED,
+      deliveredAt: new Date(),
+      restaurantId: oid(),
+      finalTotalPrice: 100,
+      items: [],
+    };
+    const group = {
+      _id: groupId,
+      userId: oid(),
+      paymentMethod: 'Cash on Delivery',
+      finalTotalPrice: 100,
+    };
+    const currentUser = { _id: oid(), role: RolesEnum.ADMIN } as any;
+
+    const { service, refundRepository } = build({ group, orders: [order] });
+
+    await service.requestRefund(
+      String(groupId),
+      { reason: 'Delivered order dispute' } as any,
+      currentUser,
+    );
+
+    expect(refundRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ orderWasDelivered: true }),
+    );
+  });
+
+  it('stamps orderWasDelivered: false when none of the target orders were delivered', async () => {
+    const groupId = oid();
+    const orderId = oid();
+    const order = {
+      _id: orderId,
+      status: OrderStatusEnum.PENDING,
+      restaurantId: oid(),
+      finalTotalPrice: 100,
+      items: [],
+    };
+    const group = {
+      _id: groupId,
+      userId: oid(),
+      paymentMethod: 'Cash on Delivery',
+      finalTotalPrice: 100,
+    };
+    const currentUser = { _id: group.userId, role: RolesEnum.CUSTOMER } as any;
+
+    const { service, refundRepository } = build({ group, orders: [order] });
+
+    await service.requestRefund(
+      String(groupId),
+      { reason: 'Customer cancelled order' } as any,
+      currentUser,
+    );
+
+    expect(refundRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ orderWasDelivered: false }),
+    );
+  });
+});
+
+describe('listRefunds', () => {
+  it('populates orderGroupId, orderId, initiatedBy, and reviewedBy', async () => {
+    const { service, refundRepository } = build();
+    const currentUser = { role: RolesEnum.ADMIN } as any;
+
+    await service.listRefunds(currentUser);
+
+    expect(refundRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        populationArray: [
+          { path: 'orderGroupId' },
+          { path: 'orderId' },
+          { path: 'initiatedBy', select: '-password' },
+          { path: 'reviewedBy', select: '-password' },
+        ],
+      }),
+    );
+  });
+});
+
 describe('deliveredAtOf', () => {
   const { service } = build();
 

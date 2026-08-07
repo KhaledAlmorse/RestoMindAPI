@@ -2,9 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
 import {
@@ -42,6 +44,7 @@ export class RefundsService {
     private readonly orderRepository: OrderRepository,
     private readonly orderGroupRepository: OrderGroupRepository,
     private readonly paymentsService: PaymentsService,
+    @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
   ) {}
 
@@ -158,6 +161,7 @@ export class RefundsService {
       lineItemIndexes: body.lineItemIndexes,
       amountCents,
       reason: body.reason,
+      orderWasDelivered: deliveredAt !== null,
       settlementMode: isCod
         ? RefundSettlementModeEnum.OFFLINE
         : RefundSettlementModeEnum.GATEWAY,
@@ -296,7 +300,15 @@ export class RefundsService {
         $in: (orders || []).map((o) => o.groupOrderId).filter(Boolean),
       };
     }
-    const data = await this.refundRepository.findMany({ filters });
+    const data = await this.refundRepository.findMany({
+      filters,
+      populationArray: [
+        { path: 'orderGroupId' },
+        { path: 'orderId' },
+        { path: 'initiatedBy', select: '-password' },
+        { path: 'reviewedBy', select: '-password' },
+      ],
+    });
     return { data };
   }
 
