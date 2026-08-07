@@ -13,7 +13,7 @@ This is a standalone feature plan, independent of the AI Integration Roadmap (Ph
 5. **`APPROVED` vs `ONBOARDED` is ambiguous in the source doc.** The lifecycle diagram shows them as separate states, but the approval steps describe everything (user/restaurant creation, email) happening under "Approve," then just "Mark status = APPROVED." Resolved below: `APPROVED` = admin approved and the account/restaurant now exist; `ONBOARDED` = the owner has actually completed setup (set their password) and can log in. This makes the two states independently useful on the admin dashboard ("approved but hasn't logged in yet" is a real, actionable state).
 6. **No terminal-state lock defined.** `REJECTED`/`ONBOARDED` should behave like `Order.status`'s existing terminal-state lock — once reached, no further transitions.
 7. **Public status-check endpoint (`GET /partnership-applications/status/:id`) as specified leaks data to anyone with the ID.** Needs a second identifying factor (the submitted email) so application IDs can't be enumerated to view other businesses' submissions.
-8. **`commercialRegistration` is a plain string, but "Business Verification Flow" is a stated goal.** Worth an explicit decision: is this a registration *number* (string, fine as-is) or should it support a document *upload* (reusing the existing shared upload/MIME-validation service already used by Categories/Products)? Flagged as an open question, not decided silently either way.
+8. **`commercialRegistration` is a plain string, but "Business Verification Flow" is a stated goal.** Worth an explicit decision: is this a registration _number_ (string, fine as-is) or should it support a document _upload_ (reusing the existing shared upload/MIME-validation service already used by Categories/Products)? Flagged as an open question, not decided silently either way.
 
 ---
 
@@ -21,7 +21,7 @@ This is a standalone feature plan, independent of the AI Integration Roadmap (Ph
 
 ## Goal
 
-Let a business submit a partnership application publicly, and let admins list, review, approve, or reject it — without creating any `User` or `Restaurant` record yet. This phase is deliberately scoped to stop *before* the approval side-effect chain (Phase P2), since submission/review carries none of the cross-collection risk approval does.
+Let a business submit a partnership application publicly, and let admins list, review, approve, or reject it — without creating any `User` or `Restaurant` record yet. This phase is deliberately scoped to stop _before_ the approval side-effect chain (Phase P2), since submission/review carries none of the cross-collection risk approval does.
 
 ## Database Changes / Schemas
 
@@ -57,7 +57,7 @@ restaurantId            ObjectId → Restaurant   optional — set in Phase P2
 createdAt / updatedAt   Date
 ```
 
-**Note on name splitting:** the source spec splits "Mohamed Ahmed Reda" into `firstName`/`lastName` at *approval* time. Do it at **submission** time instead — store `ownerFirstName`/`ownerLastName` directly on the application (the form can just present two fields, "First Name" / "Last Name," instead of one combined field that needs fragile server-side splitting later). This avoids ever having to guess where a multi-word name splits.
+**Note on name splitting:** the source spec splits "Mohamed Ahmed Reda" into `firstName`/`lastName` at _approval_ time. Do it at **submission** time instead — store `ownerFirstName`/`ownerLastName` directly on the application (the form can just present two fields, "First Name" / "Last Name," instead of one combined field that needs fragile server-side splitting later). This avoids ever having to guess where a multi-word name splits.
 
 **Indexes:** `{ email: 1, status: 1 }` — supports the duplicate-pending check below and the status-check endpoint. `{ status: 1, createdAt: -1 }` — supports the admin list view's default sort/filter.
 
@@ -76,14 +76,14 @@ createdAt / updatedAt   Date
 
 ## API Endpoints
 
-| Method | Endpoint | Access | Description |
-|---|---|---|---|
-| POST | `/partnership-applications` | Public, rate-limited | Submit a new application |
-| GET | `/partnership-applications/status/:id` | Public, requires `?email=` match | Check status of your own application |
-| GET | `/admin/partnership-applications` | `admin` | List all, filterable by `status` |
-| GET | `/admin/partnership-applications/:id` | `admin` | Full detail |
-| PATCH | `/admin/partnership-applications/:id/review` | `admin` | `PENDING → UNDER_REVIEW` |
-| POST | `/admin/partnership-applications/:id/reject` | `admin` | Body: `{ reason }` — `PENDING/UNDER_REVIEW → REJECTED` |
+| Method | Endpoint                                     | Access                           | Description                                            |
+| ------ | -------------------------------------------- | -------------------------------- | ------------------------------------------------------ |
+| POST   | `/partnership-applications`                  | Public, rate-limited             | Submit a new application                               |
+| GET    | `/partnership-applications/status/:id`       | Public, requires `?email=` match | Check status of your own application                   |
+| GET    | `/admin/partnership-applications`            | `admin`                          | List all, filterable by `status`                       |
+| GET    | `/admin/partnership-applications/:id`        | `admin`                          | Full detail                                            |
+| PATCH  | `/admin/partnership-applications/:id/review` | `admin`                          | `PENDING → UNDER_REVIEW`                               |
+| POST   | `/admin/partnership-applications/:id/reject` | `admin`                          | Body: `{ reason }` — `PENDING/UNDER_REVIEW → REJECTED` |
 
 (`approve` is deliberately not in this phase's table — it belongs to Phase P2, since it's the endpoint that triggers the User/Restaurant creation chain.)
 
@@ -94,13 +94,14 @@ PENDING ──→ UNDER_REVIEW ──→ APPROVED (Phase P2) ──→ ONBOARDED
    │             │
    └─────────────┴──→ REJECTED
 ```
+
 Valid transitions: `PENDING→UNDER_REVIEW`, `PENDING→REJECTED`, `UNDER_REVIEW→REJECTED`, and (Phase P2) `PENDING→APPROVED`/`UNDER_REVIEW→APPROVED`, `APPROVED→ONBOARDED`. **`REJECTED` and `ONBOARDED` are terminal** — reject any further transition attempt on an application already in one of these states with `ConflictException`, mirroring the exact lock already used on `Order.status`.
 
 ## Security Considerations
 
 - **Rate limiting on `POST /partnership-applications`**: by IP and/or email (e.g. `@nestjs/throttler` if already used elsewhere in the project, or the equivalent existing pattern) — this is the one fully public, unauthenticated write endpoint in the whole system.
 - **Duplicate-pending check**: before creating a new application, query for an existing `{ email, status: { $in: ['PENDING','UNDER_REVIEW'] } }` — if found, reject with `ConflictException` ("You already have a pending application") rather than creating a second one silently.
-- **Status-check endpoint requires the email as a second factor**, not just the Mongo ID — `GET /partnership-applications/status/:id?email=...`, reject with `NotFoundException` if the email doesn't match that application's stored email (don't reveal *why* it didn't match — same "404, not 403" reasoning already established elsewhere in this project for cross-tenant lookups, applied here to prevent ID enumeration).
+- **Status-check endpoint requires the email as a second factor**, not just the Mongo ID — `GET /partnership-applications/status/:id?email=...`, reject with `NotFoundException` if the email doesn't match that application's stored email (don't reveal _why_ it didn't match — same "404, not 403" reasoning already established elsewhere in this project for cross-tenant lookups, applied here to prevent ID enumeration).
 
 ## Migration Strategy
 
@@ -144,14 +145,17 @@ Turn an `APPROVED` application into a real, working manager account and restaura
 ## Database Changes / Schemas
 
 **Modification to `Restaurant.address`** (additive, non-breaking):
+
 ```typescript
 district   String   optional   // NEW
 ```
 
 **Reuse, not new:** the setup-token mechanism extends the existing token-type pattern already used by `TokenService`/`AuthGuard` for access/refresh/reset tokens:
+
 ```
 tokenType: 'setup'   // NEW value alongside the existing access/refresh/reset types
 ```
+
 No new token collection needed — this rides the same infrastructure already established for the password-reset flow.
 
 ## Backend Implementation
@@ -159,17 +163,17 @@ No new token collection needed — this rides the same infrastructure already es
 - **`PartnershipApplicationsService.approve()`**: does **not** independently write `User` and `Restaurant` documents. It calls the **same internal service method Phase 0's `POST /restaurants` already uses** for atomic owner-linked creation (existence/role validation, duplicate-ownership rejection, transaction-wrapped). If that shared method doesn't currently accept "create the user too, not just link an existing one," extend it to accept an optional "create owner inline" mode — do not fork a second, parallel implementation.
 - **Approval transaction** (one Mongo transaction): create `User` (`role: 'manager'`, `firstName`/`lastName` from the application's already-split fields, `email`/`phone` from the application, no password set yet — or a random unusable placeholder, since real password entry happens via the setup token) → create `Restaurant` via the shared Phase 0 method (owner-linking, validation, and all its existing hardening included for free) → set `PartnershipApplication.userId`/`restaurantId`/`approvedBy`/`approvedAt` → set `status: 'APPROVED'`.
 - **Duplicate-email collision check before the transaction starts**: if a `User` with this email already exists (self-registered as a customer, or from an unrelated prior approval), reject `POST .../approve` with `ConflictException` — surface this to the admin as a manual-resolution case, don't let a duplicate-key error crash the transaction mid-way.
-- **Email sending is a separate, non-blocking step *after* the transaction commits** — wrapped in the same retry pattern already established for external calls elsewhere in this project (a few attempts, exponential backoff, log at `error` level on exhausted retries) — **a failed email must never roll back a successful approval**; the admin dashboard should surface "approved, email delivery failed" as a state an admin can manually resend from.
+- **Email sending is a separate, non-blocking step _after_ the transaction commits** — wrapped in the same retry pattern already established for external calls elsewhere in this project (a few attempts, exponential backoff, log at `error` level on exhausted retries) — **a failed email must never roll back a successful approval**; the admin dashboard should surface "approved, email delivery failed" as a state an admin can manually resend from.
 - **Setup token issuance**: generated via `TokenService` with `tokenType: 'setup'`, embedded in the approval email's link (`https://.../setup-account?token=...`).
 - **`POST /auth/setup-account`**: public, guarded by `@Auth({ tokenType: 'setup' })` (the same composed-decorator pattern already used for the reset-password token) — body `{ password }`, sets the user's real password, and — this is the step that finally sets `PartnershipApplication.status: 'ONBOARDED'`.
 
 ## API Endpoints
 
-| Method | Endpoint | Access | Description |
-|---|---|---|---|
-| POST | `/admin/partnership-applications/:id/approve` | `admin` | Triggers the full approval transaction + email |
-| POST | `/admin/partnership-applications/:id/resend-approval-email` | `admin` | Manual retry if the automated send failed |
-| POST | `/auth/setup-account` | Public, `tokenType: 'setup'` | Owner sets their password, application becomes `ONBOARDED` |
+| Method | Endpoint                                                    | Access                       | Description                                                |
+| ------ | ----------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| POST   | `/admin/partnership-applications/:id/approve`               | `admin`                      | Triggers the full approval transaction + email             |
+| POST   | `/admin/partnership-applications/:id/resend-approval-email` | `admin`                      | Manual retry if the automated send failed                  |
+| POST   | `/auth/setup-account`                                       | Public, `tokenType: 'setup'` | Owner sets their password, application becomes `ONBOARDED` |
 
 ## Email Flow
 

@@ -30,12 +30,15 @@ import { RecommendationsModule } from './recommendations/recommendations.module'
 import { PartnershipApplicationsModule } from './partnership-applications/partnership-applications.module';
 import { VectorStoreModule } from './vector-store/vector-store.module';
 import { AssistantModule } from './assistant/assistant.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { NotificationModule } from './notification/notification.module';
 import { SanitizedLoggerInterceptor } from './Common/Interceptors/sanitized-logger.interceptor';
 import { AllExceptionsFilter } from './Common/Filters/http-exception.filter';
 
 @Module({
   imports: [
     MongooseModule.forRoot(process.env.DB_URL as string),
+    EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([
       {
@@ -73,6 +76,7 @@ import { AllExceptionsFilter } from './Common/Filters/http-exception.filter';
     PartnershipApplicationsModule,
     VectorStoreModule,
     AssistantModule,
+    NotificationModule,
   ],
 
   controllers: [AppController],

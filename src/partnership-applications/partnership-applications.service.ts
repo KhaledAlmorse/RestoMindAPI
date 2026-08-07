@@ -23,6 +23,8 @@ import { QueryPartnershipApplicationDto } from './dto/query-partnership-applicat
 import { RejectPartnershipApplicationDto } from './dto/reject-partnership-application.dto';
 import { SetupAccountDto } from 'src/auth/dto/auth.dto';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
 @Injectable()
 export class PartnershipApplicationsService {
   private readonly logger = new Logger(PartnershipApplicationsService.name);
@@ -32,6 +34,7 @@ export class PartnershipApplicationsService {
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly tokenService: TokenService,
+    private readonly eventEmitter: EventEmitter2,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -72,6 +75,20 @@ export class PartnershipApplicationsService {
       email: dto.email.toLowerCase(),
       status: PartnershipApplicationStatusEnum.PENDING,
     } as any);
+
+    // Fire-and-forget event emission for admin notifications
+    try {
+      this.eventEmitter.emit('partnership-application.created', {
+        applicationId: application._id.toString(),
+        businessName: application.businessName,
+        ownerFirstName: application.ownerFirstName,
+        ownerLastName: application.ownerLastName,
+      });
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to emit partnership-application.created event for app ${application._id.toString()}: ${err?.message}`,
+      );
+    }
 
     return {
       message: 'Partnership application submitted successfully.',

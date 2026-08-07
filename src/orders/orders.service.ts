@@ -33,6 +33,7 @@ import {
 } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
 import { OffersService } from 'src/offers/offers.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class OrdersService {
@@ -52,6 +53,7 @@ export class OrdersService {
     private readonly inventoryBatchRepository: InventoryBatchRepository,
     private readonly stockTransactionRepository: StockTransactionRepository,
     private readonly offersService: OffersService,
+    private readonly eventEmitter: EventEmitter2,
     @InjectConnection() private readonly connection: Connection,
   ) {}
 
@@ -520,6 +522,7 @@ export class OrdersService {
 
     const groupOrderId = new Types.ObjectId();
     const createdOrderIds: Types.ObjectId[] = [];
+    const orderNotificationPayloads: { restaurantId: string; totalAmount: number }[] = [];
     let groupTotalOriginalPrice = 0;
     let groupTotalDiscount = 0;
     let groupFinalTotalPrice = 0;
@@ -642,6 +645,10 @@ export class OrdersService {
         });
 
         createdOrderIds.push(newOrder._id);
+        orderNotificationPayloads.push({
+          restaurantId,
+          totalAmount: finalTotalPrice,
+        });
       }
 
       await this.orderGroupRepository.create({
@@ -666,6 +673,22 @@ export class OrdersService {
     // Clear customer cart
     cart.items = [];
     await this.cartRepository.save(cart);
+
+    // Fire-and-forget notification event emission for manager notifications
+    try {
+      for (const payload of orderNotificationPayloads) {
+        this.eventEmitter.emit('order.created', {
+          restaurantId: payload.restaurantId,
+          orderGroupId: groupOrderId.toString(),
+          customerName: fullName,
+          totalAmount: payload.totalAmount,
+        });
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to emit order.created event for group ${groupOrderId.toString()}: ${err?.message}`,
+      );
+    }
 
     const populatedGroup = await this.orderGroupRepository.findOne({
       filters: { _id: groupOrderId },

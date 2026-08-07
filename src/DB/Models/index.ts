@@ -28,3 +28,4 @@ export * from './weekly-executive-snapshot.model';
 export * from './assistant-action-log.model';
 export * from './recommendation-action.model';
 export * from './assistant-chat-history.model';
+export * from './notification.model';
