@@ -27,6 +27,36 @@ interface PopulatedCategory {
  * ObjectId straight through to the AI service. The `typeof` check is what
  * distinguishes "populated document" from "raw reference"; keep it.
  */
+/**
+ * Closing hour used when a restaurant has not set one. Kept at the value that
+ * was previously hardcoded at the call site, so restaurants that never
+ * configure `closeHour` behave exactly as before.
+ */
+export const DEFAULT_CLOSE_HOUR = 22;
+
+/**
+ * A restaurant's closing hour as a Cairo wall-clock hour, 0–23.
+ *
+ * The surplus scan sizes its discount from the selling time left before this
+ * hour. A wrong value is not a rounding error: a bakery that closes at 18:00
+ * evaluated against 22 looks like it has four more hours to sell through, so
+ * the discount is too small and fires too late to clear anything.
+ *
+ * Rejects non-integers and out-of-range values rather than forwarding them —
+ * the AI service indexes an hourly sell-through curve with this.
+ */
+export function resolveCloseHour(closeHour: unknown): number {
+  if (
+    typeof closeHour === 'number' &&
+    Number.isInteger(closeHour) &&
+    closeHour >= 0 &&
+    closeHour <= 23
+  ) {
+    return closeHour;
+  }
+  return DEFAULT_CLOSE_HOUR;
+}
+
 export function resolveCategoryName(category: unknown): string {
   if (
     category &&

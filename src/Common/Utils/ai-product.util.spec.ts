@@ -1,5 +1,9 @@
 import { Types } from 'mongoose';
-import { resolveCategoryName } from './ai-product.util';
+import {
+  DEFAULT_CLOSE_HOUR,
+  resolveCategoryName,
+  resolveCloseHour,
+} from './ai-product.util';
 
 describe('resolveCategoryName', () => {
   it('returns the name of a populated category', () => {
@@ -38,5 +42,35 @@ describe('resolveCategoryName', () => {
 
   it('trims surrounding whitespace', () => {
     expect(resolveCategoryName({ name: '  Fresh Bread  ' })).toBe('Fresh Bread');
+  });
+});
+
+describe('resolveCloseHour', () => {
+  it('uses the restaurant’s own closing hour', () => {
+    expect(resolveCloseHour(18)).toBe(18);
+    expect(resolveCloseHour(23)).toBe(23);
+  });
+
+  it('accepts midnight, which is a real closing hour', () => {
+    // 0 is falsy — a `closeHour || DEFAULT` guard would silently turn a shop
+    // that closes at midnight into one that closes at 22:00.
+    expect(resolveCloseHour(0)).toBe(0);
+  });
+
+  it('falls back when unset, so existing restaurants need no migration', () => {
+    expect(resolveCloseHour(undefined)).toBe(DEFAULT_CLOSE_HOUR);
+    expect(resolveCloseHour(null)).toBe(DEFAULT_CLOSE_HOUR);
+  });
+
+  it('rejects values the AI service cannot index a sell-through curve with', () => {
+    expect(resolveCloseHour(24)).toBe(DEFAULT_CLOSE_HOUR);
+    expect(resolveCloseHour(-1)).toBe(DEFAULT_CLOSE_HOUR);
+    expect(resolveCloseHour(18.5)).toBe(DEFAULT_CLOSE_HOUR);
+    expect(resolveCloseHour(NaN)).toBe(DEFAULT_CLOSE_HOUR);
+    expect(resolveCloseHour('18')).toBe(DEFAULT_CLOSE_HOUR);
+  });
+
+  it('keeps the previously hardcoded value as the default', () => {
+    expect(DEFAULT_CLOSE_HOUR).toBe(22);
   });
 });
