@@ -31,6 +31,8 @@ import {
   SalesSourceEnum,
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
+import { getBusinessDateString } from 'src/Common/Utils/date.util';
+import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
 
 @Injectable()
 export class ImportsService {
@@ -219,10 +221,13 @@ export class ImportsService {
       const effectiveMapping = dto.columnMapping || job.columnMapping || {};
       const headers = Object.keys(effectiveMapping);
 
-      // Fetch existing master data for validation
+      // Fetch existing master data for validation. `category` is populated
+      // because the sales_history branch forwards these products to the AI
+      // service, which needs the category NAME to resolve calendar priors.
       const products =
         (await this.productRepository.findMany({
           filters: { restaurantId, isDeleted: false },
+          populationArray: [{ path: 'category' }],
         })) || [];
 
       const ingredients =
@@ -774,8 +779,14 @@ export class ImportsService {
 
         // Trigger AI Auto-Ingest if valid rows exist
         if (validCount > 0) {
+          // Cairo, matching handleNightlyAiSync and the backfill in
+          // weekly-prediction.service.ts. All three feed the same AI registry,
+          // which de-duplicates on (date, productId); a UTC-derived key here
+          // would disagree with theirs, double-writing every row the nightly
+          // sync later re-sends and shifting days across the registry's
+          // weekend/event filter.
           const recordsPayload = validRows.map((r) => ({
-            date: r.date.toISOString().split('T')[0],
+            date: getBusinessDateString(r.date),
             productId: r.productId.toString(),
             salesQty: r.quantitySold,
           }));
@@ -783,7 +794,7 @@ export class ImportsService {
           const productsPayload = products.map((p: any) => ({
             productId: p._id.toString(),
             title: p.title,
-            category: p.category || 'General',
+            category: resolveCategoryName(p.category),
           }));
 
           const aiResult = await this.aiIngestService.ingest({
@@ -958,10 +969,13 @@ export class ImportsService {
     const products =
       (await this.productRepository.findMany({
         filters: { restaurantId, isDeleted: false },
+        populationArray: [{ path: 'category' }],
       })) || [];
 
+    // Cairo, for the same reason as the confirm path above: the registry's
+    // (date, productId) dedup key must agree across every ingest caller.
     const recordsPayload = transactions.map((t) => ({
-      date: new Date(t.date).toISOString().split('T')[0],
+      date: getBusinessDateString(new Date(t.date)),
       productId: t.productId.toString(),
       salesQty: t.quantitySold,
     }));
@@ -969,7 +983,7 @@ export class ImportsService {
     const productsPayload = products.map((p: any) => ({
       productId: p._id.toString(),
       title: p.title,
-      category: p.category || 'General',
+      category: resolveCategoryName(p.category),
     }));
 
     const aiResult = await this.aiIngestService.ingest({

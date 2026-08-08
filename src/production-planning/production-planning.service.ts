@@ -32,6 +32,7 @@ import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
 import { AiClientService } from '../Common/Services/ai-client.service';
+import { resolveCategoryName } from '../Common/Utils/ai-product.util';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -329,10 +330,7 @@ export class ProductionPlanningService {
         salesRowCount,
         prod,
       );
-      const categoryName =
-        prod.category && typeof prod.category === 'object' && prod.category.name
-          ? prod.category.name
-          : 'General';
+      const categoryName = resolveCategoryName(prod.category);
 
       return {
         productId: pIdStr,
@@ -567,10 +565,7 @@ export class ProductionPlanningService {
           products: products.map((p: any) => ({
             productId: p._id.toString(),
             title: p.title || 'Product',
-            category:
-              p.category && typeof p.category === 'object' && p.category.name
-                ? p.category.name
-                : undefined,
+            category: resolveCategoryName(p.category),
           })),
         });
       } catch (err: any) {
