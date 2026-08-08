@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AssistantService } from './services/assistant.service';
 import { ArabicNormalizerService } from './services/arabic-normalizer.service';
 import { ConversationStateService } from './services/conversation-state.service';
 import { PlannerService } from './services/planner.service';
@@ -86,6 +87,131 @@ describe('Agentic AI & RAG Suite', () => {
       expect(plan.intent).toBeDefined();
       expect(plan.steps).toBeDefined();
       expect(Array.isArray(plan.steps)).toBe(true);
+    });
+  });
+
+  describe('Recipe Ingredients & Formatting Tests (TEST 1 - TEST 5)', () => {
+    it('TEST 1: should format exact 3 ingredients and quantities into Markdown table', async () => {
+      const toolResults = [
+        {
+          toolName: 'getRecipeIngredients',
+          result: {
+            productName: 'Croissant',
+            foundProduct: true,
+            hasRecipe: true,
+            ingredients: [
+              { name: 'Flour', quantity: 10, unit: 'kg' },
+              { name: 'Butter', quantity: 2, unit: 'kg' },
+              { name: 'Sugar', quantity: 1, unit: 'kg' },
+            ],
+          },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هي مكونات الكرواسون؟',
+        'arabic',
+        'Information',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toContain('### المكونات');
+      expect(res).toContain('| Flour | 10 | kg |');
+      expect(res).toContain('| Butter | 2 | kg |');
+      expect(res).toContain('| Sugar | 1 | kg |');
+      expect(res).not.toContain('طريقة التحضير');
+    });
+
+    it('TEST 2 & TEST 5: should mark missing quantity as "غير متوفرة" without inventing numbers', async () => {
+      const toolResults = [
+        {
+          toolName: 'getRecipeIngredients',
+          result: {
+            productName: 'Special Dish',
+            foundProduct: true,
+            hasRecipe: true,
+            ingredients: [
+              { name: 'Secret Sauce', quantity: null, unit: null },
+            ],
+          },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هي مكونات المنتج؟',
+        'arabic',
+        'Information',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toContain('| Secret Sauce | غير متوفرة | غير متوفرة |');
+    });
+
+    it('TEST 3: should NOT generate preparation steps when database contains ingredients only', async () => {
+      const toolResults = [
+        {
+          toolName: 'getRecipeIngredients',
+          result: {
+            productName: 'Basbousa',
+            foundProduct: true,
+            hasRecipe: true,
+            ingredients: [{ name: 'Semolina', quantity: 1, unit: 'kg' }],
+          },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هي مكونات البسبوسة وخطوات التحضير؟',
+        'arabic',
+        'Information',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toContain('### المكونات');
+      expect(res).not.toContain('طريقة التحضير');
+      expect(res).not.toContain('درجة حرارة الفرن');
+    });
+
+    it('TEST 4: should return explicit unavailable message when database has no recipe information', async () => {
+      const toolResults = [
+        {
+          toolName: 'getRecipeIngredients',
+          result: {
+            productName: 'Unknown Item',
+            foundProduct: false,
+            hasRecipe: false,
+            ingredients: [],
+          },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هي مكونات المنتج غير المعروف؟',
+        'arabic',
+        'Information',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toBe('لا توجد معلومات مسجلة عن مكونات هذا المنتج في البيانات المتاحة.');
+    });
+  });
+
+  describe('AssistantService Security Boundaries', () => {
+    it('should sanitize output text and redact secret keys', () => {
+      const rawText = 'API key is sbg_123456789 and url is mongodb+srv://admin:pass@cluster.mongodb.net';
+      const sanitized = (AssistantService.prototype as any).sanitizeOutputText(rawText);
+      expect(sanitized).not.toContain('sbg_123456789');
+      expect(sanitized).not.toContain('mongodb+srv://admin:pass');
+      expect(sanitized).toContain('[REDACTED_API_KEY]');
+      expect(sanitized).toContain('[REDACTED_DB_URL]');
     });
   });
 });

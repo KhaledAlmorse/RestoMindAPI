@@ -10,16 +10,16 @@ This architecture evolves pure RAG into an **Autonomous Agentic AI Engine**. The
 
 The system utilizes a decoupled **AI Provider Pattern Architecture** (`AIProvider` interface) supporting 3 execution environments seamlessly selected from `.env`:
 
-1. **Scholarship HTTP Gateway Provider (`GatewayProvider`)**: Direct HTTP Bearer client for scholarship API keys (`sbg_...`) without requiring AWS IAM credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+1. **Scholarship HTTP Gateway Provider (`GatewayProvider`)**: Direct HTTP Bearer client for scholarship API keys (`sbg_...`) targeting the ITI Gateway (`http://apiaccess.iti.net.eg/api/v1/student/chat` and `/student/embed`).
 2. **AWS Bedrock SDK Provider (`BedrockProvider`)**: Direct AWS Bedrock Runtime client (`@aws-sdk/client-bedrock-runtime`) for standard AWS IAM keys.
 3. **Standalone Local Provider (`LocalProvider`)**: Zero-network offline provider for local development and deterministic testing.
 
 Approved Bedrock Models:
 
-- **Primary LLM**: `anthropic.claude-sonnet-4-6` (High-reasoning synthesis & structured recommendation generation)
-- **Fast Router / Planner**: `anthropic.claude-haiku-4-5-20251001-v1:0` (Sub-150ms intent routing & tool parameter extraction)
-- **Primary Multilingual Embedding**: `us.cohere.embed-v4:0` (1024-dim cross-retrieval for Arabic/English)
-- **Fallback Embedding**: `amazon.titan-embed-text-v2:0:8k` / `amazon.nova-2-multimodal-embeddings-v1:0`
+- **Primary LLM**: `amazon.nova-lite-v1:0` / `anthropic.claude-sonnet-4-6` (High-reasoning synthesis & structured recommendation generation)
+- **Fast Router / Planner**: `amazon.nova-micro-v1:0` / `anthropic.claude-haiku-4-5-20251001-v1:0` (Sub-150ms intent routing & tool parameter extraction)
+- **Primary Multilingual Embedding**: `us.cohere.embed-v4:0` / `amazon.titan-embed-text-v2:0` (1024-dim cross-retrieval for Arabic/English)
+- **Fallback Embedding**: `amazon.titan-embed-text-v2:0`
 - **Voice Assistant**: `mistral.voxtral-small-24b-2507` / `amazon.nova-2-sonic-v1:0` (Speech-to-text for kitchen staff)
 
 ---
@@ -250,17 +250,18 @@ Add the configuration options to your **`.env`** file at the root of `RestoMindA
 # SCHOLARSHIP AI GATEWAY CONFIGURATION
 # ==========================================
 # Set your scholarship key here (starts with sbg_)
-SCHOLARSHIP_API_KEY=sbg_75b75JIPXAyg...
-BEDROCK_GATEWAY_URL=https://your-scholarship-gateway-domain.com
+SCHOLARSHIP_API_KEY=sbg_DKoPRQLwUy6X4_sqvaQR1fSyOX_tHPjd
+SBG_API_KEY=sbg_DKoPRQLwUy6X4_sqvaQR1fSyOX_tHPjd
+BEDROCK_GATEWAY_URL=http://apiaccess.iti.net.eg
 
 # AI Provider Selection: 'gateway' (scholarship proxy key), 'bedrock' (AWS SDK), 'local' (offline dev)
 AI_PROVIDER_TYPE=gateway
 
 # Exact Approved Bedrock Model Identifiers
-BEDROCK_PRIMARY_LLM=anthropic.claude-sonnet-4-6
-BEDROCK_ROUTER_LLM=anthropic.claude-haiku-4-5-20251001-v1:0
+BEDROCK_PRIMARY_LLM=amazon.nova-lite-v1:0
+BEDROCK_ROUTER_LLM=amazon.nova-micro-v1:0
 BEDROCK_PRIMARY_EMBEDDING=us.cohere.embed-v4:0
-BEDROCK_FALLBACK_EMBEDDING=amazon.titan-embed-text-v2:0:8k
+BEDROCK_FALLBACK_EMBEDDING=amazon.titan-embed-text-v2:0
 ```
 
 ---
@@ -438,3 +439,34 @@ src/
 │   └── jobs/
 │       └── weekly-snapshot.job.ts           # Executive Snapshot Cron Job
 ```
+
+---
+
+## 🛡️ 10. Security & Hardening Architecture
+
+RestoMind implements defensive security boundaries around its AI Assistant and RAG pipeline to mitigate OWASP LLM Application Security risks:
+
+### 1. Multi-Tenant Isolation
+- **Server-Side Enforcement**: `restaurantId` and `userId` are extracted exclusively from authenticated JWT payloads (`authUser`) in `AssistantController`.
+- **Query Scoping**: All database reads, Mongo aggregations, and Atlas `$vectorSearch` pipeline stages strictly enforce `restaurantId: { $eq: restaurantId }`. The LLM is never permitted to choose, override, or supply tenant identifiers.
+
+### 2. Prompt Injection & Trust Boundary Defense
+- **XML Data Boundaries**: Grounded tool results and retrieved RAG matches are enclosed in `<UNTRUSTED_GROUNDED_DATA>` and `<UNTRUSTED_RECOMMENDATIONS>` XML boundary tags.
+- **System Directives**: System prompts explicitly instruct the LLM to treat content inside `<UNTRUSTED_...>` tags strictly as literal data to summarize or process, prohibiting the execution of embedded instructions or rule overrides.
+
+### 3. Action Tool Approval Enforcement (Excessive Agency Guard)
+- **Mandatory Server-Side Guard**: `ToolExecutorService` unconditionally blocks immediate execution of state-changing action tools (`createOffer`, `createPurchaseOrder`, `updateProductionPlan`, `scheduleDiscount`, `sendNotification`).
+- **Approval Workflow**: Unapproved action calls return `status: PENDING_HUMAN_APPROVAL` and `executed: false`, requiring explicit manager confirmation via `/assistant/approve-action`.
+
+### 4. Input & Execution Bounded Consumption (DoS Protection)
+- **Input Cap**: Incoming user message prompts are validated and truncated to a maximum of 2,000 characters.
+- **Plan Step Cap**: `PlannerService` caps execution plans to a maximum of 5 tool steps.
+- **Tool Execution Cap**: `ToolExecutorService` caps total tool calls to a maximum of 5 executions per request.
+- **Vector Retrieval Cap**: `KnowledgeSearchTool` and `VectorStoreService` cap RAG document retrieval limits to a maximum of 10 matches.
+
+### 5. System Prompt & Secret Leakage Protection
+- **Prompt Protection**: System prompts instruct the model never to disclose underlying instructions, hidden system policies, or internal credentials.
+- **Output Sanitization**: `AssistantService.sanitizeOutputText` and `ToolRegistryService` sanitize response strings and error logs to redact internal secret strings, API keys (`sbg_...`), Bearer tokens, and database connection strings.
+
+### 6. Audit Logging
+- **Audit Logging**: Tool invocations, execution timings, and blocked human approval actions format structured logs tagged with `[AUDIT]` without exposing secret credentials.

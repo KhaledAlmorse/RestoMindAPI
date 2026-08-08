@@ -23,17 +23,21 @@ export class ToolExecutorService {
     allowActionExecution = false,
   ): Promise<ToolExecutionResult[]> {
     const results: ToolExecutionResult[] = [];
+    const boundedSteps = (steps || []).slice(0, 5);
 
-    for (const step of steps) {
+    for (const step of boundedSteps) {
       const tool = this.toolRegistry.getTool(step.toolName);
 
       if (!tool) {
-        this.logger.warn(`Step requested unknown tool [${step.toolName}]. Skipping.`);
+        this.logger.warn(`[AUDIT] Step requested unknown tool [${step.toolName}] for restaurant [${context.restaurantId}]. Skipping.`);
         continue;
       }
 
       // If tool requires human approval and execution is not explicitly approved yet, mark as pending
       if (tool.requiresApproval && !allowActionExecution) {
+        this.logger.log(
+          `[AUDIT] Tool [${step.toolName}] requires approval for restaurant [${context.restaurantId}]. Execution blocked until user confirms in UI.`,
+        );
         results.push({
           toolName: step.toolName,
           arguments: step.arguments,
