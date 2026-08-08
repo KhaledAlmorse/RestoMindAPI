@@ -7,6 +7,7 @@ import {
   getBusinessDayOfWeek,
   getBusinessDayRange,
   isValidDateString,
+  parseBusinessDate,
 } from './date.util';
 
 describe('date.util', () => {
@@ -72,6 +73,67 @@ describe('date.util', () => {
       const { start, end } = getBusinessDayRange('2026-01-15');
       expect(start.toISOString()).toBe('2026-01-14T22:00:00.000Z');
       expect(end.toISOString()).toBe('2026-01-15T22:00:00.000Z');
+    });
+  });
+
+  describe('parseBusinessDate', () => {
+    // The bug this exists to prevent: a CSV `date` cell parsed with bare
+    // `new Date()` lands on the previous day for every non-ISO format, because
+    // those are read as *local* midnight. Both forms below name the same
+    // calendar day and must survive as that day.
+    it('reads an ISO calendar date as that calendar day', () => {
+      const parsed = parseBusinessDate('2026-01-15');
+      expect(getBusinessDateString(parsed!)).toBe('2026-01-15');
+    });
+
+    it('reads a slash-formatted date as the same calendar day', () => {
+      const parsed = parseBusinessDate('01/15/2026');
+      expect(getBusinessDateString(parsed!)).toBe('2026-01-15');
+    });
+
+    it('reads a written-out date as the same calendar day', () => {
+      const parsed = parseBusinessDate('Jan 15 2026');
+      expect(getBusinessDateString(parsed!)).toBe('2026-01-15');
+    });
+
+    it('anchors at UTC noon so no timezone can shift the day', () => {
+      expect(parseBusinessDate('2026-01-15')!.toISOString()).toBe(
+        '2026-01-15T12:00:00.000Z',
+      );
+      // Summer, where Cairo is UTC+3 rather than +2.
+      expect(parseBusinessDate('2026-07-15')!.toISOString()).toBe(
+        '2026-07-15T12:00:00.000Z',
+      );
+    });
+
+    it('lands inside the Cairo day range it names, in both DST halves', () => {
+      for (const dateStr of ['2026-01-15', '2026-07-15']) {
+        const parsed = parseBusinessDate(dateStr)!;
+        const { start, end } = getBusinessDayRange(dateStr);
+        expect(parsed.getTime()).toBeGreaterThanOrEqual(start.getTime());
+        expect(parsed.getTime()).toBeLessThan(end.getTime());
+      }
+    });
+
+    it('resolves a full timestamp to the Cairo day it falls in', () => {
+      // 22:30Z on the 14th is already 00:30 on the 15th in Cairo (winter, +2).
+      const parsed = parseBusinessDate('2026-01-14T22:30:00.000Z');
+      expect(getBusinessDateString(parsed!)).toBe('2026-01-15');
+    });
+
+    it('accepts a Date instance and normalises it to its Cairo day', () => {
+      const parsed = parseBusinessDate(new Date('2026-01-14T22:30:00.000Z'));
+      expect(getBusinessDateString(parsed!)).toBe('2026-01-15');
+    });
+
+    it('returns null for unparseable and impossible dates', () => {
+      expect(parseBusinessDate('not-a-date')).toBeNull();
+      expect(parseBusinessDate('2026-02-30')).toBeNull();
+      expect(parseBusinessDate('2026-13-01')).toBeNull();
+      expect(parseBusinessDate('')).toBeNull();
+      expect(parseBusinessDate(null)).toBeNull();
+      expect(parseBusinessDate(undefined)).toBeNull();
+      expect(parseBusinessDate(new Date('nope'))).toBeNull();
     });
   });
 });

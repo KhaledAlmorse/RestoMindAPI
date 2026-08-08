@@ -31,6 +31,7 @@ import {
   SalesSourceEnum,
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
+import { getBusinessDateString } from 'src/Common/Utils/date.util';
 
 @Injectable()
 export class ImportsService {
@@ -774,8 +775,14 @@ export class ImportsService {
 
         // Trigger AI Auto-Ingest if valid rows exist
         if (validCount > 0) {
+          // Cairo, matching handleNightlyAiSync and the backfill in
+          // weekly-prediction.service.ts. All three feed the same AI registry,
+          // which de-duplicates on (date, productId); a UTC-derived key here
+          // would disagree with theirs, double-writing every row the nightly
+          // sync later re-sends and shifting days across the registry's
+          // weekend/event filter.
           const recordsPayload = validRows.map((r) => ({
-            date: r.date.toISOString().split('T')[0],
+            date: getBusinessDateString(r.date),
             productId: r.productId.toString(),
             salesQty: r.quantitySold,
           }));
@@ -960,8 +967,10 @@ export class ImportsService {
         filters: { restaurantId, isDeleted: false },
       })) || [];
 
+    // Cairo, for the same reason as the confirm path above: the registry's
+    // (date, productId) dedup key must agree across every ingest caller.
     const recordsPayload = transactions.map((t) => ({
-      date: new Date(t.date).toISOString().split('T')[0],
+      date: getBusinessDateString(new Date(t.date)),
       productId: t.productId.toString(),
       salesQty: t.quantitySold,
     }));
