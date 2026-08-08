@@ -66,6 +66,9 @@ export class ImportJob {
   @Prop({ type: String })
   aiIngestLastError?: string;
 
+  @Prop({ type: String })
+  failureReason?: string;
+
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
 }

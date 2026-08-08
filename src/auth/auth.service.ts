@@ -197,12 +197,45 @@ export class AuthService {
 
   // ─── Logout ──────────────────────────────────────────────────────────────────
 
-  async logout(user: IAuthUser) {
-    return this.revokeTokenRepository.create({
-      tokenId: user.token['jti'],
-      userId: user.user._id,
-      expiryTime: user.token['exp'],
+  async logout(user: IAuthUser, refreshToken?: string) {
+    if (user.token && user.token['jti']) {
+      const accessExp = user.token['exp']
+        ? new Date(user.token['exp'] * 1000)
+        : new Date(Date.now() + 15 * 60 * 1000);
+      await this.revokeTokenRepository.create({
+        tokenId: user.token['jti'],
+        userId: user.user._id,
+        expiryTime: accessExp,
+      });
+    }
+
+    if (refreshToken) {
+      try {
+        const decodedRefresh = this.tokenService.verify(refreshToken, {
+          secret: process.env.REFRESH_TOKEN_SECRET as string,
+        }) as { jti?: string; exp?: number };
+
+        if (decodedRefresh && decodedRefresh.jti) {
+          const refreshExp = decodedRefresh.exp
+            ? new Date(decodedRefresh.exp * 1000)
+            : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          await this.revokeTokenRepository.create({
+            tokenId: decodedRefresh.jti,
+            userId: user.user._id,
+            expiryTime: refreshExp,
+          });
+        }
+      } catch {
+        // Ignore token verification errors if already expired/malformed
+      }
+    }
+
+    await this.userRepository.update({
+      filters: { _id: user.user._id },
+      body: { tokensRevokedAt: new Date() } as any,
     });
+
+    return { message: 'Logout successfully' };
   }
 
   // ─── Send OTP ────────────────────────────────────────────────────────────────
@@ -397,6 +430,17 @@ export class AuthService {
       throw new UnauthorizedException('Token has been revoked');
     }
 
+    // Revoke OLD Refresh Token (Rotation)
+    const refreshExp = token['exp']
+      ? new Date(token['exp'] * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.revokeTokenRepository.create({
+      tokenId: token['jti'],
+      userId: user._id,
+      expiryTime: refreshExp,
+    });
+
     const tokenPayload = { id: user._id, email: user.email };
     const accessToken = this.tokenService.generate(tokenPayload, {
       secret: process.env.ACCESS_TOKEN_SECRET,
@@ -404,7 +448,13 @@ export class AuthService {
       jwtid: randomUUID(),
     });
 
-    return { accessToken };
+    const refreshToken = this.tokenService.generate(tokenPayload, {
+      secret: process.env.REFRESH_TOKEN_SECRET,
+      expiresIn: process.env.REFRESH_EXPIRES_IN as StringValue,
+      jwtid: randomUUID(),
+    });
+
+    return { accessToken, refreshToken };
   }
 
   // ─── Address Management ──────────────────────────────────────────────────────

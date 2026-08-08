@@ -24,6 +24,7 @@ import {
   UpdateMeDto,
   ConfirmResetOtpDto,
   RefreshTokenDto,
+  LogoutDto,
   CreateAddressDto,
   UpdateAddressDto,
 } from './dto/auth.dto';
@@ -72,8 +73,12 @@ export class AuthController {
 
   @Post('logout')
   @Auth('admin', 'customer', 'manager', 'staff')
-  async logoutHandler(@AuthUser() user: IAuthUser, @Res() res: Response) {
-    await this.authService.logout(user);
+  async logoutHandler(
+    @AuthUser() user: IAuthUser,
+    @Body() body: LogoutDto,
+    @Res() res: Response,
+  ) {
+    await this.authService.logout(user, body?.refreshToken);
     res.status(HttpStatus.OK).json({ message: 'Logout successfully' });
   }
 

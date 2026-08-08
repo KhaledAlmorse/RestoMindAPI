@@ -241,8 +241,15 @@ Or for paginated lists:
 #### 5. Logout
 
 - **Route**: `POST /auth/logout`
-- **Auth Required**: Yes (Access Token)
+- **Auth Required**: Yes (Access Token in Authorization Header)
 - **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
+- **Request Body** (Optional):
+  ```json
+  {
+    "refreshToken": "eyJhbGciOiJIUzI1Ni..."
+  }
+  ```
+- **Behavior**: Revokes the Access Token presented in header, revokes the passed Refresh Token (if provided), and updates `tokensRevokedAt` on the user record so that all active tokens for this user are invalidated.
 - **Success Response** (200 OK):
   ```json
   {
@@ -303,6 +310,7 @@ Or for paginated lists:
 - **Route**: `POST /auth/generate-access-token`
 - **Auth Required**: Yes (Refresh Token in Authorization Header)
 - **Allowed Roles**: `admin`, `customer`, `manager`, `staff`
+- **Behavior**: Validates the current Refresh Token, revokes it (Rotation), and returns a brand new Access Token + Refresh Token pair. Reusing a revoked Refresh Token returns 401 Unauthorized.
 - **Success Response** (200 OK):
   ```json
   {

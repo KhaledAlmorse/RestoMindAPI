@@ -439,4 +439,219 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
     expect(res5.data.importedCount).toBe(1);
     expect(mockAiIngestService.ingest).toHaveBeenCalled(); // AI Ingest cleanly triggered!
   });
+
+  describe('Import Failure Reason & Error Handling Verification', () => {
+    beforeEach(() => {
+      mockUserRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(mockUserId),
+        restaurantId: mockRestaurantId,
+      });
+    });
+
+    it('TEST 1: Dependency guard failure stores failureReason', async () => {
+      const jobId = new Types.ObjectId();
+      mockImportJobRepo.findOne.mockResolvedValueOnce({
+        _id: jobId,
+        restaurantId: mockRestaurantId,
+        importType: ImportTypeEnum.RECIPES,
+        rawRows: [['ProductA', 'IngA', '1']],
+        status: ImportJobStatusEnum.PROCESSING,
+      });
+      mockProductRepo.findMany.mockResolvedValueOnce([]); // No products exist
+
+      mockImportJobRepo.findOneAndUpdate.mockImplementationOnce(
+        ({ updateData }: any) => Promise.resolve({ _id: jobId, ...updateData }),
+      );
+
+      const res = await service.confirmImport(jobId.toString(), {}, mockUserId);
+      expect(res.data.status).toBe(ImportJobStatusEnum.FAILED);
+      expect(res.data.failureReason).toBe(
+        'Cannot import recipes before onboarding menu items. Please import menu_items first.',
+      );
+    });
+
+    it('TEST 2: All-rows validation failure stores failureReason', async () => {
+      const jobId = new Types.ObjectId();
+      mockImportJobRepo.findOne.mockResolvedValueOnce({
+        _id: jobId,
+        restaurantId: mockRestaurantId,
+        importType: ImportTypeEnum.MENU_ITEMS,
+        rawRows: [['', 'invalid-price']], // Missing title and invalid price
+        columnMapping: { Title: 'title', Price: 'price' },
+        status: ImportJobStatusEnum.PROCESSING,
+      });
+
+      mockImportJobRepo.findOneAndUpdate.mockImplementationOnce(
+        ({ updateData }: any) => Promise.resolve({ _id: jobId, ...updateData }),
+      );
+
+      const res = await service.confirmImport(jobId.toString(), {}, mockUserId);
+      expect(res.data.status).toBe(ImportJobStatusEnum.FAILED);
+      expect(res.data.failureReason).toBe(
+        'Import failed: All rows contain validation errors. Check the errors list for details.',
+      );
+    });
+
+    it('TEST 3: AI ingest failure stores a safe failureReason while preserving AI_INGEST_FAILED and aiIngestLastError', async () => {
+      const jobId = new Types.ObjectId();
+      const productId = new Types.ObjectId();
+      mockImportJobRepo.findOne.mockResolvedValueOnce({
+        _id: jobId,
+        restaurantId: mockRestaurantId,
+        importType: ImportTypeEnum.SALES_HISTORY,
+        rawRows: [['2026-07-01', 'Burger', '5', '10']],
+        columnMapping: {
+          Date: 'date',
+          Product: 'productId',
+          Qty: 'quantitySold',
+          Price: 'sellingPrice',
+        },
+        status: ImportJobStatusEnum.PROCESSING,
+      });
+      mockProductRepo.findMany.mockResolvedValueOnce([
+        { _id: productId, title: 'Burger', price: 10 },
+      ]);
+      mockSalesTransactionRepo.createMany.mockResolvedValueOnce([
+        { _id: new Types.ObjectId() },
+      ]);
+      mockAiIngestService.ingest.mockResolvedValueOnce({
+        success: false,
+        attempts: 3,
+        error: 'Connection refused to AI Gateway',
+      });
+
+      mockImportJobRepo.findOneAndUpdate.mockImplementationOnce(
+        ({ updateData }: any) => Promise.resolve({ _id: jobId, ...updateData }),
+      );
+
+      const res = await service.confirmImport(jobId.toString(), {}, mockUserId);
+      expect(res.data.status).toBe(ImportJobStatusEnum.AI_INGEST_FAILED);
+      expect(res.data.aiIngestLastError).toBe(
+        'Connection refused to AI Gateway',
+      );
+      expect(res.data.failureReason).toBe(
+        'Sales history imported successfully, but AI model synchronization failed. Please try again later.',
+      );
+    });
+
+    it('TEST 4: Unexpected runtime exception changes status to FAILED and stores sanitized failureReason without exposing raw stack trace', async () => {
+      const jobId = new Types.ObjectId();
+      mockImportJobRepo.findOne.mockResolvedValueOnce({
+        _id: jobId,
+        restaurantId: mockRestaurantId,
+        importType: ImportTypeEnum.MENU_ITEMS,
+        rawRows: [['Burger', '15']],
+        columnMapping: { Title: 'title', Price: 'price' },
+        status: ImportJobStatusEnum.PROCESSING,
+      });
+
+      // Simulate unexpected DB explosion during processing
+      mockProductRepo.findOne.mockRejectedValueOnce(
+        new Error(
+          'MongoError: E11000 duplicate key error collection: restomind.products',
+        ),
+      );
+
+      mockImportJobRepo.findOneAndUpdate.mockImplementationOnce(
+        ({ updateData }: any) => Promise.resolve({ _id: jobId, ...updateData }),
+      );
+
+      await expect(
+        service.confirmImport(jobId.toString(), {}, mockUserId),
+      ).rejects.toThrow(
+        'Import processing failed due to an unexpected system error. Please try again.',
+      );
+
+      expect(mockImportJobRepo.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updateData: expect.objectContaining({
+            status: ImportJobStatusEnum.FAILED,
+            failureReason:
+              'Import processing failed due to an unexpected system error. Please try again.',
+          }),
+        }),
+      );
+    });
+
+    it('TEST 5: Successful Import does not contain failureReason', async () => {
+      const jobId = new Types.ObjectId();
+      mockImportJobRepo.findOne.mockResolvedValueOnce({
+        _id: jobId,
+        restaurantId: mockRestaurantId,
+        importType: ImportTypeEnum.MENU_ITEMS,
+        rawRows: [['Burger', '15']],
+        columnMapping: { Title: 'title', Price: 'price' },
+        status: ImportJobStatusEnum.PROCESSING,
+      });
+      mockProductRepo.findOne.mockResolvedValueOnce(null);
+      mockCategoryRepo.findOne.mockResolvedValueOnce({
+        _id: new Types.ObjectId(),
+      });
+      mockProductRepo.create.mockResolvedValueOnce({
+        _id: new Types.ObjectId(),
+      });
+
+      mockImportJobRepo.findOneAndUpdate.mockImplementationOnce(
+        ({ updateData }: any) => Promise.resolve({ _id: jobId, ...updateData }),
+      );
+
+      const res = await service.confirmImport(jobId.toString(), {}, mockUserId);
+      expect(res.data.status).toBe(ImportJobStatusEnum.COMPLETED);
+      expect(res.data.failureReason).toBeUndefined();
+    });
+
+    it('TEST 6: GET /imports returns failureReason for failed imports', async () => {
+      const failedJob = {
+        _id: new Types.ObjectId(),
+        status: ImportJobStatusEnum.FAILED,
+        failureReason:
+          'Import failed: All rows contain validation errors. Check the errors list for details.',
+      };
+      mockImportJobRepo.findManyPaginated.mockResolvedValueOnce({
+        items: [failedJob],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1,
+      });
+
+      const res = await service.getImportJobs({}, mockUserId);
+      expect(res.items[0]).toHaveProperty('failureReason');
+      expect(res.items[0].failureReason).toBe(
+        'Import failed: All rows contain validation errors. Check the errors list for details.',
+      );
+    });
+
+    it('TEST 7: GET /imports/:id returns failureReason for failed imports', async () => {
+      const jobId = new Types.ObjectId();
+      const failedJob = {
+        _id: jobId,
+        status: ImportJobStatusEnum.FAILED,
+        failureReason:
+          'Cannot import recipes before onboarding menu items. Please import menu_items first.',
+      };
+      mockImportJobRepo.findOne.mockResolvedValueOnce(failedJob);
+
+      const res = await service.getImportJobById(jobId.toString(), mockUserId);
+      expect(res.data).toHaveProperty('failureReason');
+      expect(res.data.failureReason).toBe(
+        'Cannot import recipes before onboarding menu items. Please import menu_items first.',
+      );
+    });
+
+    it('TEST 8: Existing Import behavior remains unchanged for successful imports and paginated responses', async () => {
+      const jobId = new Types.ObjectId();
+      const successJob = {
+        _id: jobId,
+        status: ImportJobStatusEnum.COMPLETED,
+        totalRows: 5,
+        validRows: 5,
+      };
+      mockImportJobRepo.findOne.mockResolvedValueOnce(successJob);
+
+      const res = await service.getImportJobById(jobId.toString(), mockUserId);
+      expect(res.data.status).toBe(ImportJobStatusEnum.COMPLETED);
+      expect(res.data.failureReason).toBeUndefined();
+    });
+  });
 });

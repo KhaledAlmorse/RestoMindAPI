@@ -87,6 +87,9 @@ export class User {
   @Prop({ type: Date })
   passwordChangedAt?: Date;
 
+  @Prop({ type: Date })
+  tokensRevokedAt?: Date;
+
   @Prop({ type: Boolean, default: false })
   isDeleted!: boolean;
 

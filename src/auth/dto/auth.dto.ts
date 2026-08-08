@@ -166,6 +166,12 @@ export class RefreshTokenDto {
   token!: string;
 }
 
+export class LogoutDto {
+  @IsString()
+  @IsOptional()
+  refreshToken?: string;
+}
+
 export class CreateAddressDto {
   @IsString()
   @IsOptional()

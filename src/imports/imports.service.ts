@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
@@ -32,6 +34,8 @@ import {
 
 @Injectable()
 export class ImportsService {
+  private readonly logger = new Logger(ImportsService.name);
+
   constructor(
     private readonly importJobRepository: ImportJobRepository,
     private readonly salesTransactionRepository: SalesTransactionRepository,
@@ -211,374 +215,471 @@ export class ImportsService {
       throw new BadRequestException('Import job contains no data rows');
     }
 
-    const effectiveMapping = dto.columnMapping || job.columnMapping || {};
-    const headers = Object.keys(effectiveMapping);
+    try {
+      const effectiveMapping = dto.columnMapping || job.columnMapping || {};
+      const headers = Object.keys(effectiveMapping);
 
-    // Fetch existing master data for validation
-    const products =
-      (await this.productRepository.findMany({
-        filters: { restaurantId, isDeleted: false },
-      })) || [];
+      // Fetch existing master data for validation
+      const products =
+        (await this.productRepository.findMany({
+          filters: { restaurantId, isDeleted: false },
+        })) || [];
 
-    const ingredients =
-      (await this.ingredientRepository.findMany({
-        filters: { restaurantId, isDeleted: false },
-      })) || [];
+      const ingredients =
+        (await this.ingredientRepository.findMany({
+          filters: { restaurantId, isDeleted: false },
+        })) || [];
 
-    let createdCount = 0;
-    let finalStatus: ImportJobStatusEnum = ImportJobStatusEnum.COMPLETED;
-    let aiLastError: string | undefined = undefined;
+      let createdCount = 0;
+      let finalStatus: ImportJobStatusEnum = ImportJobStatusEnum.COMPLETED;
+      let aiLastError: string | undefined = undefined;
 
-    // ----------------------------------------------------
-    // 1. MENU_ITEMS IMPORT STRATEGY
-    // ----------------------------------------------------
-    if (job.importType === ImportTypeEnum.MENU_ITEMS) {
-      const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
-        ImportTypeEnum.MENU_ITEMS,
-        rawRows,
-        headers,
-        effectiveMapping,
-      );
-
-      for (const row of validRows) {
-        const existingProduct = await this.productRepository.findOne({
-          filters: { restaurantId, title: row.title, isDeleted: false },
-        });
-
-        const categoryName = row.category || 'General';
-        let category = await this.categoryRepository.findOne({
-          filters: { name: categoryName, isDeleted: false },
-        });
-
-        if (!category) {
-          category = await this.categoryRepository.create({
-            name: categoryName,
-            description: `Category for ${categoryName}`,
-            image: {
-              public_id: 'default_category',
-              secure_url:
-                'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-            },
-          } as any);
-        }
-
-        const productSlug = slugify(
-          `${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          { lower: true },
+      // ----------------------------------------------------
+      // 1. MENU_ITEMS IMPORT STRATEGY
+      // ----------------------------------------------------
+      if (job.importType === ImportTypeEnum.MENU_ITEMS) {
+        const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
+          ImportTypeEnum.MENU_ITEMS,
+          rawRows,
+          headers,
+          effectiveMapping,
         );
-        const defaultImage = {
-          public_id: 'default_product',
-          secure_url:
-            'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-        };
 
-        if (existingProduct) {
-          await this.productRepository.update({
-            filters: { _id: existingProduct._id },
-            body: {
+        for (const row of validRows) {
+          const existingProduct = await this.productRepository.findOne({
+            filters: { restaurantId, title: row.title, isDeleted: false },
+          });
+
+          const categoryName = row.category || 'General';
+          let category = await this.categoryRepository.findOne({
+            filters: { name: categoryName, isDeleted: false },
+          });
+
+          if (!category) {
+            category = await this.categoryRepository.create({
+              name: categoryName,
+              description: `Category for ${categoryName}`,
+              image: {
+                public_id: 'default_category',
+                secure_url:
+                  'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
+              },
+            } as any);
+          }
+
+          const productSlug = slugify(
+            `${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            { lower: true },
+          );
+          const defaultImage = {
+            public_id: 'default_product',
+            secure_url:
+              'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
+          };
+
+          if (existingProduct) {
+            await this.productRepository.update({
+              filters: { _id: existingProduct._id },
+              body: {
+                price: row.price,
+                freshnessWindow: row.freshnessWindow,
+                category: category._id,
+                description:
+                  row.description || existingProduct.description || row.title,
+                longDescription:
+                  row.longDescription ||
+                  existingProduct.longDescription ||
+                  row.title,
+              },
+            });
+          } else {
+            await this.productRepository.create({
+              restaurantId,
+              title: row.title,
+              slug: productSlug,
+              description: row.description || row.title,
+              longDescription:
+                row.longDescription || row.description || row.title,
               price: row.price,
               freshnessWindow: row.freshnessWindow,
               category: category._id,
-              description:
-                row.description || existingProduct.description || row.title,
-              longDescription:
-                row.longDescription ||
-                existingProduct.longDescription ||
-                row.title,
-            },
-          });
-        } else {
-          await this.productRepository.create({
-            restaurantId,
-            title: row.title,
-            slug: productSlug,
-            description: row.description || row.title,
-            longDescription:
-              row.longDescription || row.description || row.title,
-            price: row.price,
-            freshnessWindow: row.freshnessWindow,
-            category: category._id,
-            image: defaultImage,
-          } as any);
+              image: defaultImage,
+            } as any);
+          }
+          createdCount++;
         }
-        createdCount++;
-      }
 
-      finalStatus =
-        validRows.length > 0
-          ? ImportJobStatusEnum.COMPLETED
-          : ImportJobStatusEnum.FAILED;
+        finalStatus =
+          validRows.length > 0
+            ? ImportJobStatusEnum.COMPLETED
+            : ImportJobStatusEnum.FAILED;
 
-      const updatedJob = await this.importJobRepository.findOneAndUpdate({
-        filters: { _id: job._id },
-        updateData: {
-          columnMapping: effectiveMapping,
-          totalRows: rawRows.length,
-          validRows: validRows.length,
-          invalidRows: rawRows.length - validRows.length,
-          errors,
-          status: finalStatus,
-        },
-      });
+        const failureReason =
+          finalStatus === ImportJobStatusEnum.FAILED
+            ? 'Import failed: All rows contain validation errors. Check the errors list for details.'
+            : undefined;
 
-      return {
-        data: {
-          importJobId: updatedJob!._id,
-          status: updatedJob!.status,
-          totalRows: updatedJob!.totalRows,
-          validRows: updatedJob!.validRows,
-          invalidRows: updatedJob!.invalidRows,
-          errors: updatedJob!.errors,
-          importedCount: createdCount,
-        },
-      };
-    }
-
-    // ----------------------------------------------------
-    // 2. INGREDIENTS IMPORT STRATEGY
-    // ----------------------------------------------------
-    if (job.importType === ImportTypeEnum.INGREDIENTS) {
-      const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
-        ImportTypeEnum.INGREDIENTS,
-        rawRows,
-        headers,
-        effectiveMapping,
-      );
-
-      for (const row of validRows) {
-        let existingIngredient = await this.ingredientRepository.findOne({
-          filters: {
-            restaurantId,
-            ingredientCode: row.ingredientCode,
-            isDeleted: false,
+        const updatedJob = await this.importJobRepository.findOneAndUpdate({
+          filters: { _id: job._id },
+          updateData: {
+            columnMapping: effectiveMapping,
+            totalRows: rawRows.length,
+            validRows: validRows.length,
+            invalidRows: rawRows.length - validRows.length,
+            errors,
+            status: finalStatus,
+            failureReason,
           },
         });
 
-        if (!existingIngredient && row.name) {
-          existingIngredient = await this.ingredientRepository.findOne({
-            filters: { restaurantId, name: row.name, isDeleted: false },
-          });
-        }
+        return {
+          data: {
+            importJobId: updatedJob!._id,
+            status: updatedJob!.status,
+            totalRows: updatedJob!.totalRows,
+            validRows: updatedJob!.validRows,
+            invalidRows: updatedJob!.invalidRows,
+            errors: updatedJob!.errors,
+            failureReason: updatedJob!.failureReason,
+            importedCount: createdCount,
+          },
+        };
+      }
 
-        if (existingIngredient) {
-          await this.ingredientRepository.update({
-            filters: { _id: existingIngredient._id },
-            body: {
+      // ----------------------------------------------------
+      // 2. INGREDIENTS IMPORT STRATEGY
+      // ----------------------------------------------------
+      if (job.importType === ImportTypeEnum.INGREDIENTS) {
+        const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
+          ImportTypeEnum.INGREDIENTS,
+          rawRows,
+          headers,
+          effectiveMapping,
+        );
+
+        for (const row of validRows) {
+          let existingIngredient = await this.ingredientRepository.findOne({
+            filters: {
+              restaurantId,
+              ingredientCode: row.ingredientCode,
+              isDeleted: false,
+            },
+          });
+
+          if (!existingIngredient && row.name) {
+            existingIngredient = await this.ingredientRepository.findOne({
+              filters: { restaurantId, name: row.name, isDeleted: false },
+            });
+          }
+
+          if (existingIngredient) {
+            await this.ingredientRepository.update({
+              filters: { _id: existingIngredient._id },
+              body: {
+                name: row.name,
+                unit: row.unit,
+                shelfLifeDays: row.shelfLifeDays,
+                minimumStock: row.minimumStock,
+                safetyStock: row.safetyStock,
+              },
+            });
+          } else {
+            await this.ingredientRepository.create({
+              restaurantId,
+              ingredientCode: row.ingredientCode,
               name: row.name,
               unit: row.unit,
               shelfLifeDays: row.shelfLifeDays,
               minimumStock: row.minimumStock,
               safetyStock: row.safetyStock,
+            } as any);
+          }
+          createdCount++;
+        }
+
+        finalStatus =
+          validRows.length > 0
+            ? ImportJobStatusEnum.COMPLETED
+            : ImportJobStatusEnum.FAILED;
+
+        const failureReason =
+          finalStatus === ImportJobStatusEnum.FAILED
+            ? 'Import failed: All rows contain validation errors. Check the errors list for details.'
+            : undefined;
+
+        const updatedJob = await this.importJobRepository.findOneAndUpdate({
+          filters: { _id: job._id },
+          updateData: {
+            columnMapping: effectiveMapping,
+            totalRows: rawRows.length,
+            validRows: validRows.length,
+            invalidRows: rawRows.length - validRows.length,
+            errors,
+            status: finalStatus,
+            failureReason,
+          },
+        });
+
+        return {
+          data: {
+            importJobId: updatedJob!._id,
+            status: updatedJob!.status,
+            totalRows: updatedJob!.totalRows,
+            validRows: updatedJob!.validRows,
+            invalidRows: updatedJob!.invalidRows,
+            errors: updatedJob!.errors,
+            failureReason: updatedJob!.failureReason,
+            importedCount: createdCount,
+          },
+        };
+      }
+
+      // ----------------------------------------------------
+      // 3. RECIPES IMPORT STRATEGY + DEPENDENCY GUARDS
+      // ----------------------------------------------------
+      if (job.importType === ImportTypeEnum.RECIPES) {
+        if (products.length === 0) {
+          const guardError = {
+            row: 0,
+            column: 'productId',
+            message:
+              'Cannot import recipes before onboarding menu items. Please import menu_items first.',
+          };
+
+          const updatedJob = await this.importJobRepository.findOneAndUpdate({
+            filters: { _id: job._id },
+            updateData: {
+              columnMapping: effectiveMapping,
+              totalRows: rawRows.length,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: [guardError],
+              status: ImportJobStatusEnum.FAILED,
+              failureReason: guardError.message,
             },
           });
-        } else {
-          await this.ingredientRepository.create({
-            restaurantId,
-            ingredientCode: row.ingredientCode,
-            name: row.name,
-            unit: row.unit,
-            shelfLifeDays: row.shelfLifeDays,
-            minimumStock: row.minimumStock,
-            safetyStock: row.safetyStock,
-          } as any);
+
+          return {
+            data: {
+              importJobId: updatedJob!._id,
+              status: updatedJob!.status,
+              totalRows: updatedJob!.totalRows,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: updatedJob!.errors,
+              failureReason: updatedJob!.failureReason,
+              importedCount: 0,
+            },
+          };
         }
-        createdCount++;
-      }
 
-      finalStatus =
-        validRows.length > 0
-          ? ImportJobStatusEnum.COMPLETED
-          : ImportJobStatusEnum.FAILED;
+        if (ingredients.length === 0) {
+          const guardError = {
+            row: 0,
+            column: 'ingredientId',
+            message:
+              'Cannot import recipes before onboarding ingredients. Please import ingredients first.',
+          };
 
-      const updatedJob = await this.importJobRepository.findOneAndUpdate({
-        filters: { _id: job._id },
-        updateData: {
-          columnMapping: effectiveMapping,
-          totalRows: rawRows.length,
-          validRows: validRows.length,
-          invalidRows: rawRows.length - validRows.length,
-          errors,
-          status: finalStatus,
-        },
-      });
-
-      return {
-        data: {
-          importJobId: updatedJob!._id,
-          status: updatedJob!.status,
-          totalRows: updatedJob!.totalRows,
-          validRows: updatedJob!.validRows,
-          invalidRows: updatedJob!.invalidRows,
-          errors: updatedJob!.errors,
-          importedCount: createdCount,
-        },
-      };
-    }
-
-    // ----------------------------------------------------
-    // 3. RECIPES IMPORT STRATEGY + DEPENDENCY GUARDS
-    // ----------------------------------------------------
-    if (job.importType === ImportTypeEnum.RECIPES) {
-      if (products.length === 0) {
-        const guardError = {
-          row: 0,
-          column: 'productId',
-          message:
-            'Cannot import recipes before onboarding menu items. Please import menu_items first.',
-        };
-
-        const updatedJob = await this.importJobRepository.findOneAndUpdate({
-          filters: { _id: job._id },
-          updateData: {
-            columnMapping: effectiveMapping,
-            totalRows: rawRows.length,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: [guardError],
-            status: ImportJobStatusEnum.FAILED,
-          },
-        });
-
-        return {
-          data: {
-            importJobId: updatedJob!._id,
-            status: updatedJob!.status,
-            totalRows: updatedJob!.totalRows,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: updatedJob!.errors,
-            importedCount: 0,
-          },
-        };
-      }
-
-      if (ingredients.length === 0) {
-        const guardError = {
-          row: 0,
-          column: 'ingredientId',
-          message:
-            'Cannot import recipes before onboarding ingredients. Please import ingredients first.',
-        };
-
-        const updatedJob = await this.importJobRepository.findOneAndUpdate({
-          filters: { _id: job._id },
-          updateData: {
-            columnMapping: effectiveMapping,
-            totalRows: rawRows.length,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: [guardError],
-            status: ImportJobStatusEnum.FAILED,
-          },
-        });
-
-        return {
-          data: {
-            importJobId: updatedJob!._id,
-            status: updatedJob!.status,
-            totalRows: updatedJob!.totalRows,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: updatedJob!.errors,
-            importedCount: 0,
-          },
-        };
-      }
-
-      const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
-        ImportTypeEnum.RECIPES,
-        rawRows,
-        headers,
-        effectiveMapping,
-        products,
-        ingredients,
-      );
-
-      // Group valid rows by productId
-      const recipeGroups = new Map<string, any[]>();
-      validRows.forEach((row) => {
-        const pId = row.productId.toString();
-        if (!recipeGroups.has(pId)) recipeGroups.set(pId, []);
-        recipeGroups.get(pId)!.push({
-          ingredientId: new Types.ObjectId(row.ingredientId.toString()),
-          quantityPerPortion: row.quantityPerPortion,
-          unit: row.unit,
-          yieldPercentage: row.yieldPercentage || 100,
-        });
-      });
-
-      for (const [prodIdStr, ingList] of recipeGroups.entries()) {
-        const pId = new Types.ObjectId(prodIdStr);
-        const existingRecipe = await this.recipeRepository.findOne({
-          filters: { restaurantId, productId: pId, isDeleted: false },
-        });
-
-        if (existingRecipe) {
-          await this.recipeRepository.update({
-            filters: { _id: existingRecipe._id },
-            body: { ingredients: ingList },
+          const updatedJob = await this.importJobRepository.findOneAndUpdate({
+            filters: { _id: job._id },
+            updateData: {
+              columnMapping: effectiveMapping,
+              totalRows: rawRows.length,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: [guardError],
+              status: ImportJobStatusEnum.FAILED,
+              failureReason: guardError.message,
+            },
           });
-        } else {
-          await this.recipeRepository.create({
+
+          return {
+            data: {
+              importJobId: updatedJob!._id,
+              status: updatedJob!.status,
+              totalRows: updatedJob!.totalRows,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: updatedJob!.errors,
+              failureReason: updatedJob!.failureReason,
+              importedCount: 0,
+            },
+          };
+        }
+
+        const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
+          ImportTypeEnum.RECIPES,
+          rawRows,
+          headers,
+          effectiveMapping,
+          products,
+          ingredients,
+        );
+
+        // Group valid rows by productId
+        const recipeGroups = new Map<string, any[]>();
+        validRows.forEach((row) => {
+          const pId = row.productId.toString();
+          if (!recipeGroups.has(pId)) recipeGroups.set(pId, []);
+          recipeGroups.get(pId)!.push({
+            ingredientId: new Types.ObjectId(row.ingredientId.toString()),
+            quantityPerPortion: row.quantityPerPortion,
+            unit: row.unit,
+            yieldPercentage: row.yieldPercentage || 100,
+          });
+        });
+
+        for (const [prodIdStr, ingList] of recipeGroups.entries()) {
+          const pId = new Types.ObjectId(prodIdStr);
+          const existingRecipe = await this.recipeRepository.findOne({
+            filters: { restaurantId, productId: pId, isDeleted: false },
+          });
+
+          if (existingRecipe) {
+            await this.recipeRepository.update({
+              filters: { _id: existingRecipe._id },
+              body: { ingredients: ingList },
+            });
+          } else {
+            await this.recipeRepository.create({
+              restaurantId,
+              productId: pId,
+              ingredients: ingList,
+            } as any);
+          }
+          createdCount++;
+        }
+
+        finalStatus =
+          validRows.length > 0
+            ? ImportJobStatusEnum.COMPLETED
+            : ImportJobStatusEnum.FAILED;
+
+        const failureReason =
+          finalStatus === ImportJobStatusEnum.FAILED
+            ? 'Import failed: All rows contain validation errors. Check the errors list for details.'
+            : undefined;
+
+        const updatedJob = await this.importJobRepository.findOneAndUpdate({
+          filters: { _id: job._id },
+          updateData: {
+            columnMapping: effectiveMapping,
+            totalRows: rawRows.length,
+            validRows: validRows.length,
+            invalidRows: rawRows.length - validRows.length,
+            errors,
+            status: finalStatus,
+            failureReason,
+          },
+        });
+
+        return {
+          data: {
+            importJobId: updatedJob!._id,
+            status: updatedJob!.status,
+            totalRows: updatedJob!.totalRows,
+            validRows: updatedJob!.validRows,
+            invalidRows: updatedJob!.invalidRows,
+            errors: updatedJob!.errors,
+            failureReason: updatedJob!.failureReason,
+            importedCount: createdCount,
+          },
+        };
+      }
+
+      // ----------------------------------------------------
+      // 4. INVENTORY_TRANSACTIONS IMPORT STRATEGY + DEPENDENCY GUARD
+      // ----------------------------------------------------
+      if (job.importType === ImportTypeEnum.INVENTORY_TRANSACTIONS) {
+        if (ingredients.length === 0) {
+          const guardError = {
+            row: 0,
+            column: 'ingredientId',
+            message:
+              'Cannot import inventory transactions before onboarding ingredients. Please import ingredients first.',
+          };
+
+          const updatedJob = await this.importJobRepository.findOneAndUpdate({
+            filters: { _id: job._id },
+            updateData: {
+              columnMapping: effectiveMapping,
+              totalRows: rawRows.length,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: [guardError],
+              status: ImportJobStatusEnum.FAILED,
+              failureReason: guardError.message,
+            },
+          });
+
+          return {
+            data: {
+              importJobId: updatedJob!._id,
+              status: updatedJob!.status,
+              totalRows: updatedJob!.totalRows,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: updatedJob!.errors,
+              failureReason: updatedJob!.failureReason,
+              importedCount: 0,
+            },
+          };
+        }
+
+        const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
+          ImportTypeEnum.INVENTORY_TRANSACTIONS,
+          rawRows,
+          headers,
+          effectiveMapping,
+          [],
+          ingredients,
+        );
+
+        for (const row of validRows) {
+          const batch = await this.inventoryBatchRepository.create({
             restaurantId,
-            productId: pId,
-            ingredients: ingList,
+            ingredientId: new Types.ObjectId(row.ingredientId.toString()),
+            batchNumber: row.batchNumber,
+            quantityRemaining: row.quantity,
+            unitCost: row.unitCost,
+            expiryDate: row.expiryDate,
+            receivedDate: new Date(),
           } as any);
+
+          await this.stockTransactionRepository.create({
+            restaurantId,
+            ingredientId: new Types.ObjectId(row.ingredientId.toString()),
+            batchId: batch._id,
+            transactionType: StockTransactionTypeEnum.PURCHASE,
+            quantity: row.quantity,
+            unit: row.unit,
+            date: new Date(),
+          } as any);
+
+          createdCount++;
         }
-        createdCount++;
-      }
 
-      finalStatus =
-        validRows.length > 0
-          ? ImportJobStatusEnum.COMPLETED
-          : ImportJobStatusEnum.FAILED;
+        finalStatus =
+          validRows.length > 0
+            ? ImportJobStatusEnum.COMPLETED
+            : ImportJobStatusEnum.FAILED;
 
-      const updatedJob = await this.importJobRepository.findOneAndUpdate({
-        filters: { _id: job._id },
-        updateData: {
-          columnMapping: effectiveMapping,
-          totalRows: rawRows.length,
-          validRows: validRows.length,
-          invalidRows: rawRows.length - validRows.length,
-          errors,
-          status: finalStatus,
-        },
-      });
-
-      return {
-        data: {
-          importJobId: updatedJob!._id,
-          status: updatedJob!.status,
-          totalRows: updatedJob!.totalRows,
-          validRows: updatedJob!.validRows,
-          invalidRows: updatedJob!.invalidRows,
-          errors: updatedJob!.errors,
-          importedCount: createdCount,
-        },
-      };
-    }
-
-    // ----------------------------------------------------
-    // 4. INVENTORY_TRANSACTIONS IMPORT STRATEGY + DEPENDENCY GUARD
-    // ----------------------------------------------------
-    if (job.importType === ImportTypeEnum.INVENTORY_TRANSACTIONS) {
-      if (ingredients.length === 0) {
-        const guardError = {
-          row: 0,
-          column: 'ingredientId',
-          message:
-            'Cannot import inventory transactions before onboarding ingredients. Please import ingredients first.',
-        };
+        const failureReason =
+          finalStatus === ImportJobStatusEnum.FAILED
+            ? 'Import failed: All rows contain validation errors. Check the errors list for details.'
+            : undefined;
 
         const updatedJob = await this.importJobRepository.findOneAndUpdate({
           filters: { _id: job._id },
           updateData: {
             columnMapping: effectiveMapping,
             totalRows: rawRows.length,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: [guardError],
-            status: ImportJobStatusEnum.FAILED,
+            validRows: validRows.length,
+            invalidRows: rawRows.length - validRows.length,
+            errors,
+            status: finalStatus,
+            failureReason,
           },
         });
 
@@ -587,209 +688,186 @@ export class ImportsService {
             importJobId: updatedJob!._id,
             status: updatedJob!.status,
             totalRows: updatedJob!.totalRows,
-            validRows: 0,
-            invalidRows: rawRows.length,
+            validRows: updatedJob!.validRows,
+            invalidRows: updatedJob!.invalidRows,
             errors: updatedJob!.errors,
-            importedCount: 0,
+            failureReason: updatedJob!.failureReason,
+            importedCount: createdCount,
           },
         };
       }
 
-      const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
-        ImportTypeEnum.INVENTORY_TRANSACTIONS,
-        rawRows,
-        headers,
-        effectiveMapping,
-        [],
-        ingredients,
-      );
+      // ----------------------------------------------------
+      // 5. SALES_HISTORY IMPORT STRATEGY + PRE-VALIDATION GUARD
+      // ----------------------------------------------------
+      if (job.importType === ImportTypeEnum.SALES_HISTORY) {
+        // Pre-validation Guard: Restaurant must have active products before sales history import
+        if (products.length === 0) {
+          const guardError = {
+            row: 0,
+            column: 'productId',
+            message:
+              'Cannot import sales history before onboarding menu items. Please import menu_items first.',
+          };
 
-      for (const row of validRows) {
-        const batch = await this.inventoryBatchRepository.create({
-          restaurantId,
-          ingredientId: new Types.ObjectId(row.ingredientId.toString()),
-          batchNumber: row.batchNumber,
-          quantityRemaining: row.quantity,
-          unitCost: row.unitCost,
-          expiryDate: row.expiryDate,
-          receivedDate: new Date(),
-        } as any);
+          const updatedJob = await this.importJobRepository.findOneAndUpdate({
+            filters: { _id: job._id },
+            updateData: {
+              columnMapping: effectiveMapping,
+              totalRows: rawRows.length,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: [guardError],
+              status: ImportJobStatusEnum.FAILED,
+              failureReason: guardError.message,
+            },
+          });
 
-        await this.stockTransactionRepository.create({
-          restaurantId,
-          ingredientId: new Types.ObjectId(row.ingredientId.toString()),
-          batchId: batch._id,
-          transactionType: StockTransactionTypeEnum.PURCHASE,
-          quantity: row.quantity,
-          unit: row.unit,
-          date: new Date(),
-        } as any);
+          return {
+            data: {
+              importJobId: updatedJob!._id,
+              status: updatedJob!.status,
+              totalRows: updatedJob!.totalRows,
+              validRows: 0,
+              invalidRows: rawRows.length,
+              errors: updatedJob!.errors,
+              failureReason: updatedJob!.failureReason,
+              importedCount: 0,
+            },
+          };
+        }
 
-        createdCount++;
-      }
+        const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
+          ImportTypeEnum.SALES_HISTORY,
+          rawRows,
+          headers,
+          effectiveMapping,
+          products,
+        );
 
-      finalStatus =
-        validRows.length > 0
-          ? ImportJobStatusEnum.COMPLETED
-          : ImportJobStatusEnum.FAILED;
+        let createdTransactions: any[] = [];
 
-      const updatedJob = await this.importJobRepository.findOneAndUpdate({
-        filters: { _id: job._id },
-        updateData: {
-          columnMapping: effectiveMapping,
-          totalRows: rawRows.length,
-          validRows: validRows.length,
-          invalidRows: rawRows.length - validRows.length,
-          errors,
-          status: finalStatus,
-        },
-      });
+        if (validRows.length > 0) {
+          const transactionsToInsert = validRows.map((row) => ({
+            restaurantId,
+            productId: row.productId,
+            date: row.date,
+            quantitySold: row.quantitySold,
+            sellingPrice: row.sellingPrice,
+            basePrice: row.basePrice,
+            source: SalesSourceEnum.CSV_IMPORT,
+            importJobId: job._id,
+            offerId:
+              row.offerId && isValidObjectId(row.offerId)
+                ? new Types.ObjectId(row.offerId)
+                : null,
+          }));
 
-      return {
-        data: {
-          importJobId: updatedJob!._id,
-          status: updatedJob!.status,
-          totalRows: updatedJob!.totalRows,
-          validRows: updatedJob!.validRows,
-          invalidRows: updatedJob!.invalidRows,
-          errors: updatedJob!.errors,
-          importedCount: createdCount,
-        },
-      };
-    }
+          createdTransactions = await (
+            this.salesTransactionRepository as any
+          ).createMany(transactionsToInsert);
+        }
 
-    // ----------------------------------------------------
-    // 4. SALES_HISTORY IMPORT STRATEGY + PRE-VALIDATION GUARD
-    // ----------------------------------------------------
-    if (job.importType === ImportTypeEnum.SALES_HISTORY) {
-      // Pre-validation Guard: Restaurant must have active products before sales history import
-      if (products.length === 0) {
-        const guardError = {
-          row: 0,
-          column: 'productId',
-          message:
-            'Cannot import sales history before onboarding menu items. Please import menu_items first.',
-        };
+        const validCount = validRows.length;
+        const invalidCount = rawRows.length - validCount;
+        let failureReason: string | undefined = undefined;
 
-        const updatedJob = await this.importJobRepository.findOneAndUpdate({
-          filters: { _id: job._id },
-          updateData: {
-            columnMapping: effectiveMapping,
-            totalRows: rawRows.length,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: [guardError],
-            status: ImportJobStatusEnum.FAILED,
-          },
-        });
+        // Trigger AI Auto-Ingest if valid rows exist
+        if (validCount > 0) {
+          const recordsPayload = validRows.map((r) => ({
+            date: r.date.toISOString().split('T')[0],
+            productId: r.productId.toString(),
+            salesQty: r.quantitySold,
+          }));
 
-        return {
-          data: {
-            importJobId: updatedJob!._id,
-            status: updatedJob!.status,
-            totalRows: updatedJob!.totalRows,
-            validRows: 0,
-            invalidRows: rawRows.length,
-            errors: updatedJob!.errors,
-            importedCount: 0,
-          },
-        };
-      }
+          const productsPayload = products.map((p: any) => ({
+            productId: p._id.toString(),
+            title: p.title,
+            category: p.category || 'General',
+          }));
 
-      const { validRows, errors } = this.csvParsingService.mapAndValidateRows(
-        ImportTypeEnum.SALES_HISTORY,
-        rawRows,
-        headers,
-        effectiveMapping,
-        products,
-      );
+          const aiResult = await this.aiIngestService.ingest({
+            restaurantId: restaurantId.toString(),
+            records: recordsPayload,
+            products: productsPayload,
+          });
 
-      let createdTransactions: any[] = [];
-
-      if (validRows.length > 0) {
-        const transactionsToInsert = validRows.map((row) => ({
-          restaurantId,
-          productId: row.productId,
-          date: row.date,
-          quantitySold: row.quantitySold,
-          sellingPrice: row.sellingPrice,
-          basePrice: row.basePrice,
-          source: SalesSourceEnum.CSV_IMPORT,
-          importJobId: job._id,
-          offerId:
-            row.offerId && isValidObjectId(row.offerId)
-              ? new Types.ObjectId(row.offerId)
-              : null,
-        }));
-
-        createdTransactions = await (
-          this.salesTransactionRepository as any
-        ).createMany(transactionsToInsert);
-      }
-
-      const validCount = validRows.length;
-      const invalidCount = rawRows.length - validCount;
-
-      // Trigger AI Auto-Ingest if valid rows exist
-      if (validCount > 0) {
-        const recordsPayload = validRows.map((r) => ({
-          date: r.date.toISOString().split('T')[0],
-          productId: r.productId.toString(),
-          salesQty: r.quantitySold,
-        }));
-
-        const productsPayload = products.map((p: any) => ({
-          productId: p._id.toString(),
-          title: p.title,
-          category: p.category || 'General',
-        }));
-
-        const aiResult = await this.aiIngestService.ingest({
-          restaurantId: restaurantId.toString(),
-          records: recordsPayload,
-          products: productsPayload,
-        });
-
-        if (aiResult.success) {
-          finalStatus = ImportJobStatusEnum.COMPLETED;
+          if (aiResult.success) {
+            finalStatus = ImportJobStatusEnum.COMPLETED;
+          } else {
+            finalStatus = ImportJobStatusEnum.AI_INGEST_FAILED;
+            aiLastError = aiResult.error;
+            failureReason =
+              'Sales history imported successfully, but AI model synchronization failed. Please try again later.';
+          }
         } else {
-          finalStatus = ImportJobStatusEnum.AI_INGEST_FAILED;
-          aiLastError = aiResult.error;
+          finalStatus = ImportJobStatusEnum.FAILED;
+          failureReason =
+            'Import failed: All rows contain validation errors. Check the errors list for details.';
         }
-      } else {
-        finalStatus = ImportJobStatusEnum.FAILED;
+
+        const updatedJob = await this.importJobRepository.findOneAndUpdate({
+          filters: { _id: job._id },
+          updateData: {
+            columnMapping: effectiveMapping,
+            totalRows: rawRows.length,
+            validRows: validCount,
+            invalidRows: invalidCount,
+            errors,
+            status: finalStatus,
+            aiIngestAttempts:
+              finalStatus === ImportJobStatusEnum.AI_INGEST_FAILED ? 3 : 0,
+            aiIngestLastError: aiLastError,
+            failureReason,
+          },
+        });
+
+        return {
+          data: {
+            importJobId: updatedJob!._id,
+            status: updatedJob!.status,
+            totalRows: updatedJob!.totalRows,
+            validRows: updatedJob!.validRows,
+            invalidRows: updatedJob!.invalidRows,
+            errors: updatedJob!.errors,
+            aiIngestLastError: updatedJob!.aiIngestLastError,
+            failureReason: updatedJob!.failureReason,
+            importedCount: createdTransactions.length,
+          },
+        };
       }
 
-      const updatedJob = await this.importJobRepository.findOneAndUpdate({
-        filters: { _id: job._id },
-        updateData: {
-          columnMapping: effectiveMapping,
-          totalRows: rawRows.length,
-          validRows: validCount,
-          invalidRows: invalidCount,
-          errors,
-          status: finalStatus,
-          aiIngestAttempts:
-            finalStatus === ImportJobStatusEnum.AI_INGEST_FAILED ? 3 : 0,
-          aiIngestLastError: aiLastError,
-        },
-      });
+      throw new BadRequestException(
+        `Unsupported import type: ${job.importType}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Unexpected error during confirmImport for job ${importId}: ${error instanceof Error ? error.stack || error.message : String(error)}`,
+      );
 
-      return {
-        data: {
-          importJobId: updatedJob!._id,
-          status: updatedJob!.status,
-          totalRows: updatedJob!.totalRows,
-          validRows: updatedJob!.validRows,
-          invalidRows: updatedJob!.invalidRows,
-          errors: updatedJob!.errors,
-          aiIngestLastError: updatedJob!.aiIngestLastError,
-          importedCount: createdTransactions.length,
-        },
-      };
+      try {
+        await this.importJobRepository.findOneAndUpdate({
+          filters: { _id: job._id },
+          updateData: {
+            status: ImportJobStatusEnum.FAILED,
+            failureReason:
+              'Import processing failed due to an unexpected system error. Please try again.',
+          },
+        });
+      } catch (dbError) {
+        this.logger.error(
+          `Failed to update import job status on unexpected crash: ${dbError}`,
+        );
+      }
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new BadRequestException(
+        'Import processing failed due to an unexpected system error. Please try again.',
+      );
     }
-
-    throw new BadRequestException(`Unsupported import type: ${job.importType}`);
   }
 
   async getImportJobs(query: QueryImportDto, userId: string) {

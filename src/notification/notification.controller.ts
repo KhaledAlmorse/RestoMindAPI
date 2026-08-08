@@ -21,10 +21,7 @@ export class NotificationController {
   // 1. GET /notifications/unread-count - Unread badge count
   @Get('unread-count')
   @Auth('manager', 'admin', 'staff')
-  async getUnreadCount(
-    @AuthUser() user: IAuthUser,
-    @Res() res: Response,
-  ) {
+  async getUnreadCount(@AuthUser() user: IAuthUser, @Res() res: Response) {
     const result = await this.notificationService.getUnreadCount(
       user.user._id.toString(),
     );
@@ -64,10 +61,7 @@ export class NotificationController {
   // 4. PATCH /notifications/read-all - Mark all caller's notifications read
   @Patch('read-all')
   @Auth('manager', 'admin', 'staff')
-  async markAllAsRead(
-    @AuthUser() user: IAuthUser,
-    @Res() res: Response,
-  ) {
+  async markAllAsRead(@AuthUser() user: IAuthUser, @Res() res: Response) {
     const result = await this.notificationService.markAllAsRead(
       user.user._id.toString(),
     );
