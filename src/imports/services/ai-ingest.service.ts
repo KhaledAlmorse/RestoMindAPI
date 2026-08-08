@@ -63,18 +63,20 @@ export class AiIngestService {
    * the whole set from the written transactions.
    */
   async ingest(payload: IngestPayload, maxRetries = 3): Promise<IngestResult> {
+    // The AI service declares `records` with min_length=1, so an empty ingest
+    // is a 422 — classified client_error and never retried. Every caller
+    // already guards against this; treat it as a no-op rather than sending a
+    // request the contract rejects.
+    if (payload.records.length === 0) {
+      return { success: true, attempts: 0 };
+    }
+
     const chunks = this.chunk(payload.records, INGEST_CHUNK_SIZE);
 
     this.logger.log(
       `Triggering AI ingest for restaurant ${payload.restaurantId} ` +
         `(${payload.records.length} records in ${chunks.length} chunk(s))`,
     );
-
-    // No records still has to reach the service: it carries the product list,
-    // which registers the catalogue even before any sales exist.
-    if (chunks.length === 0) {
-      chunks.push([]);
-    }
 
     for (let i = 0; i < chunks.length; i++) {
       const result = await this.aiClient.post(

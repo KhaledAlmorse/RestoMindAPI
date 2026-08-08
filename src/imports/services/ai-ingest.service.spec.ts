@@ -151,7 +151,10 @@ describe('AiIngestService', () => {
       post.mockRestore();
     });
 
-    it('still calls the service when there are no records, to register products', async () => {
+    // The AI service declares `records` with min_length=1, so an empty ingest
+    // is a 422 — classified client_error, never retried, and surfaced to the
+    // manager as a failed import. Don't send one.
+    it('does not call the service when there are no records', async () => {
       const post = jest
         .spyOn(AiClientService.prototype, 'post')
         .mockResolvedValue({ ok: true, data: {} } as any);
@@ -166,8 +169,7 @@ describe('AiIngestService', () => {
       );
 
       expect(result.success).toBe(true);
-      expect(post).toHaveBeenCalledTimes(1);
-      expect((post.mock.calls[0][1] as any).records).toEqual([]);
+      expect(post).not.toHaveBeenCalled();
       post.mockRestore();
     });
   });
