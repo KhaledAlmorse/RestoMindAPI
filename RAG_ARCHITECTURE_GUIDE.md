@@ -9,11 +9,13 @@ RestoMind is an Egyptian restaurant & bakery management system powered by NestJS
 This architecture evolves pure RAG into an **Autonomous Agentic AI Engine**. The system keeps RAG as a foundational knowledge retrieval layer, while introducing an **AI Agent** capable of task planning, tool selection, multi-step data reasoning, structured recommendation generation, multi-turn state management, and **human-in-the-loop business action execution**.
 
 The system utilizes a decoupled **AI Provider Pattern Architecture** (`AIProvider` interface) supporting 3 execution environments seamlessly selected from `.env`:
+
 1. **Scholarship HTTP Gateway Provider (`GatewayProvider`)**: Direct HTTP Bearer client for scholarship API keys (`sbg_...`) without requiring AWS IAM credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
 2. **AWS Bedrock SDK Provider (`BedrockProvider`)**: Direct AWS Bedrock Runtime client (`@aws-sdk/client-bedrock-runtime`) for standard AWS IAM keys.
 3. **Standalone Local Provider (`LocalProvider`)**: Zero-network offline provider for local development and deterministic testing.
 
 Approved Bedrock Models:
+
 - **Primary LLM**: `anthropic.claude-sonnet-4-6` (High-reasoning synthesis & structured recommendation generation)
 - **Fast Router / Planner**: `anthropic.claude-haiku-4-5-20251001-v1:0` (Sub-150ms intent routing & tool parameter extraction)
 - **Primary Multilingual Embedding**: `us.cohere.embed-v4:0` (1024-dim cross-retrieval for Arabic/English)
@@ -159,7 +161,9 @@ export const AI_PROVIDER = 'AI_PROVIDER';
       provide: AI_PROVIDER,
       useFactory: (): AIProvider => {
         const logger = new Logger('AIProviderFactory');
-        const providerType = (process.env.AI_PROVIDER_TYPE || '').toLowerCase().trim();
+        const providerType = (process.env.AI_PROVIDER_TYPE || '')
+          .toLowerCase()
+          .trim();
         const scholarshipKey = (
           process.env.SCHOLARSHIP_API_KEY ||
           process.env.BEDROCK_GATEWAY_KEY ||
@@ -173,7 +177,11 @@ export const AI_PROVIDER = 'AI_PROVIDER';
         if (providerType === 'bedrock') return new BedrockProvider();
         if (providerType === 'local') return new LocalProvider();
 
-        if (scholarshipKey.startsWith('sbg_') || gatewayUrl || scholarshipKey.length > 0) {
+        if (
+          scholarshipKey.startsWith('sbg_') ||
+          gatewayUrl ||
+          scholarshipKey.length > 0
+        ) {
           logger.log('Auto-detected GatewayProvider for Scholarship Proxy Key');
           return new GatewayProvider();
         }
@@ -192,11 +200,13 @@ export class AIProviderModule {}
 ## 🤖 3. Agent Layer & Multi-Step Task Planning
 
 ### Agent Orchestration Principles
+
 1. **Centralized Agent Orchestration**: The AI Agent controls the end-to-end request lifecycle.
 2. **Multi-Step Reasoning**: Complex user queries are broken down into sequential tool steps by `PlannerService`.
 3. **Decoupled Execution**: Services depend **only** on `@Inject(AI_PROVIDER) private readonly aiProvider: AIProvider`.
 
 ### Intent Classification Categories
+
 1. `Information`: Pure factual queries (recipes, menu details).
 2. `Analytics`: Quantitative figures (sales totals, waste costs, expiring counts).
 3. `Recommendation`: Strategic requests asking for advice/solutions to cut costs.
@@ -209,6 +219,7 @@ export class AIProviderModule {}
 ## 🛠️ 4. Tool Calling Architecture & Tool Registry
 
 ### Strict Architectural Rule:
+
 > **The AI Agent MUST NEVER access MongoDB directly.**
 > All database reads, vector searches, aggregations, and business state mutations MUST be executed via strongly-typed, registered NestJS Tools wrapped in Zod parameter schemas.
 
@@ -294,10 +305,16 @@ export interface StructuredRecommendation {
 ## 🗄️ 8. Complete MongoDB Schemas Blueprint
 
 ### 1. `assistant_action_logs` Schema (`src/DB/Models/assistant-action-log.model.ts`)
+
 ```typescript
 @Schema({ timestamps: true })
 export class AssistantActionLog {
-  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+    index: true,
+  })
   restaurantId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -312,7 +329,11 @@ export class AssistantActionLog {
   @Prop({ type: Object, required: true })
   arguments!: Record<string, any>;
 
-  @Prop({ type: String, enum: ['SUCCESS', 'FAILED', 'REJECTED_BY_USER', 'PENDING_APPROVAL'], required: true })
+  @Prop({
+    type: String,
+    enum: ['SUCCESS', 'FAILED', 'REJECTED_BY_USER', 'PENDING_APPROVAL'],
+    required: true,
+  })
   executionStatus!: string;
 
   @Prop({ type: Number, default: 0 })
@@ -330,13 +351,30 @@ export class AssistantActionLog {
 ```
 
 ### 2. `knowledge_vectors` Schema (`src/DB/Models/knowledge-vector.model.ts`)
+
 ```typescript
 @Schema({ timestamps: true })
 export class KnowledgeVector {
-  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+    index: true,
+  })
   restaurantId!: Types.ObjectId;
 
-  @Prop({ type: String, required: true, enum: ['product', 'recipe', 'offer', 'waste_report', 'recommendation', 'weekly_snapshot'] })
+  @Prop({
+    type: String,
+    required: true,
+    enum: [
+      'product',
+      'recipe',
+      'offer',
+      'waste_report',
+      'recommendation',
+      'weekly_snapshot',
+    ],
+  })
   entityType!: string;
 
   @Prop({ type: Types.ObjectId, required: true })

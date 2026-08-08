@@ -90,7 +90,7 @@ export class RecommendationService {
       const products = (await this.productRepo.findMany({ filters: { restaurantId, isDeleted: false } as any })) || [];
       const sampleProduct = products[0];
       const productIdStr = sampleProduct ? (sampleProduct._id as Types.ObjectId).toString() : '65ab90294f8e1234567890ab';
-      const productTitle = sampleProduct ? sampleProduct.title : 'Bakery Surplus Item';
+      const productTitle = (sampleProduct && (sampleProduct.title || (sampleProduct as any).name)) || 'Bakery Surplus Item';
 
       recommendations.push({
         title: `Create 20% Promotional Discount for ${productTitle}`,
