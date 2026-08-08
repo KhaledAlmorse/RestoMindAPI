@@ -16,6 +16,7 @@ import {
   SalesTransactionModel,
   PredictionModel,
   RecommendationModel,
+  RecipeModel,
   WeeklyExecutiveSnapshotModel,
 } from 'src/DB/Models';
 import {
@@ -48,6 +49,7 @@ import { ToolRegistryService } from './tools/tool-registry.service';
 
 // Tools
 import { InventoryQueryTool } from './tools/query-tools/inventory-query.tool';
+import { RecipeQueryTool } from './tools/query-tools/recipe-query.tool';
 import { WasteQueryTool } from './tools/query-tools/waste-query.tool';
 import { SalesQueryTool } from './tools/query-tools/sales-query.tool';
 import { PredictionQueryTool } from './tools/query-tools/prediction-query.tool';
@@ -74,6 +76,7 @@ import { ProductionActionTool } from './tools/action-tools/production-action.too
     SalesTransactionModel,
     PredictionModel,
     RecommendationModel,
+    RecipeModel,
     WeeklyExecutiveSnapshotModel,
   ],
   controllers: [AssistantController],
@@ -107,6 +110,7 @@ import { ProductionActionTool } from './tools/action-tools/production-action.too
 
     // Tool Providers
     InventoryQueryTool,
+    RecipeQueryTool,
     WasteQueryTool,
     SalesQueryTool,
     PredictionQueryTool,

@@ -108,16 +108,30 @@ export class VectorStoreService {
 
     // 2. Sync Recipes
     const recipes = (await this.recipeRepo.findMany({ filters: { restaurantId, isDeleted: false } as any })) || [];
+    const allIngredients = (await this.ingredientRepo.findMany({ filters: { restaurantId, isDeleted: false } as any })) || [];
+    const ingMap = new Map<string, any>();
+    allIngredients.forEach((ing) => ingMap.set((ing._id as any).toString(), ing));
+
     for (const r of recipes) {
       const product = products.find((p) => (p._id as any).toString() === (r.productId as any).toString());
       const productTitle = product ? product.title || (product as any).name : 'Product';
-      const textContent = `Recipe for Product [${productTitle}]: Contains ${r.ingredients?.length || 0} ingredients.`;
+
+      const ingDetails = (r.ingredients || [])
+        .map((ri: any) => {
+          const doc = ingMap.get(ri.ingredientId?.toString());
+          const name = doc?.name || 'Ingredient';
+          return `${name}: ${ri.quantityPerPortion} ${ri.unit}`;
+        })
+        .join(', ');
+
+      const textContent = `Recipe for Product [${productTitle}]: Ingredients: ${ingDetails || 'None'}`;
+
       await this.upsertEntityVector({
         restaurantId,
         entityType: 'recipe',
         entityId: r._id as Types.ObjectId,
         textContent,
-        metadata: { productId: r.productId, productTitle },
+        metadata: { productId: r.productId, productTitle, ingredientsCount: r.ingredients?.length || 0 },
       });
       syncedCount++;
     }
@@ -148,6 +162,8 @@ export class VectorStoreService {
     limit = 5,
     entityTypes?: string[],
   ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 10);
+
     const queryVector = await this.bedrockEmbeddingService.generateEmbedding(
       queryText,
       'search_query',
@@ -156,7 +172,7 @@ export class VectorStoreService {
     let matches = await this.knowledgeVectorRepo.vectorSearch(
       restaurantId,
       queryVector,
-      limit,
+      safeLimit,
       entityTypes,
     );
 

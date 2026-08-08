@@ -85,11 +85,16 @@ export class ToolRegistryService {
     try {
       const result = await tool.handler(parseResult.data, context);
       const durationMs = Date.now() - startTime;
-      this.logger.log(`Completed Tool [${name}] in ${durationMs}ms`);
+      this.logger.log(`[AUDIT] Completed Tool [${name}] for restaurant [${context.restaurantId}] in ${durationMs}ms`);
       return result;
     } catch (error: any) {
-      this.logger.error(`Error executing Tool [${name}]: ${error?.message || error}`);
-      throw error;
+      const rawMsg = error?.message || String(error);
+      const safeMsg = rawMsg
+        .replace(/mongodb\+srv:\/\/[^\s]+/gi, '[REDACTED_DB_URL]')
+        .replace(/sbg_[a-zA-Z0-9_-]+/g, '[REDACTED_API_KEY]')
+        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED]');
+      this.logger.error(`[AUDIT] Error executing Tool [${name}] for restaurant [${context.restaurantId}]: ${safeMsg}`);
+      throw new Error(`Execution of tool [${name}] failed: ${safeMsg}`);
     }
   }
 
