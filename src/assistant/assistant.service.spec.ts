@@ -204,6 +204,53 @@ describe('Agentic AI & RAG Suite', () => {
     });
   });
 
+  describe('Empty Data Fallback Handling (Zero Fabrication)', () => {
+    it('should return explicit unavailable message when getPredictions has empty items', async () => {
+      const toolResults = [
+        {
+          toolName: 'getPredictions',
+          result: { horizon: '7_days', items: [] },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هي توقعات الطلب؟',
+        'arabic',
+        'Analytics',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toContain('لا توجد بيانات توقعات متوفرة للفترة القادمة');
+      expect(res).not.toContain('150 طلب');
+      expect(res).not.toContain('89%');
+    });
+
+    it('should return explicit unavailable message when generateExecutiveReport has empty history', async () => {
+      const toolResults = [
+        {
+          toolName: 'generateExecutiveReport',
+          result: { reportPeriod: 'last_week', history: [] },
+        },
+      ];
+
+      const res = await (AssistantService.prototype as any).synthesizeResponse(
+        'ما هو التقرير التنفيذي؟',
+        'arabic',
+        'Analytics',
+        toolResults,
+        [],
+        [],
+      );
+
+      expect(res).toContain('لا توجد بيانات تقرير تنفيذي متوفرة للفترة الماضية');
+      expect(res).not.toContain('14,250');
+      expect(res).not.toContain('كرواسون بالزبده');
+      expect(res).not.toContain('92%');
+    });
+  });
+
   describe('AssistantService Security Boundaries', () => {
     it('should sanitize output text and redact secret keys', () => {
       const rawText = 'API key is sbg_123456789 and url is mongodb+srv://admin:pass@cluster.mongodb.net';
