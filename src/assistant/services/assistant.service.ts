@@ -210,31 +210,6 @@ export class AssistantService {
     return false;
   }
 
-  private extractSourceIds(toolResults: any[]): string[] {
-    const sourceIds = new Set<string>();
-    for (const tr of toolResults || []) {
-      if (tr.toolName === 'searchKnowledge' && tr.result?.matches) {
-        for (const m of tr.result.matches) {
-          if (m.sourceId) sourceIds.add(m.sourceId);
-          else if (m.entityId) sourceIds.add(`${m.entityType || 'knowledge'}:${m.entityId}`);
-        }
-      } else if (tr.result && typeof tr.result === 'object') {
-        if (tr.result._id) sourceIds.add(`${tr.toolName}:${tr.result._id}`);
-        if (Array.isArray(tr.result.batches)) {
-          tr.result.batches.forEach((b: any) => {
-            if (b.batchNumber) sourceIds.add(`batch:${b.batchNumber}`);
-          });
-        }
-        if (Array.isArray(tr.result.items)) {
-          tr.result.items.forEach((i: any) => {
-            if (i.productId) sourceIds.add(`product:${i.productId}`);
-          });
-        }
-      }
-    }
-    return Array.from(sourceIds);
-  }
-
   private async synthesizeResponse(
     userMessage: string,
     language: 'arabic' | 'english' | 'mixed',
@@ -346,11 +321,7 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           `• نسبة ثقة نموذج الذكاء الاصطناعي: ${avgConfidence}%`,
         );
       } else {
-        responseParts.push(
-          `🔮 توقعات الطلب للأيام القادمة:\n` +
-          `• إجمالي الطلبات المتوقعة: 150 طلب\n` +
-          `• نسبة ثقة نموذج الذكاء الاصطناعي: 89%`,
-        );
+        responseParts.push(`🔮 توقعات الطلب للأيام القادمة: لا توجد بيانات توقعات متوفرة للفترة القادمة.`);
       }
     }
 
@@ -367,13 +338,7 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           `• دقة توقعات الذكاء الاصطناعي: ${Math.round((snap.aiPredictionAccuracy || 0.9) * 100)}%`,
         );
       } else {
-        responseParts.push(
-          `📋 التقرير التنفيذي لمطعمك (${reportData.reportPeriod || 'الأسبوع الماضي'}):\n` +
-          `• إجمالي إيرادات المبيعات: 14,250 جنيه مصري\n` +
-          `• تكلفة الهدر: 0 جنيه مصري\n` +
-          `• المنتج الأكثر مبيعاً: كرواسون بالزبده\n` +
-          `• دقة توقعات الذكاء الاصطناعي: 92%`,
-        );
+        responseParts.push(`📋 التقرير التنفيذي لمطعمك: لا توجد بيانات تقرير تنفيذي متوفرة للفترة الماضية.`);
       }
     }
 
