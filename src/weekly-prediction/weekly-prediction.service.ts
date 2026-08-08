@@ -22,6 +22,7 @@ import {
   isValidDateString,
 } from 'src/Common/Utils/date.util';
 import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
+import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
 import {
   degradationFields,
   reportAiFailure,
@@ -236,12 +237,7 @@ export class WeeklyPredictionService {
       targetWeekStr,
     );
 
-    const categoryName =
-      product.category &&
-      typeof product.category === 'object' &&
-      (product.category as any).name
-        ? (product.category as any).name
-        : 'General';
+    const categoryName = resolveCategoryName(product.category);
 
     // 3. Call the AI microservice through the shared client.
     const aiResult = await this.aiClient.post<any>(
@@ -996,10 +992,7 @@ export class WeeklyPredictionService {
     const productPayload = products.map((p: any) => ({
       productId: p._id.toString(),
       title: p.title || 'Product',
-      category:
-        p.category && typeof p.category === 'object' && p.category.name
-          ? p.category.name
-          : null,
+      category: resolveCategoryName(p.category),
       price: p.price || 0,
       freshnessWindow: p.freshnessWindow ?? null,
     }));

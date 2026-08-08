@@ -32,6 +32,7 @@ import {
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
 import { getBusinessDateString } from 'src/Common/Utils/date.util';
+import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
 
 @Injectable()
 export class ImportsService {
@@ -220,10 +221,13 @@ export class ImportsService {
       const effectiveMapping = dto.columnMapping || job.columnMapping || {};
       const headers = Object.keys(effectiveMapping);
 
-      // Fetch existing master data for validation
+      // Fetch existing master data for validation. `category` is populated
+      // because the sales_history branch forwards these products to the AI
+      // service, which needs the category NAME to resolve calendar priors.
       const products =
         (await this.productRepository.findMany({
           filters: { restaurantId, isDeleted: false },
+          populationArray: [{ path: 'category' }],
         })) || [];
 
       const ingredients =
@@ -790,7 +794,7 @@ export class ImportsService {
           const productsPayload = products.map((p: any) => ({
             productId: p._id.toString(),
             title: p.title,
-            category: p.category || 'General',
+            category: resolveCategoryName(p.category),
           }));
 
           const aiResult = await this.aiIngestService.ingest({
@@ -965,6 +969,7 @@ export class ImportsService {
     const products =
       (await this.productRepository.findMany({
         filters: { restaurantId, isDeleted: false },
+        populationArray: [{ path: 'category' }],
       })) || [];
 
     // Cairo, for the same reason as the confirm path above: the registry's
@@ -978,7 +983,7 @@ export class ImportsService {
     const productsPayload = products.map((p: any) => ({
       productId: p._id.toString(),
       title: p.title,
-      category: p.category || 'General',
+      category: resolveCategoryName(p.category),
     }));
 
     const aiResult = await this.aiIngestService.ingest({
