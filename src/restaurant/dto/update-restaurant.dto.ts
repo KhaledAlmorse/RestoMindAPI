@@ -5,6 +5,7 @@ import {
   ValidateNested,
   IsBoolean,
   IsNumber,
+  IsInt,
   IsIn,
   IsNotEmpty,
   Max,
@@ -63,6 +64,24 @@ export class UpdateRestaurantDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  /**
+   * Closing time as a Cairo wall-clock hour, 0–23 (22 = 10pm).
+   *
+   * Feeds the AI surplus scan, which sizes an end-of-day discount from the
+   * selling time left before closing. `null` clears it and restores the
+   * platform default; like commissionRate it must survive the transform
+   * untouched, since `Number(null)` is 0 — midnight — which would make every
+   * surplus scan think the shop had already shut.
+   */
+  @Transform(({ value }) =>
+    value === null || value === '' ? null : Number(value),
+  )
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  @IsOptional()
+  closeHour?: number | null;
 
   /**
    * A fraction, not a percent: 0.05 is 5%. Same unit as

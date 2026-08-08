@@ -131,6 +131,18 @@ export class Restaurant {
     bankName?: string;
   };
 
+  /**
+   * Closing time as a Cairo wall-clock hour, 0–23. Drives the surplus scan:
+   * the AI service sizes an end-of-day discount from how much selling time is
+   * left before this hour, so a bakery closing at 18:00 given the old
+   * hardcoded 22 had its discounts fire hours after anyone could act on them.
+   *
+   * Optional. Unset means the platform default (DEFAULT_CLOSE_HOUR) applies,
+   * so existing restaurants keep their current behaviour without a migration.
+   */
+  @Prop({ type: Number, required: false, min: 0, max: 23 })
+  closeHour?: number;
+
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 

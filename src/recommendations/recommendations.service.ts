@@ -49,6 +49,7 @@ import { ApproveRecommendationDto } from './dto/approve-recommendation.dto';
 import { EditRecommendationDto } from './dto/edit-recommendation.dto';
 import { QueryRecommendationDto } from './dto/query-recommendation.dto';
 import { ValidatePlanDto } from './dto/validate-plan.dto';
+import { resolveCloseHour } from 'src/Common/Utils/ai-product.util';
 
 @Injectable()
 export class RecommendationsService {
@@ -499,12 +500,21 @@ export class RecommendationsService {
     // 4. Ask the AI for discount suggestions. A failure here does NOT invalidate
     // the waste reports we just wrote — report them as degraded instead of
     // throwing on top of a committed write.
+    //
+    // closeHour comes from the restaurant, not a constant: the AI sizes the
+    // discount from the selling time left before closing, so a bakery that
+    // shuts at 18:00 evaluated against 22 gets a discount that fires hours too
+    // late to clear anything.
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { _id: restaurantId, isDeleted: false },
+    });
+
     const aiResult = await this.aiClient.post<any>(
       '/integration/restomind/surplus-offers',
       {
         restaurantId: restaurantId.toString(),
         timestamp: new Date().toISOString(),
-        closeHour: 22,
+        closeHour: resolveCloseHour(restaurant?.closeHour),
         stock: stockItems,
       },
       { retries: 2, timeoutMs: 8000 },

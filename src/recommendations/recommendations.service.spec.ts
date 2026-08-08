@@ -30,6 +30,7 @@ import {
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { DEFAULT_CLOSE_HOUR } from 'src/Common/Utils/ai-product.util';
 import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 describe('RecommendationsService', () => {
@@ -376,7 +377,7 @@ describe('RecommendationsService', () => {
       expect((result as any).degradedReason).toContain('Network error');
     });
 
-    it('should send closeHour as integer 22 to AI service during scanSurplus', async () => {
+    it('falls back to the default closeHour when the restaurant has not set one', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
       mockPredictionRepo.findOne.mockResolvedValue(null);
@@ -418,8 +419,76 @@ describe('RecommendationsService', () => {
       const fetchCallBody = JSON.parse(
         (global.fetch as jest.Mock).mock.calls[0][1].body,
       );
-      expect(fetchCallBody.closeHour).toBe(22);
+      expect(fetchCallBody.closeHour).toBe(DEFAULT_CLOSE_HOUR);
       expect(typeof fetchCallBody.closeHour).toBe('number');
+    });
+
+    // Was hardcoded to 22. A bakery that shuts at 18:00 was evaluated as if it
+    // had four more hours of selling time, so its discount was sized too small
+    // and fired too late to clear anything.
+    it("sends the restaurant's own closeHour when it has one", async () => {
+      mockProductRepo.findMany.mockResolvedValue([mockProduct]);
+      mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
+      mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
+      mockInventoryBatchRepo.findMany.mockResolvedValue([]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+        riskLevel: RiskLevelEnum.LOW,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue(null);
+      mockRecommendationRepo.create.mockResolvedValue(mockRecommendation);
+      mockRestaurantRepo.findOne.mockResolvedValue({
+        _id: mockRestaurantId,
+        closeHour: 18,
+      });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ itemsAtRisk: [] }),
+      } as any);
+
+      await service.scanSurplus(mockUserId);
+
+      const body = JSON.parse(
+        (global.fetch as jest.Mock).mock.calls[0][1].body,
+      );
+      expect(body.closeHour).toBe(18);
+    });
+
+    it('ignores an out-of-range closeHour rather than forwarding it', async () => {
+      mockProductRepo.findMany.mockResolvedValue([mockProduct]);
+      mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
+      mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
+      mockInventoryBatchRepo.findMany.mockResolvedValue([]);
+      mockWasteReportRepo.findOne.mockResolvedValue(null);
+      mockWasteReportRepo.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        restaurantId: mockRestaurantId,
+        riskLevel: RiskLevelEnum.LOW,
+      });
+      mockRecommendationRepo.findOne.mockResolvedValue(null);
+      mockRecommendationRepo.create.mockResolvedValue(mockRecommendation);
+      // Legacy row written before validation existed.
+      mockRestaurantRepo.findOne.mockResolvedValue({
+        _id: mockRestaurantId,
+        closeHour: 99,
+      });
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ itemsAtRisk: [] }),
+      } as any);
+
+      await service.scanSurplus(mockUserId);
+
+      const body = JSON.parse(
+        (global.fetch as jest.Mock).mock.calls[0][1].body,
+      );
+      expect(body.closeHour).toBe(DEFAULT_CLOSE_HOUR);
     });
 
     it('should create a WasteReport with locally calculated values and pass wasteReportId to Recommendation', async () => {
