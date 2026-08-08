@@ -32,7 +32,10 @@ import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
 import { AiClientService } from '../Common/Services/ai-client.service';
-import { resolveCategoryName } from '../Common/Utils/ai-product.util';
+import {
+  buildAiProductPayload,
+  buildAiProductPayloadsFor,
+} from '../Common/Utils/ai-product.util';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -330,14 +333,14 @@ export class ProductionPlanningService {
         salesRowCount,
         prod,
       );
-      const categoryName = resolveCategoryName(prod.category);
 
+      // The shared shape plus the estimate this endpoint alone supplies.
+      // `freshnessWindow` was defaulted to 2 here; the plan endpoint never
+      // reads it (only the surplus scan does, for spoilage severity), so the
+      // helper's honest `null` changes nothing but stops a made-up shelf life
+      // being recorded against the product.
       return {
-        productId: pIdStr,
-        title: prod.title || 'Product',
-        category: categoryName,
-        price: prod.price || 0,
-        freshnessWindow: prod.freshnessWindow || 2,
+        ...buildAiProductPayload(prod),
         avgDailySales,
       };
     });
@@ -562,11 +565,10 @@ export class ProductionPlanningService {
         await this.aiIngestService.ingest({
           restaurantId: restId.toString(),
           records,
-          products: products.map((p: any) => ({
-            productId: p._id.toString(),
-            title: p.title || 'Product',
-            category: resolveCategoryName(p.category),
-          })),
+          products: buildAiProductPayloadsFor(
+            products,
+            records.map((r) => r.productId),
+          ),
         });
       } catch (err: any) {
         this.logger.error(

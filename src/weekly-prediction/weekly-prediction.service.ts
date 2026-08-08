@@ -22,7 +22,10 @@ import {
   isValidDateString,
 } from 'src/Common/Utils/date.util';
 import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
-import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
+import {
+  buildAiProductPayloadsFor,
+  resolveCategoryName,
+} from 'src/Common/Utils/ai-product.util';
 import {
   degradationFields,
   reportAiFailure,
@@ -1006,13 +1009,10 @@ export class WeeklyPredictionService {
       salesQty: s.quantitySold || 0,
     }));
 
-    const productPayload = products.map((p: any) => ({
-      productId: p._id.toString(),
-      title: p.title || 'Product',
-      category: resolveCategoryName(p.category),
-      price: p.price || 0,
-      freshnessWindow: p.freshnessWindow ?? null,
-    }));
+    const productPayload = buildAiProductPayloadsFor(
+      products,
+      records.map((r) => r.productId),
+    );
 
     const result = await this.aiClient.post<any>(
       '/integration/restomind/ingest',

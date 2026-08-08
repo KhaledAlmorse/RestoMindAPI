@@ -38,3 +38,55 @@ export function resolveCategoryName(category: unknown): string {
   }
   return 'General';
 }
+
+/** The product shape every AI payload uses. Mirrors the service's `RMProduct`. */
+export interface AiProductPayload {
+  productId: string;
+  title: string;
+  category: string;
+  price: number;
+  freshnessWindow: number | null;
+}
+
+/**
+ * The single definition of how a Product is described to the AI service.
+ *
+ * Call sites used to build this by hand, and they drifted: the CSV ingest path
+ * sent only `{ productId, title, category }` while the backfill path also sent
+ * `price` and `freshnessWindow`. Those two are what the service computes the
+ * newsvendor quantile from, so products onboarded by CSV import arrived without
+ * the economics — and, because the registry replaced the stored record on every
+ * upsert, a CSV import could strip economics an earlier backfill had populated.
+ *
+ * `freshnessWindow` stays `null` rather than defaulting to a number: the shelf
+ * life of an unknown product is unknown, and inventing one silently sets a
+ * service level nobody chose.
+ */
+export function buildAiProductPayload(product: any): AiProductPayload {
+  return {
+    productId: product._id.toString(),
+    title: product.title || 'Product',
+    category: resolveCategoryName(product.category),
+    price: product.price || 0,
+    freshnessWindow: product.freshnessWindow ?? null,
+  };
+}
+
+/**
+ * The products an ingest needs to describe: those its records actually refer to.
+ *
+ * Sending the whole catalogue on every ingest is wasted payload, and it was
+ * actively harmful while the registry replaced records wholesale — one CSV
+ * import re-sent every product in the restaurant, including ones the file never
+ * mentioned. Narrowing it means an ingest can only ever affect what it carries
+ * data for.
+ */
+export function buildAiProductPayloadsFor(
+  products: any[],
+  referencedProductIds: Iterable<string>,
+): AiProductPayload[] {
+  const wanted = new Set(referencedProductIds);
+  return products
+    .filter((p) => wanted.has(p._id.toString()))
+    .map(buildAiProductPayload);
+}
