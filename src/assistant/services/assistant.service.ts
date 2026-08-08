@@ -17,6 +17,13 @@ export interface ChatAssistantResponse {
   recommendations: StructuredRecommendation[];
   pendingActions: any[];
   requiresApproval: boolean;
+  /**
+   * True when this answer was produced without the full pipeline — semantic
+   * retrieval was unavailable, or the LLM could not be reached and the
+   * deterministic synthesiser answered instead. The UI shows a banner.
+   */
+  degraded: boolean;
+  degradedReason?: string;
 }
 
 @Injectable()
@@ -69,8 +76,12 @@ export class AssistantService {
     // 3. Multi-Turn Session State Restore
     const pendingState = this.conversationState.getSessionState(sessionId);
 
-    // 4. Task Planner
-    const plan = await this.plannerService.planExecution(boundedUserMessage, pendingState);
+    // 4. Task Planner — history goes in so follow-ups resolve against context.
+    //    `messages` already includes the turn just pushed above, so drop it.
+    const priorTurns = history.messages
+      .slice(-7, -1)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const plan = await this.plannerService.planExecution(boundedUserMessage, pendingState, priorTurns);
     this.logger.log(`Planner Intent: [${plan.intent}] across ${plan.steps.length} steps.`);
 
     // 5. Execute Plan Tools
@@ -97,6 +108,7 @@ export class AssistantService {
         recommendations: [],
         pendingActions: [],
         requiresApproval: false,
+        degraded: false,
       };
     }
 
@@ -110,7 +122,7 @@ export class AssistantService {
     }
 
     // 7. Context Synthesis & Response Generation via Provider
-    const rawSynthesizedAnswer = await this.synthesizeResponse(
+    const { answer: rawSynthesizedAnswer, usedProvider } = await this.synthesizeResponse(
       boundedUserMessage,
       language,
       plan.intent,
@@ -120,6 +132,18 @@ export class AssistantService {
     );
 
     const synthesizedAnswer = this.sanitizeOutputText(rawSynthesizedAnswer);
+
+    // Degradation has two independent sources; report whichever fired.
+    const retrievalDegraded = toolResults.find((r) => r.result?.degraded === true);
+    const degradedReasons: string[] = [];
+    if (retrievalDegraded) {
+      degradedReasons.push(
+        retrievalDegraded.result.degradedReason || 'Semantic retrieval was unavailable.',
+      );
+    }
+    if (!usedProvider && plan.intent !== 'Conversation') {
+      degradedReasons.push('The language model was unavailable; answered from tool data directly.');
+    }
 
     // 8. Append Assistant Response to Chat History
     history.messages.push({ role: 'assistant', content: synthesizedAnswer, timestamp: new Date() });
@@ -139,6 +163,8 @@ export class AssistantService {
       recommendations,
       pendingActions,
       requiresApproval: plan.requiresApproval || pendingActions.length > 0,
+      degraded: degradedReasons.length > 0,
+      degradedReason: degradedReasons.join(' ') || undefined,
     };
   }
 
@@ -217,12 +243,14 @@ export class AssistantService {
     toolResults: any[],
     recommendations: StructuredRecommendation[],
     recentHistory: any[],
-  ): Promise<string> {
+  ): Promise<{ answer: string; usedProvider: boolean }> {
     // Handling Greetings / General Conversation
     if (intent === 'Conversation') {
-      return language === 'english'
+      const greeting = language === 'english'
         ? `Hello! I am RestoMind's Intelligent Assistant for your restaurant. 🥐☕\n\nI can help you with:\n• Searching products, recipes, and ingredients.\n• Tracking inventory and expiring stock batches.\n• Analyzing food waste costs and strategic recommendations.\n• Creating promotional discount offers and purchase orders.\n\nHow can I help you today?`
         : `أهلاً بك! أنا مساعد RestoMind الذكي لمطعمك. 🥐☕\n\nيمكنني مساعدتك في:\n• البحث في قائمة المأكولات والوصفات والمكونات.\n• متابعة المخزون والدُفعات القريبة من انتهاء الصلاحية.\n• تحليل الهدر وتكلفته وتقديم توصيات لتقليله.\n• إنشاء عروض الخصم وأوامر الشراء خطوة بخطوة.\n\nكيف يمكنني مساعدتك اليوم؟`;
+      // A canned greeting is the intended answer here, not a degradation.
+      return { answer: greeting, usedProvider: true };
     }
 
     const systemPrompt = `You are RestoMind's Intelligent Restaurant Assistant in Egypt.
@@ -266,7 +294,7 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           { modelId: this.primaryModelId, systemPrompt, maxTokens: 1500 },
         );
 
-        if (text && text.trim().length > 0) return text;
+        if (text && text.trim().length > 0) return { answer: text, usedProvider: true };
       } catch (error: any) {
         this.logger.warn(`AI Provider [${this.aiProvider.providerName}] synthesis failed, using grounded local synthesis: ${error?.message || error}`);
       }
@@ -276,7 +304,7 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
     const recipeData = toolResults.find((r) => r.toolName === 'getRecipeIngredients')?.result;
     if (recipeData) {
       if (!recipeData.hasRecipe || !recipeData.ingredients || recipeData.ingredients.length === 0) {
-        return 'لا توجد معلومات مسجلة عن مكونات هذا المنتج في البيانات المتاحة.';
+        return { answer: 'لا توجد معلومات مسجلة عن مكونات هذا المنتج في البيانات المتاحة.', usedProvider: false };
       }
 
       const rows = recipeData.ingredients.map(
@@ -284,12 +312,14 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           `| ${ing.name} | ${ing.quantity !== null && ing.quantity !== undefined ? ing.quantity : 'غير متوفرة'} | ${ing.unit || 'غير متوفرة'} |`,
       );
 
-      return (
-        `### المكونات\n\n` +
-        `| المكوّن | الكمية | الوحدة |\n` +
-        `|---|---:|---|\n` +
-        rows.join('\n')
-      );
+      return {
+        answer:
+          `### المكونات\n\n` +
+          `| المكوّن | الكمية | الوحدة |\n` +
+          `|---|---:|---|\n` +
+          rows.join('\n'),
+        usedProvider: false,
+      };
     }
 
     const responseParts: string[] = [];
@@ -321,7 +351,11 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           `• نسبة ثقة نموذج الذكاء الاصطناعي: ${avgConfidence}%`,
         );
       } else {
-        responseParts.push(`🔮 توقعات الطلب للأيام القادمة: لا توجد بيانات توقعات متوفرة للفترة القادمة.`);
+        // This branch used to emit "150 طلب / 89%" — invented figures, in a
+        // method whose entire purpose is grounding. Say there is no data.
+        responseParts.push(
+          `🔮 توقعات الطلب: لا توجد توقعات متاحة للفترة القادمة حالياً.`,
+        );
       }
     }
 
@@ -338,7 +372,10 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
           `• دقة توقعات الذكاء الاصطناعي: ${Math.round((snap.aiPredictionAccuracy || 0.9) * 100)}%`,
         );
       } else {
-        responseParts.push(`📋 التقرير التنفيذي لمطعمك: لا توجد بيانات تقرير تنفيذي متوفرة للفترة الماضية.`);
+        // Same reason as the predictions branch: no snapshot means no numbers.
+        responseParts.push(
+          `📋 التقرير التنفيذي: لا توجد بيانات مسجلة للفترة المطلوبة (${reportData.reportPeriod || 'الأسبوع الماضي'}).`,
+        );
       }
     }
 
@@ -367,7 +404,13 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
     const ragResult = toolResults.find((r) => r.toolName === 'searchKnowledge')?.result;
     if (ragResult && ragResult.matches && ragResult.matches.length > 0) {
       const matchTexts = ragResult.matches.map((m: any) => `• ${m.textContent}`).join('\n');
-      responseParts.push(`🔍 قائمة المأكولات والوصفات المتعلقة بطلبك:\n${matchTexts}`);
+      // Only claim semantic relevance when the search actually was semantic.
+      const heading = ragResult.degraded
+        ? '🔍 نتائج مطابقة نصية (البحث الدلالي غير متاح حالياً):'
+        : '🔍 قائمة المأكولات والوصفات المتعلقة بطلبك:';
+      responseParts.push(`${heading}\n${matchTexts}`);
+    } else if (ragResult) {
+      responseParts.push(`🔍 لم أجد نتائج مطابقة لطلبك في بيانات مطعمك.`);
     }
 
     // Include Recommendation Highlights
@@ -379,10 +422,15 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
     }
 
     if (responseParts.length > 0) {
-      return responseParts.join('\n\n');
+      return { answer: responseParts.join('\n\n'), usedProvider: false };
     }
 
-    return `تم تحليل طلبك بنجاح واستخراج البيانات المطلوبة من قاعدة بيانات RestoMind لمطعمك.`;
+    // Previously claimed success ("تم تحليل طلبك بنجاح") while returning
+    // nothing at all. If no tool produced anything, say that.
+    return {
+      answer: `لم أتمكن من العثور على بيانات كافية للإجابة على طلبك. جرّب إعادة صياغة السؤال أو تحديد فترة زمنية.`,
+      usedProvider: false,
+    };
   }
 
   private sanitizeOutputText(text: string): string {

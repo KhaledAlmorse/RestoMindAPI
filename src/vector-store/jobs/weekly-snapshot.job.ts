@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
+import { BUSINESS_TIMEZONE, getBusinessDateString } from 'src/Common/Utils/date.util';
 import {
   RestaurantRepository,
   SalesTransactionRepository,
@@ -23,13 +24,20 @@ export class WeeklySnapshotJob {
     private readonly vectorStoreService: VectorStoreService,
   ) {}
 
-  @Cron(CronExpression.EVERY_WEEKEND) // Sunday 01:00 AM
+  // Was `CronExpression.EVERY_WEEKEND`, which is `0 0 * * 6,0` — midnight on
+  // BOTH Saturday and Sunday, in the container's timezone, despite the comment
+  // claiming Sunday 01:00. 04:00 is the first Sunday hour not already taken by
+  // another AI job (00:00 predictions, 01:00/02:00 daily, 03:00 accuracy);
+  // src/Common/cron-schedule.spec.ts enforces that.
+  @Cron('0 4 * * 0', { timeZone: BUSINESS_TIMEZONE })
   async handleWeeklyExecutiveSnapshots(): Promise<void> {
     this.logger.log('Starting Sunday Weekly Executive Snapshot Cron Job...');
 
     try {
       const restaurants = (await this.restaurantRepo.findMany({ filters: { isDeleted: false } as any })) || [];
-      const targetWeek = new Date().toISOString().split('T')[0]; // Current YYYY-MM-DD
+      // `toISOString()` is UTC: at 04:00 Cairo it still reports the previous
+      // calendar day, mislabelling every snapshot by one day.
+      const targetWeek = getBusinessDateString();
 
       for (const restaurant of restaurants) {
         await this.generateSnapshotForRestaurant(restaurant._id as Types.ObjectId, targetWeek);

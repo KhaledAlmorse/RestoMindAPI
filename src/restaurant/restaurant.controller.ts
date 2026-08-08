@@ -26,7 +26,7 @@ import { uploadFileOptions } from 'src/Common/Utils/multer.utils';
 
 @Controller('restaurants')
 export class RestaurantController {
-  constructor(private readonly restaurantService: RestaurantService) {}
+  constructor(private readonly restaurantService: RestaurantService) { }
 
   @Post()
   @Auth('admin')
@@ -41,7 +41,6 @@ export class RestaurantController {
   }
 
   @Get()
-  @Auth('admin')
   async getAllRestaurants(
     @Query() query: QueryRestaurantDto,
     @Res() res: Response,

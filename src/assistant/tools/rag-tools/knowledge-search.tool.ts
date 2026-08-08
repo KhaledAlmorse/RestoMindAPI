@@ -32,7 +32,7 @@ export class KnowledgeSearchTool implements OnModuleInit {
     const { query, entityTypes, limit } = params;
     const { restaurantId } = context;
 
-    const results = await this.vectorStoreService.searchKnowledge(
+    const { matches, degraded, degradedReason } = await this.vectorStoreService.searchKnowledge(
       restaurantId,
       query,
       limit,
@@ -41,8 +41,12 @@ export class KnowledgeSearchTool implements OnModuleInit {
 
     return {
       query,
-      retrievedCount: results.length,
-      matches: results.map((r) => {
+      retrievedCount: matches.length,
+      // Carried into the synthesis prompt and up to the UI so a keyword-only
+      // answer is never presented as a semantic one.
+      degraded,
+      degradedReason,
+      matches: matches.map((r) => {
         const safeMetadata = { ...(r.metadata || {}) };
         delete safeMetadata.restaurantId;
         delete safeMetadata.entityId;

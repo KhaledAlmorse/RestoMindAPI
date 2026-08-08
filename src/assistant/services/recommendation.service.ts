@@ -7,6 +7,12 @@ import { Recipe, RecipeType } from 'src/DB/Models';
 
 export interface StructuredRecommendation {
   recommendationId?: string;
+  /**
+   * The `recommendation_actions` row id. Required by POST /assistant/approve-action
+   * to mark the action EXECUTED; without it an approval runs the tool but
+   * leaves the action row stuck at PENDING forever.
+   */
+  recommendationActionId?: string;
   title: string;
   description: string;
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -170,31 +176,70 @@ export class RecommendationService {
     // Persist recommendations & actions to database
     for (const rec of recommendations) {
       try {
-        const storedRec = await this.recommendationRepo.create({
-          restaurantId,
-          productId: new Types.ObjectId(
-            Types.ObjectId.isValid(rec.actionPayload.arguments.productId)
-              ? rec.actionPayload.arguments.productId
-              : '000000000000000000000000',
-          ),
-          type: RecommendationTypeEnum.APPLY_DISCOUNT,
-          suggestedValue: rec.actionPayload.arguments.discountPercentage || rec.estimatedSaving,
-          gptExplanation: rec.description,
-          status: RecommendationStatusEnum.PENDING,
-          isDeleted: false,
+        const productId = new Types.ObjectId(
+          Types.ObjectId.isValid(rec.actionPayload.arguments.productId)
+            ? rec.actionPayload.arguments.productId
+            : '000000000000000000000000',
+        );
+        const suggestedValue =
+          rec.actionPayload.arguments.discountPercentage || rec.estimatedSaving;
+
+        // Reuse the open recommendation for this product+type instead of
+        // writing a new row on every chat turn. Without this, asking about
+        // waste five times left five identical PENDING rows in the operator's
+        // recommendations list.
+        const existing = await this.recommendationRepo.findOne({
+          filters: {
+            restaurantId,
+            productId,
+            type: RecommendationTypeEnum.APPLY_DISCOUNT,
+            status: RecommendationStatusEnum.PENDING,
+            isDeleted: false,
+          } as any,
         });
+
+        const storedRec =
+          existing ||
+          (await this.recommendationRepo.create({
+            restaurantId,
+            productId,
+            type: RecommendationTypeEnum.APPLY_DISCOUNT,
+            suggestedValue,
+            gptExplanation: rec.description,
+            status: RecommendationStatusEnum.PENDING,
+            isDeleted: false,
+          }));
 
         rec.recommendationId = (storedRec._id as Types.ObjectId).toString();
 
-        await this.recommendationActionRepo.create({
-          restaurantId,
-          recommendationId: storedRec._id as Types.ObjectId,
-          status: 'PENDING',
-          selectedByUser: false,
-          relatedTool: rec.actionPayload.toolName,
+        const existingAction = await this.recommendationActionRepo.findOne({
+          filters: {
+            restaurantId,
+            recommendationId: storedRec._id as Types.ObjectId,
+            status: 'PENDING',
+          } as any,
         });
+
+        const storedAction =
+          existingAction ||
+          (await this.recommendationActionRepo.create({
+            restaurantId,
+            recommendationId: storedRec._id as Types.ObjectId,
+            status: 'PENDING',
+            selectedByUser: false,
+            relatedTool: rec.actionPayload.toolName,
+          }));
+
+        // Returning this is what lets the approval endpoint close the loop.
+        rec.recommendationActionId = (storedAction._id as Types.ObjectId).toString();
       } catch (error: any) {
-        this.logger.warn(`Failed to persist recommendation: ${error?.message || error}`);
+        // Was `warn`, which meant a total persistence failure looked like a
+        // healthy run — the API still returned recommendations the operator
+        // could click, backed by nothing.
+        this.logger.error(
+          `Failed to persist recommendation [${rec.title}] for restaurant [${restaurantId}]: ${error?.message || error}`,
+          error?.stack,
+        );
       }
     }
 

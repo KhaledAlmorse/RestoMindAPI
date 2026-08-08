@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AssistantService } from './services/assistant.service';
 import { ArabicNormalizerService } from './services/arabic-normalizer.service';
-import { ConversationStateService } from './services/conversation-state.service';
+import {
+  ConversationStateService,
+  SESSION_STATE_TTL_MS,
+} from './services/conversation-state.service';
 import { PlannerService } from './services/planner.service';
 import { ToolRegistryService } from './tools/tool-registry.service';
 import { BedrockEmbeddingService } from 'src/vector-store/bedrock-embedding.service';
@@ -70,6 +73,57 @@ describe('Agentic AI & RAG Suite', () => {
       conversationState.clearSessionState(sessionId);
       expect(conversationState.getSessionState(sessionId)).toBeUndefined();
     });
+
+    // Fake timers rather than a back-dated `lastUpdated`: setSessionState
+    // stamps `lastUpdated` itself, so only advancing the clock exercises the
+    // real expiry path.
+    it('expires state past the TTL instead of resuming a stale workflow', () => {
+      jest.useFakeTimers();
+      try {
+        const sessionId = 'session_stale';
+        conversationState.setSessionState(sessionId, {
+          sessionId,
+          restaurantId: 'rest_1',
+          userId: 'user_1',
+          status: 'AWAITING_PARAMETERS',
+          pendingAction: 'CREATE_OFFER',
+          collectedParams: { discountPercentage: 25 },
+          lastUpdated: new Date(),
+        });
+
+        jest.advanceTimersByTime(SESSION_STATE_TTL_MS + 1000);
+
+        // `lastUpdated` was written but never read, so an abandoned "create
+        // offer" flow stayed resumable forever against changed inventory.
+        expect(conversationState.getSessionState(sessionId)).toBeUndefined();
+
+        const restarted = conversationState.updateSessionParams(sessionId, { daysDuration: 3 });
+        expect(restarted.collectedParams?.discountPercentage).toBeUndefined();
+        expect(restarted.collectedParams?.daysDuration).toBe(3);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps state that is still inside the TTL', () => {
+      jest.useFakeTimers();
+      try {
+        const sessionId = 'session_fresh';
+        conversationState.setSessionState(sessionId, {
+          sessionId,
+          restaurantId: 'rest_1',
+          userId: 'user_1',
+          status: 'AWAITING_PARAMETERS',
+          lastUpdated: new Date(),
+        });
+
+        jest.advanceTimersByTime(SESSION_STATE_TTL_MS - 60_000);
+
+        expect(conversationState.getSessionState(sessionId)).toBeDefined();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('BedrockEmbeddingService', () => {
@@ -87,6 +141,73 @@ describe('Agentic AI & RAG Suite', () => {
       expect(plan.intent).toBeDefined();
       expect(plan.steps).toBeDefined();
       expect(Array.isArray(plan.steps)).toBe(true);
+    });
+
+    it('sends prior turns to the model so follow-ups resolve against context', async () => {
+      const generateText = jest.fn().mockResolvedValue(
+        JSON.stringify({
+          intent: 'Analytics',
+          explanation: 'resolved follow-up',
+          steps: [{ toolName: 'getSalesComparison', arguments: { windowDays: 7 }, reason: 'r' }],
+        }),
+      );
+      const planner = new PlannerService(toolRegistry, {
+        providerName: 'StubProvider',
+        generateText,
+        generateEmbedding: jest.fn(),
+      } as any);
+
+      await planner.planExecution('وكمان الاسبوع اللي فات؟', undefined, [
+        { role: 'user', content: 'ايه مبيعات الاسبوع ده؟' },
+        { role: 'assistant', content: 'مبيعات الاسبوع 14,250 جنيه.' },
+      ]);
+
+      // Without this the planner classified every follow-up as a first message.
+      const prompt = generateText.mock.calls[0][0] as string;
+      expect(prompt).toContain('Conversation So Far');
+      expect(prompt).toContain('ايه مبيعات الاسبوع ده؟');
+      expect(prompt).toContain('وكمان الاسبوع اللي فات؟');
+    });
+
+    // The heuristic planner is what runs whenever the LLM is unreachable, so
+    // these are the paths a misconfigured gateway leaves users on.
+    describe('fallback heuristic (LLM unavailable)', () => {
+      it.each([
+        ['suggest recommendations', 'english'],
+        ['any recommendations for me?', 'english plural'],
+        ['اقترح توصيات', 'arabic'],
+        ['عايز نصيحة', 'arabic taa-marbuta'],
+      ])('classifies "%s" (%s) as Recommendation, not a knowledge lookup', async (prompt) => {
+        const plan = await plannerService.planExecution(prompt);
+
+        expect(plan.intent).toBe('Recommendation');
+        // Recommendation cards are built from these tool results; a bare
+        // searchKnowledge step produced "no matches found" instead.
+        expect(plan.steps.map((s) => s.toolName)).toEqual(
+          expect.arrayContaining(['getInventoryStatus', 'getWasteSummary']),
+        );
+        expect(plan.steps.map((s) => s.toolName)).not.toContain('searchKnowledge');
+      });
+
+      it('routes a recipe question to the exact-match recipe tool, not RAG', async () => {
+        const plan = await plannerService.planExecution('what is in the sourdough recipe?');
+        expect(plan.steps.map((s) => s.toolName)).toContain('getRecipeIngredients');
+      });
+    });
+
+    it('omits the history block entirely on the first message', async () => {
+      const generateText = jest.fn().mockResolvedValue(
+        JSON.stringify({ intent: 'Conversation', explanation: 'greeting', steps: [] }),
+      );
+      const planner = new PlannerService(toolRegistry, {
+        providerName: 'StubProvider',
+        generateText,
+        generateEmbedding: jest.fn(),
+      } as any);
+
+      await planner.planExecution('اهلا');
+
+      expect(generateText.mock.calls[0][0]).not.toContain('Conversation So Far');
     });
   });
 
@@ -117,11 +238,11 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toContain('### المكونات');
-      expect(res).toContain('| Flour | 10 | kg |');
-      expect(res).toContain('| Butter | 2 | kg |');
-      expect(res).toContain('| Sugar | 1 | kg |');
-      expect(res).not.toContain('طريقة التحضير');
+      expect(res.answer).toContain('### المكونات');
+      expect(res.answer).toContain('| Flour | 10 | kg |');
+      expect(res.answer).toContain('| Butter | 2 | kg |');
+      expect(res.answer).toContain('| Sugar | 1 | kg |');
+      expect(res.answer).not.toContain('طريقة التحضير');
     });
 
     it('TEST 2 & TEST 5: should mark missing quantity as "غير متوفرة" without inventing numbers', async () => {
@@ -148,7 +269,7 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toContain('| Secret Sauce | غير متوفرة | غير متوفرة |');
+      expect(res.answer).toContain('| Secret Sauce | غير متوفرة | غير متوفرة |');
     });
 
     it('TEST 3: should NOT generate preparation steps when database contains ingredients only', async () => {
@@ -173,9 +294,9 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toContain('### المكونات');
-      expect(res).not.toContain('طريقة التحضير');
-      expect(res).not.toContain('درجة حرارة الفرن');
+      expect(res.answer).toContain('### المكونات');
+      expect(res.answer).not.toContain('طريقة التحضير');
+      expect(res.answer).not.toContain('درجة حرارة الفرن');
     });
 
     it('TEST 4: should return explicit unavailable message when database has no recipe information', async () => {
@@ -200,7 +321,7 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toBe('لا توجد معلومات مسجلة عن مكونات هذا المنتج في البيانات المتاحة.');
+      expect(res.answer).toBe('لا توجد معلومات مسجلة عن مكونات هذا المنتج في البيانات المتاحة.');
     });
   });
 

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { BUSINESS_TIMEZONE } from './Utils/date.util';
 import { ProductionPlanningService } from '../production-planning/production-planning.service';
 import { WeeklyPredictionService } from '../weekly-prediction/weekly-prediction.service';
+import { WeeklySnapshotJob } from '../vector-store/jobs/weekly-snapshot.job';
 
 /**
  * Every scheduled AI job in one place.
@@ -57,6 +58,12 @@ describe('AI cron schedule', () => {
       WeeklyPredictionService,
       'handleAccuracyReconciliationCron',
       '0 3 * * 0',
+    ],
+    [
+      'weekly executive snapshot',
+      WeeklySnapshotJob,
+      'handleWeeklyExecutiveSnapshots',
+      '0 4 * * 0',
     ],
   ];
 

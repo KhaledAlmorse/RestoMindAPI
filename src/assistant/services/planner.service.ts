@@ -37,7 +37,16 @@ export class PlannerService {
     this.logger.log(`PlannerService initialized using Provider [${this.aiProvider.providerName}]`);
   }
 
-  async planExecution(userPrompt: string, pendingState?: any): Promise<ExecutionPlan> {
+  /**
+   * @param recentHistory Last few turns, oldest first. Without these a
+   *   follow-up ("and last week?") is classified as if it were the opening
+   *   message, so the planner picks the wrong tools or none at all.
+   */
+  async planExecution(
+    userPrompt: string,
+    pendingState?: any,
+    recentHistory: Array<{ role: string; content: string }> = [],
+  ): Promise<ExecutionPlan> {
     const availableTools = this.toolRegistry.getToolDefinitionsForLLM();
 
     const systemPrompt = `You are the AI Task Planner for RestoMind, a restaurant management platform in Egypt.
@@ -66,6 +75,11 @@ RESTOMIND DATABASE COLLECTIONS SCHEMAS:
 Available System Tools:
 ${JSON.stringify(availableTools, null, 2)}
 
+If the user's message is a follow-up that only makes sense against the
+Conversation So Far (e.g. "and last week?", "طب والاسبوع اللي فات؟"), resolve it
+against that history before classifying, and plan the tools the resolved
+question needs.
+
 Respond STRICTLY in JSON format with the following schema:
 {
   "intent": "Information" | "Analytics" | "Recommendation" | "Action" | "Workflow" | "Conversation",
@@ -82,8 +96,14 @@ Respond STRICTLY in JSON format with the following schema:
     // 1. Primary AI Provider Execution (If provider is active)
     if (this.aiProvider.providerName !== 'LocalProvider') {
       try {
+        const historyBlock = recentHistory.length
+          ? `Conversation So Far (oldest first):\n${recentHistory
+              .map((m) => `${m.role}: ${m.content}`)
+              .join('\n')}\n\n`
+          : '';
+
         const textOutput = await this.aiProvider.generateText(
-          `User Prompt: "${userPrompt}"\nPending State: ${JSON.stringify(pendingState || {})}`,
+          `${historyBlock}User Prompt: "${userPrompt}"\nPending State: ${JSON.stringify(pendingState || {})}`,
           { modelId: this.modelId, systemPrompt, maxTokens: 1000 },
         );
 
@@ -268,7 +288,37 @@ Respond STRICTLY in JSON format with the following schema:
       };
     }
 
-    // 9. General RAG Knowledge Query Fallback
+    // 9. Explicit requests for advice, with no other topic keyword to latch
+    //    onto ("suggest recommendations", "اقترح توصيات"). Without this branch
+    //    these fell through to the generic knowledge search below and answered
+    //    "no matches found" — the one question the assistant should never fail.
+    //    Note `ة` is normalised to `ه` above, so match on stems.
+    if (
+      text.includes('recommend') ||
+      text.includes('suggest') ||
+      text.includes('advice') ||
+      text.includes('advise') ||
+      text.includes('توصي') ||
+      text.includes('اقتراح') ||
+      text.includes('اقترح') ||
+      text.includes('نصيح') ||
+      text.includes('رشح')
+    ) {
+      return {
+        intent: 'Recommendation',
+        explanation: 'User asked for recommendations without naming a specific topic',
+        requiresApproval: false,
+        // Same tool set as the waste branch: these are what
+        // generateStructuredRecommendations reads to build its cards.
+        steps: [
+          { toolName: 'getInventoryStatus', arguments: { filter: 'expiring' }, reason: 'Find expiring stock to act on' },
+          { toolName: 'getWasteSummary', arguments: { period: '7_days' }, reason: 'Quantify recent waste' },
+          { toolName: 'getSalesComparison', arguments: { windowDays: 7 }, reason: 'Check recent sales context' },
+        ],
+      };
+    }
+
+    // 10. General RAG Knowledge Query Fallback
     return {
       intent: 'Information',
       explanation: 'General knowledge query',

@@ -19,8 +19,14 @@ export class BedrockEmbeddingService {
     try {
       return await this.aiProvider.generateEmbedding(text, inputType);
     } catch (error: any) {
-      this.logger.error(`Failed to generate embedding via Provider [${this.aiProvider.providerName}]: ${error?.message || error}`);
-      return new Array(1024).fill(0);
+      // Previously this swallowed the failure and returned a 1024-zero vector.
+      // Stored, that poisons the index permanently (a zero vector matches
+      // nothing meaningfully); used as a query, it ranks results at random.
+      // Both look like success. Fail instead and let callers degrade openly.
+      this.logger.error(
+        `Failed to generate embedding via Provider [${this.aiProvider.providerName}]: ${error?.message || error}`,
+      );
+      throw error;
     }
   }
 }

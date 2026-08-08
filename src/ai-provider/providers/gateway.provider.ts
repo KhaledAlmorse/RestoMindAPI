@@ -29,6 +29,29 @@ export class GatewayProvider implements AIProvider {
     this.logger.log(
       `Initialized Scholarship GatewayProvider (Base URL: ${this.gatewayUrl || '/api/v1'}, Key set: ${this.apiKey ? 'YES' : 'NO'})`,
     );
+
+    // This provider authenticates with a bearer/api-key header. AWS's own
+    // endpoints only accept SigV4 (`Authorization: AWS4-HMAC-SHA256
+    // Credential=…, SignedHeaders=…, Signature=…`), which this provider cannot
+    // produce — so every call 403s with "Authorization header requires
+    // 'Credential' parameter". Warn loudly if BEDROCK_GATEWAY_URL is
+    // misconfigured to point at AWS directly.
+    if (
+      this.gatewayUrl &&
+      /(^|\.)amazonaws\.com$/i.test(new URL(this.gatewayUrl).hostname)
+    ) {
+      this.logger.error(
+        `MISCONFIGURED: GatewayProvider is pointed at an AWS endpoint (${this.gatewayUrl}) but signs requests with a bearer key, which AWS always rejects (HTTP 403, SigV4 required). ` +
+        `Set BEDROCK_GATEWAY_URL to your scholarship gateway domain, or set AI_PROVIDER_TYPE=bedrock to use the AWS SDK with real IAM credentials instead. ` +
+        `Until then every LLM and embedding call fails and the assistant answers in degraded mode.`,
+      );
+    }
+
+    if (!this.apiKey) {
+      this.logger.error(
+        'MISCONFIGURED: GatewayProvider has no API key (checked SCHOLARSHIP_API_KEY, BEDROCK_GATEWAY_KEY, AWS_SECRET_ACCESS_KEY, AWS_ACCESS_KEY_ID).',
+      );
+    }
   }
 
   private buildUrl(endpoint: string): string {
