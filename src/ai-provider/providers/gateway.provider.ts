@@ -19,20 +19,25 @@ export class GatewayProvider implements AIProvider {
   constructor() {
     this.apiKey = (
       process.env.SCHOLARSHIP_API_KEY ||
+      process.env.SBG_API_KEY ||
       process.env.BEDROCK_GATEWAY_KEY ||
-      process.env.AWS_SECRET_ACCESS_KEY ||
-      process.env.AWS_ACCESS_KEY_ID ||
       ''
     ).trim();
 
-    this.gatewayUrl = (
-      process.env.BEDROCK_GATEWAY_URL ||
-      'https://bedrock-runtime.us-east-1.amazonaws.com'
-    ).replace(/\/$/, '');
+    this.gatewayUrl = (process.env.BEDROCK_GATEWAY_URL || '').replace(/\/$/, '');
 
     this.logger.log(
-      `Initialized Scholarship GatewayProvider (URL: ${this.gatewayUrl}, Key set: ${this.apiKey ? 'YES' : 'NO'})`,
+      `Initialized Scholarship GatewayProvider (Base URL: ${this.gatewayUrl || '/api/v1'}, Key set: ${this.apiKey ? 'YES' : 'NO'})`,
     );
+  }
+
+  private buildUrl(endpoint: string): string {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const baseUrl = this.gatewayUrl || 'http://apiaccess.iti.net.eg';
+    const base = baseUrl.endsWith('/api/v1')
+      ? baseUrl
+      : `${baseUrl}/api/v1`;
+    return `${base}${cleanEndpoint}`;
   }
 
   async generateText(
@@ -42,7 +47,7 @@ export class GatewayProvider implements AIProvider {
   ): Promise<string> {
     const modelId = options?.modelId || this.primaryLlm;
     const systemPrompt = options?.systemPrompt || '';
-    const url = `${this.gatewayUrl}/model/${modelId}/invoke`;
+    const url = this.buildUrl('/student/chat');
 
     const messages =
       messagesHistory.length > 0
@@ -50,34 +55,33 @@ export class GatewayProvider implements AIProvider {
         : [{ role: 'user', content: prompt }];
 
     const payload = {
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: options?.maxTokens || 1500,
-      temperature: options?.temperature ?? 0.7,
-      system: systemPrompt,
+      model_id: modelId,
       messages,
+      system_prompt: systemPrompt,
+      max_tokens: options?.maxTokens || 1500,
     };
-
-    const authHeader = this.apiKey.startsWith('sbg_')
-      ? this.apiKey
-      : `Bearer ${this.apiKey}`;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: authHeader,
-        'x-api-key': this.apiKey,
-        'api-key': this.apiKey,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
     });
 
     if (response.ok) {
       const responseBody = await response.json();
+      if (typeof responseBody === 'string') return responseBody;
       return (
+        responseBody.output_text ||
+        responseBody.response ||
+        responseBody.completion ||
+        responseBody.text ||
         responseBody.content?.[0]?.text ||
+        (typeof responseBody.content === 'string' ? responseBody.content : null) ||
         responseBody.choices?.[0]?.message?.content ||
-        ''
+        JSON.stringify(responseBody)
       );
     }
 
@@ -94,45 +98,49 @@ export class GatewayProvider implements AIProvider {
       return new Array(1024).fill(0);
     }
 
-    const url = `${this.gatewayUrl}/model/${this.embeddingModel}/invoke`;
-    const payload = {
-      texts: [text.trim()],
-      input_type: inputType,
-      truncate: 'END',
-    };
+    try {
+      const url = this.buildUrl('/student/embed');
+      const payload = {
+        model_id: this.embeddingModel,
+        texts: [text.trim()],
+        input_type: inputType,
+      };
 
-    const authHeader = this.apiKey.startsWith('sbg_')
-      ? this.apiKey
-      : `Bearer ${this.apiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: authHeader,
-        'x-api-key': this.apiKey,
-        'api-key': this.apiKey,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (response.ok) {
-      const responseBody = await response.json();
-      if (responseBody.embeddings && responseBody.embeddings.float) {
-        return responseBody.embeddings.float[0];
-      } else if (Array.isArray(responseBody.embeddings)) {
-        return responseBody.embeddings[0];
-      } else if (responseBody.data?.[0]?.embedding) {
-        return responseBody.data[0].embedding;
+      if (response.ok) {
+        const responseBody = await response.json();
+        if (Array.isArray(responseBody.embedding)) {
+          return responseBody.embedding;
+        }
+        if (Array.isArray(responseBody.embeddings)) {
+          return Array.isArray(responseBody.embeddings[0])
+            ? responseBody.embeddings[0]
+            : responseBody.embeddings;
+        }
+        if (responseBody.embeddings?.float) {
+          return Array.isArray(responseBody.embeddings.float[0])
+            ? responseBody.embeddings.float[0]
+            : responseBody.embeddings.float;
+        }
+        if (responseBody.data?.[0]?.embedding) {
+          return responseBody.data[0].embedding;
+        }
       }
-    }
 
-    const errText = await response.text();
-    this.logger.warn(
-      `Scholarship Gateway embedding HTTP ${response.status}: ${errText}`,
-    );
-    throw new Error(
-      `Scholarship Gateway embedding HTTP ${response.status}: ${errText}`,
-    );
+      const errText = await response.text();
+      this.logger.warn(`Scholarship Gateway embedding HTTP ${response.status}: ${errText}`);
+      return new Array(1024).fill(0);
+    } catch (error: any) {
+      this.logger.warn(`Scholarship Gateway embedding fallback: ${error?.message || error}`);
+      return new Array(1024).fill(0);
+    }
   }
 }
