@@ -17,7 +17,7 @@ import {
 } from 'src/Common/Utils/date.util';
 import {
   AVG_DAILY_SALES_LOOKBACK_DAYS,
-  resolveAvgDailySales,
+  resolveDailySalesEstimate,
 } from 'src/Common/Utils/sales-estimate.util';
 import {
   degradationFields,
@@ -216,6 +216,10 @@ export class RecommendationsService {
       // `s.avg_daily_sales or DEFAULT_DAILY_LEVEL` then turned an honest 0
       // into 40/day, so dead-slow stock was never flagged or discounted.
       avgDailySales: number | null;
+      // Present only when avgDailySales was averaged over real or forecast days.
+      // See the comment where it is built: the AI applies today's calendar
+      // multiplier on top, so a figure carrying its own calendar must say so.
+      avgDailySalesWindow?: { from: string; to: string };
     }> = [];
 
     // Track which products have genuine surplus locally
@@ -375,14 +379,27 @@ export class RecommendationsService {
       let avgDailySales: number | null;
       const predictedOrders = prediction?.predictedOrders;
 
+      // The window `avgDailySales` was averaged over, when it was averaged over
+      // anything. The AI multiplies whatever we send by TODAY's calendar
+      // multiplier, so a figure that already carries a window's calendar has to
+      // arrive labelled with it — otherwise the effect is applied twice.
+      let avgDailySalesWindow: { from: string; to: string } | undefined;
+
       if (predictedOrders !== undefined && predictedOrders !== null) {
         const breakdown = prediction?.dailyBreakdown;
         const days = breakdown?.length || 7;
         const total = breakdown?.length
           ? breakdown.reduce((sum, d) => sum + d.predictedQuantity, 0)
           : predictedOrders;
-        // Two decimals, matching resolveAvgDailySales — never rounded to 0.
+        // Two decimals, matching resolveDailySalesEstimate — never rounded to 0.
         avgDailySales = Math.round((total / days) * 100) / 100;
+        // A prediction average is not a neutral level: the forecast already
+        // applied the target week's calendar to produce it. That week IS its
+        // window.
+        avgDailySalesWindow = {
+          from: targetWeek,
+          to: addDaysToDateString(targetWeek, 6),
+        };
       } else {
         const lookbackStart = new Date();
         lookbackStart.setDate(
@@ -403,11 +420,14 @@ export class RecommendationsService {
           (sum, s) => sum + (s.quantitySold || 0),
           0,
         );
-        avgDailySales = resolveAvgDailySales(
+        const estimate = resolveDailySalesEstimate(
           totalSold,
           sales.length,
           product as any,
+          todayStr,
         );
+        avgDailySales = estimate.value;
+        avgDailySalesWindow = estimate.window;
       }
 
       const categoryName =
@@ -427,6 +447,7 @@ export class RecommendationsService {
         freshnessWindow: product.freshnessWindow || 2,
         currentStock: readyToSellStock,
         avgDailySales,
+        ...(avgDailySalesWindow ? { avgDailySalesWindow } : {}),
       });
     }
 
