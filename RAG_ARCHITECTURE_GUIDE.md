@@ -4,11 +4,18 @@
 
 This document serves as the **Single Source of Truth** for designing, integrating, and deploying the **Enterprise Agentic AI & Retrieval-Augmented Generation (RAG) Platform** for **RestoMind**.
 
-RestoMind is an Egyptian restaurant & bakery management system powered by NestJS, MongoDB (Mongoose), AWS Bedrock AI services, and a FastAPI AI microservice for demand forecasting.
+RestoMind is an Egyptian restaurant & bakery management system powered by NestJS, MongoDB (Mongoose), AI services, and a FastAPI AI microservice for demand forecasting.
 
 This architecture evolves pure RAG into an **Autonomous Agentic AI Engine**. The system keeps RAG as a foundational knowledge retrieval layer, while introducing an **AI Agent** capable of task planning, tool selection, multi-step data reasoning, structured recommendation generation, multi-turn state management, and **human-in-the-loop business action execution**.
 
-All generative AI models and embeddings are hosted natively on **AWS Bedrock (Region: `us-east-1`)**:
+The system utilizes a decoupled **AI Provider Pattern Architecture** (`AIProvider` interface) supporting 3 execution environments seamlessly selected from `.env`:
+
+1. **Scholarship HTTP Gateway Provider (`GatewayProvider`)**: Direct HTTP Bearer client for scholarship API keys (`sbg_...`) without requiring AWS IAM credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+2. **AWS Bedrock SDK Provider (`BedrockProvider`)**: Direct AWS Bedrock Runtime client (`@aws-sdk/client-bedrock-runtime`) for standard AWS IAM keys.
+3. **Standalone Local Provider (`LocalProvider`)**: Zero-network offline provider for local development and deterministic testing.
+
+Approved Bedrock Models:
+
 - **Primary LLM**: `anthropic.claude-sonnet-4-6` (High-reasoning synthesis & structured recommendation generation)
 - **Fast Router / Planner**: `anthropic.claude-haiku-4-5-20251001-v1:0` (Sub-150ms intent routing & tool parameter extraction)
 - **Primary Multilingual Embedding**: `us.cohere.embed-v4:0` (1024-dim cross-retrieval for Arabic/English)
@@ -31,28 +38,39 @@ User (Web / Mobile App / Voice Input)
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 2. AI Agent Orchestrator                                               │
+│ 2. AI Agent Orchestrator (AssistantService)                            │
 │    - Manages session lifecycle & Egyptian Arabic text normalization   │
 │    - Restores multi-turn `ConversationState` (Pending Workflows)       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 3. Task Planner (Claude Haiku 4.5: anthropic.claude-haiku-4-5-20251001-v1:0) │
-│    - Classifies Intent (Information, Analytics, Recommendation, Action)│
+│ 3. AI Provider Layer (AIProviderModule & AIProviderFactory)            │
+│    - Selects provider dynamically from .env (`AI_PROVIDER_TYPE`)       │
+│    - GatewayProvider (Scholarship Proxy Key sbg_...)                   │
+│    - BedrockProvider (AWS Bedrock SDK)                                 │
+│    - LocalProvider (Offline Standalone Development)                    │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│ 4. Task Planner (PlannerService via AIProvider)                        │
+│    - Classifies Intent (Information, Analytics, Recommendation, Action,│
+│      Workflow, Conversation)                                           │
 │    - Constructs Multi-Step Tool Execution Plan                         │
+│    - Fallback: Egyptian Arabic Heuristic Classifier                    │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 4. Tool Registry & Selector                                            │
+│ 5. Tool Registry & Execution Engine (ToolExecutorService)              │
 │    - Maps planned steps to registered NestJS Tool interfaces           │
-│    - Validates arguments using strict Zod Schemas                      │
+│    - Validates arguments using Zod Schemas                             │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 5. Execution Engine                                                    │
+│ 6. Execution Engine                                                    │
 │    ┌──────────────────────┬──────────────────────┬───────────────────┐ │
 │    │ Aggregation Tools    │ Vector Search Tool   │ Action Tools      │ │
 │    │ (Sales, Inventory,   │ (Atlas $vectorSearch │ (Create Offer,    │ │
@@ -67,15 +85,14 @@ User (Web / Mobile App / Voice Input)
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 6. Response & Recommendation Generator (Claude Sonnet 4.6)             │
-│    - Model: anthropic.claude-sonnet-4-6                                │
+│ 7. Response & Recommendation Generator                                 │
 │    - Synthesizes grounded results in Egyptian Arabic / English        │
 │    - Formats structured recommendations & action cards for UI          │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ 7. Human Approval Guard & Action Audit Logger                          │
+│ 8. Human Approval Guard & Action Audit Logger                          │
 │    - Blocks execution of state-changing actions until user confirms    │
 │    - Persists audit trails in `assistant_action_logs`                  │
 └────────────────────────────────────────────────────────────────────────┘
@@ -83,53 +100,130 @@ User (Web / Mobile App / Voice Input)
 
 ---
 
-## 🤖 2. Agent Layer & Multi-Step Task Planning
+## 🔌 2. AI Provider Pattern Architecture
 
-### Agent Orchestration Principles
-1. **Centralized Agent Orchestration**: The AI Agent controls the end-to-end user request lifecycle. It manages state, plans, calls tools, handles failures, and presents results.
-2. **Multi-Step Reasoning**: Complex user requests are decomposed into sequential tool executions by the `PlannerService`.
+To ensure zero hardcoded runtime dependencies on AWS SDK or specific cloud vendors, RestoMind implements the **Provider Pattern** (`src/ai-provider/`):
 
-### Multi-Step Execution Example
-
-**User Prompt**: *"Give me recommendations to reduce waste this week."*
-
-#### Task Planner Execution Plan:
 ```
-           ┌────────────────────────────────────────────────────────┐
-           │ Step 1: Execute `getWasteSummary({ period: '7_days' })`│
-           └───────────────────────────┬────────────────────────────┘
-                                       │
-                                       ▼
-           ┌────────────────────────────────────────────────────────┐
-           │ Step 2: Execute `getInventoryStatus({ filter: 'expiring' })`│
-           └───────────────────────────┬────────────────────────────┘
-                                       │
-                                       ▼
-           ┌────────────────────────────────────────────────────────┐
-           │ Step 3: Execute `getSalesComparison({ windowDays: 7 })`│
-           └───────────────────────────┬────────────────────────────┘
-                                       │
-                                       ▼
-           ┌────────────────────────────────────────────────────────┐
-           │ Step 4: Execute `getPredictions({ horizon: '7_days' })`│
-           └───────────────────────────┬────────────────────────────┘
-                                       │
-                                       ▼
-           ┌────────────────────────────────────────────────────────┐
-           │ Step 5: Pass fused context to `RecommendationService`  │
-           │         to generate structured actionable cards.        │
-           └────────────────────────────────────────────────────────┘
+                        [ AIProvider Interface ]
+                                   │
+         ┌─────────────────────────┼─────────────────────────┐
+         ▼                         ▼                         ▼
+ [ GatewayProvider ]       [ BedrockProvider ]       [ LocalProvider ]
+(Scholarship sbg_ Key)    (AWS Bedrock SDK)         (Offline Development)
+```
+
+### `AIProvider` Interface Definition (`src/ai-provider/ai-provider.interface.ts`)
+
+```typescript
+export interface GenerationOptions {
+  modelId?: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export interface AIProvider {
+  readonly providerName: string;
+
+  generateText(
+    prompt: string,
+    options?: GenerationOptions,
+    messagesHistory?: ChatMessage[],
+  ): Promise<string>;
+
+  generateEmbedding(
+    text: string,
+    inputType?: 'search_document' | 'search_query',
+  ): Promise<number[]>;
+}
+```
+
+### Dynamic Factory Configuration (`src/ai-provider/ai-provider.module.ts`)
+
+The system automatically selects the correct provider at application startup without requiring code changes:
+
+```typescript
+export const AI_PROVIDER = 'AI_PROVIDER';
+
+@Global()
+@Module({
+  providers: [
+    BedrockProvider,
+    GatewayProvider,
+    LocalProvider,
+    {
+      provide: AI_PROVIDER,
+      useFactory: (): AIProvider => {
+        const logger = new Logger('AIProviderFactory');
+        const providerType = (process.env.AI_PROVIDER_TYPE || '')
+          .toLowerCase()
+          .trim();
+        const scholarshipKey = (
+          process.env.SCHOLARSHIP_API_KEY ||
+          process.env.BEDROCK_GATEWAY_KEY ||
+          process.env.AWS_SECRET_ACCESS_KEY ||
+          process.env.AWS_ACCESS_KEY_ID ||
+          ''
+        ).trim();
+        const gatewayUrl = (process.env.BEDROCK_GATEWAY_URL || '').trim();
+
+        if (providerType === 'gateway') return new GatewayProvider();
+        if (providerType === 'bedrock') return new BedrockProvider();
+        if (providerType === 'local') return new LocalProvider();
+
+        if (
+          scholarshipKey.startsWith('sbg_') ||
+          gatewayUrl ||
+          scholarshipKey.length > 0
+        ) {
+          logger.log('Auto-detected GatewayProvider for Scholarship Proxy Key');
+          return new GatewayProvider();
+        }
+
+        return new LocalProvider();
+      },
+    },
+  ],
+  exports: [AI_PROVIDER, BedrockProvider, GatewayProvider, LocalProvider],
+})
+export class AIProviderModule {}
 ```
 
 ---
 
-## 🛠️ 3. Tool Calling Architecture & Tool Registry
+## 🤖 3. Agent Layer & Multi-Step Task Planning
+
+### Agent Orchestration Principles
+
+1. **Centralized Agent Orchestration**: The AI Agent controls the end-to-end request lifecycle.
+2. **Multi-Step Reasoning**: Complex user queries are broken down into sequential tool steps by `PlannerService`.
+3. **Decoupled Execution**: Services depend **only** on `@Inject(AI_PROVIDER) private readonly aiProvider: AIProvider`.
+
+### Intent Classification Categories
+
+1. `Information`: Pure factual queries (recipes, menu details).
+2. `Analytics`: Quantitative figures (sales totals, waste costs, expiring counts).
+3. `Recommendation`: Strategic requests asking for advice/solutions to cut costs.
+4. `Action`: Explicit commands to mutate data (create offer, draft PO, update plan).
+5. `Workflow`: Multi-step interactive setup dialog.
+6. `Conversation`: Greetings, system help, non-business Q&A.
+
+---
+
+## 🛠️ 4. Tool Calling Architecture & Tool Registry
 
 ### Strict Architectural Rule:
+
 > **The AI Agent MUST NEVER access MongoDB directly.**
 > All database reads, vector searches, aggregations, and business state mutations MUST be executed via strongly-typed, registered NestJS Tools wrapped in Zod parameter schemas.
 
-### Tool Classification Registry
+### Tool Registry Summary (11 Implemented Tools)
 
 ```
                                   Agent Tool Registry
@@ -138,49 +232,35 @@ User (Web / Mobile App / Voice Input)
          ▼                                 ▼                                 ▼
    📊 Query Tools                    🟢 Knowledge RAG Tool             ⚡ Action Tools
  (Mongo Aggregation)                (Atlas Vector Search)             (Business Mutations)
- • getInventoryStatus()             • searchKnowledge()               • createOffer()
- • getWasteSummary()                                                  • createPurchaseOrder()
- • getSalesComparison()                                               • updateProductionPlan()
- • getPredictions()                                                   • scheduleDiscount()
- • generateExecutiveReport()                                          • sendNotification()
+ • getInventoryStatus()             • searchKnowledge()               • createOffer() [Approval]
+ • getWasteSummary()                                                  • createPurchaseOrder() [Approval]
+ • getSalesComparison()                                               • updateProductionPlan() [Approval]
+ • getPredictions()                                                   • scheduleDiscount() [Approval]
+ • generateExecutiveReport()                                          • sendNotification() [Approval]
 ```
-
----
-
-## ☁️ 4. AWS Bedrock Approved Model Mapping
-
-Below is the exact mapping of your **Approved AWS Bedrock Models** (Region: `us-east-1`) to RestoMind backend roles:
-
-| System Role | Model Identifier (Exact String) | Provider | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Primary LLM (RAG & Synthesis)** | `anthropic.claude-sonnet-4-6` | Anthropic | Multi-step reasoning, structured recommendation generation, Arabic/English response synthesis. |
-| **Router & Task Planner** | `anthropic.claude-haiku-4-5-20251001-v1:0` | Anthropic | Sub-150ms intent classification (6 categories) and Zod tool parameter extraction. |
-| **Primary Vector Embedding** | `us.cohere.embed-v4:0` | Cohere | 1024-dimensional multilingual vector embeddings for MongoDB Atlas Vector Search. |
-| **Fallback Vector Embedding** | `amazon.titan-embed-text-v2:0:8k` | Amazon | Native AWS text embedding fallback. |
-| **Ultra-High Reasoning (Optional)**| `anthropic.claude-opus-4-7` / `deepseek.r1-v1:0` | Anthropic / DeepSeek | Advanced executive analytics and long-horizon business simulation. |
-| **Lightweight Router (Alternative)**| `us.amazon.nova-2-lite-v1:0` | Amazon | Low-cost fallback for intent classification. |
-| **Kitchen Voice Assistant** | `mistral.voxtral-small-24b-2507` / `amazon.nova-2-sonic-v1:0` | Mistral / Amazon | Real-time speech-to-text for kitchen staff hands-free queries. |
 
 ---
 
 ## ⚙️ 5. `.env` Configuration Blueprint
 
-Add the exact model identifiers to your **`.env`** file at the root of `RestoMindAPI`:
+Add the configuration options to your **`.env`** file at the root of `RestoMindAPI`:
 
 ```env
 # ==========================================
-# AWS BEDROCK CONFIGURATION (Region: us-east-1)
+# SCHOLARSHIP AI GATEWAY CONFIGURATION
 # ==========================================
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+# Set your scholarship key here (starts with sbg_)
+SCHOLARSHIP_API_KEY=sbg_75b75JIPXAyg...
+BEDROCK_GATEWAY_URL=https://your-scholarship-gateway-domain.com
+
+# AI Provider Selection: 'gateway' (scholarship proxy key), 'bedrock' (AWS SDK), 'local' (offline dev)
+AI_PROVIDER_TYPE=gateway
 
 # Exact Approved Bedrock Model Identifiers
 BEDROCK_PRIMARY_LLM=anthropic.claude-sonnet-4-6
 BEDROCK_ROUTER_LLM=anthropic.claude-haiku-4-5-20251001-v1:0
 BEDROCK_PRIMARY_EMBEDDING=us.cohere.embed-v4:0
 BEDROCK_FALLBACK_EMBEDDING=amazon.titan-embed-text-v2:0:8k
-BEDROCK_VOICE_MODEL=mistral.voxtral-small-24b-2507
 ```
 
 ---
@@ -193,8 +273,8 @@ The **Recommendation Engine** converts aggregated data insights into structured,
 
 ```typescript
 export interface StructuredRecommendation {
-  recommendationId: string;
-  title: string; // e.g. "Create 25% Discount on Expiring Butter Croissants"
+  recommendationId?: string;
+  title: string; // e.g. "Create 25% Discount Offer for Expiring Stock"
   description: string; // Detailed rationale
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
   estimatedSaving: number; // Estimated savings in EGP
@@ -215,15 +295,26 @@ export interface StructuredRecommendation {
 > **NO BUSINESS ACTION EXECUTES AUTOMATICALLY.**
 > The Agent can search, calculate, analyze, and recommend autonomously. Any action mutating database state (`createOffer`, `createPurchaseOrder`, `updateProductionPlan`) requires **explicit human user approval**.
 
+1. User sends action intent (e.g. `"اعمل عرض خصم 20% على الكرواسون"`).
+2. Assistant returns recommendation card with `requiresApproval: true` and pending action payload.
+3. User approves action via UI button calling `POST /assistant/approve-action`.
+4. `ApprovalService` verifies approval token and invokes `ToolExecutorService.executeApprovedAction()`.
+
 ---
 
 ## 🗄️ 8. Complete MongoDB Schemas Blueprint
 
 ### 1. `assistant_action_logs` Schema (`src/DB/Models/assistant-action-log.model.ts`)
+
 ```typescript
 @Schema({ timestamps: true })
 export class AssistantActionLog {
-  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+    index: true,
+  })
   restaurantId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -238,14 +329,18 @@ export class AssistantActionLog {
   @Prop({ type: Object, required: true })
   arguments!: Record<string, any>;
 
-  @Prop({ type: String, enum: ['SUCCESS', 'FAILED', 'REJECTED_BY_USER', 'PENDING_APPROVAL'], required: true })
+  @Prop({
+    type: String,
+    enum: ['SUCCESS', 'FAILED', 'REJECTED_BY_USER', 'PENDING_APPROVAL'],
+    required: true,
+  })
   executionStatus!: string;
 
   @Prop({ type: Number, default: 0 })
   durationMs!: number;
 
   @Prop({ type: String, required: true })
-  modelUsed!: string; // e.g. "anthropic.claude-sonnet-4-6"
+  modelUsed!: string;
 
   @Prop({ type: Object, default: null })
   executionResult?: Record<string, any>;
@@ -255,44 +350,31 @@ export class AssistantActionLog {
 }
 ```
 
-### 2. `recommendation_actions` Schema (`src/DB/Models/recommendation-action.model.ts`)
-```typescript
-@Schema({ timestamps: true })
-export class RecommendationAction {
-  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true, index: true })
-  restaurantId!: Types.ObjectId;
+### 2. `knowledge_vectors` Schema (`src/DB/Models/knowledge-vector.model.ts`)
 
-  @Prop({ type: Types.ObjectId, ref: 'Recommendation', required: true, index: true })
-  recommendationId!: Types.ObjectId;
-
-  @Prop({ type: String, enum: ['PENDING', 'SELECTED', 'APPROVED', 'REJECTED', 'EXECUTED', 'FAILED'], required: true })
-  status!: string;
-
-  @Prop({ type: Boolean, default: false })
-  selectedByUser!: boolean;
-
-  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
-  actedBy?: Types.ObjectId;
-
-  @Prop({ type: Date, default: null })
-  executedAt?: Date;
-
-  @Prop({ type: String, required: true })
-  relatedTool!: string;
-
-  @Prop({ type: Object, default: null })
-  executionResult?: Record<string, any>;
-}
-```
-
-### 3. `knowledge_vectors` Schema (`src/DB/Models/knowledge-vector.model.ts`)
 ```typescript
 @Schema({ timestamps: true })
 export class KnowledgeVector {
-  @Prop({ type: Types.ObjectId, ref: 'Restaurant', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Restaurant',
+    required: true,
+    index: true,
+  })
   restaurantId!: Types.ObjectId;
 
-  @Prop({ type: String, required: true, enum: ['product', 'recipe', 'offer', 'waste_report', 'recommendation', 'weekly_snapshot'] })
+  @Prop({
+    type: String,
+    required: true,
+    enum: [
+      'product',
+      'recipe',
+      'offer',
+      'waste_report',
+      'recommendation',
+      'weekly_snapshot',
+    ],
+  })
   entityType!: string;
 
   @Prop({ type: Types.ObjectId, required: true })
@@ -314,16 +396,24 @@ export class KnowledgeVector {
 
 ---
 
-## 🏗️ 9. Target NestJS Folder Structure
+## 🏗️ 9. Complete NestJS Folder Structure
 
 ```
 src/
+├── ai-provider/                             # Decoupled AI Provider Module
+│   ├── ai-provider.module.ts                # Dynamic Provider Factory ('AI_PROVIDER')
+│   ├── ai-provider.interface.ts             # AIProvider Interface Contract
+│   └── providers/
+│       ├── gateway.provider.ts              # Scholarship Proxy Key HTTP Client (sbg_...)
+│       ├── bedrock.provider.ts              # Direct AWS Bedrock SDK Client
+│       └── local.provider.ts                # Standalone Offline Local Development Provider
+│
 ├── assistant/                               # Enterprise Agentic AI Module
 │   ├── assistant.module.ts
 │   ├── assistant.controller.ts
 │   ├── services/
 │   │   ├── assistant.service.ts             # Main Agent Orchestrator
-│   │   ├── planner.service.ts               # Multi-Step Task Planner (Claude Haiku 4.5)
+│   │   ├── planner.service.ts               # Multi-Step Task Planner via AIProvider
 │   │   ├── tool-executor.service.ts         # Tool Registry & Execution Engine
 │   │   ├── recommendation.service.ts       # Structured Recommendation Generator
 │   │   ├── conversation-state.service.ts    # Multi-turn Workflow State Manager
@@ -331,7 +421,7 @@ src/
 │   │   └── arabic-normalizer.service.ts     # Egyptian Arabic Text Normalization
 │   │
 │   ├── tools/                               # Registered Agent Tools
-│   │   ├── tool-registry.service.ts         # Central Tool Registry & Decorators
+│   │   ├── tool-registry.service.ts         # Central Tool Registry
 │   │   ├── query-tools/                     # Mongo Aggregation Read Tools
 │   │   ├── rag-tools/                       # Atlas Vector Search RAG Tool
 │   │   └── action-tools/                    # Business Mutation Tools (Approval Required)
@@ -341,19 +431,10 @@ src/
 │
 ├── vector-store/                            # Vector Management Module
 │   ├── vector-store.module.ts
-│   ├── vector-store.service.ts              # MongoDB Atlas Vector Search API
-│   ├── bedrock-embedding.service.ts         # AWS Bedrock Cohere Embed v4 Bridge
+│   ├── vector-store.service.ts              # MongoDB Atlas Vector Search & Hybrid Search
+│   ├── bedrock-embedding.service.ts         # Embedding Bridge via AIProvider
 │   ├── listeners/
 │   │   └── entity-change.listener.ts        # Auto-embeds products/offers on change
 │   └── jobs/
-│       └── weekly-snapshot.job.ts           # Sunday 01:00 AM Executive Snapshot Cron
+│       └── weekly-snapshot.job.ts           # Executive Snapshot Cron Job
 ```
-
----
-
-## ⏱️ 10. Implementation Roadmap
-
-* **Sprint 1**: AWS Bedrock SDK integration with `us.cohere.embed-v4:0`, Atlas vector index, `WeeklySnapshotSyncJob`.
-* **Sprint 2**: Tool Registry, Mongo Query Tools, Action Tools, `PlannerService` with `anthropic.claude-haiku-4-5-20251001-v1:0`.
-* **Sprint 3**: `AssistantService`, `RecommendationService`, `ApprovalService`, `ConversationStateService`, `assistant_action_logs` auditing.
-* **Sprint 4**: Multi-tenant security audit, streaming SSE response integration, Egyptian Arabic dialect testing.
