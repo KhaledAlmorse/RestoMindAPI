@@ -7,10 +7,17 @@ export interface IngestRecordPayload {
   salesQty: number;
 }
 
+/**
+ * Matches the AI service's `RMProduct`. `price` and `freshnessWindow` are not
+ * optional decoration — they are what the newsvendor service level is computed
+ * from. Build these with `buildAiProductPayload()` rather than by hand.
+ */
 export interface IngestProductPayload {
   productId: string;
   title: string;
   category?: string;
+  price?: number;
+  freshnessWindow?: number | null;
 }
 
 export interface IngestPayload {

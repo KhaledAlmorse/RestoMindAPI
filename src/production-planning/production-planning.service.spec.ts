@@ -611,11 +611,16 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
           salesQty: 50,
         },
       ],
+      // price and freshnessWindow ride along on every AI product payload: they
+      // are what the service computes the newsvendor service level from. This
+      // path used to omit both.
       products: [
         {
           productId: prodId.toString(),
           title: 'Baklava',
           category: 'Dessert',
+          price: 0,
+          freshnessWindow: null,
         },
       ],
     });

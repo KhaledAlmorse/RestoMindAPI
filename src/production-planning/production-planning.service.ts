@@ -14,7 +14,7 @@ import {
   getBusinessDateString,
   getBusinessDayRange,
 } from '../Common/Utils/date.util';
-import { resolveAvgDailySales } from '../Common/Utils/sales-estimate.util';
+import { resolveDailySalesEstimate } from '../Common/Utils/sales-estimate.util';
 import {
   degradationFields,
   reportAiFailure,
@@ -32,7 +32,10 @@ import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
 import { AiClientService } from '../Common/Services/ai-client.service';
-import { resolveCategoryName } from '../Common/Utils/ai-product.util';
+import {
+  buildAiProductPayload,
+  buildAiProductPayloadsFor,
+} from '../Common/Utils/ai-product.util';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -304,7 +307,7 @@ export class ProductionPlanningService {
       })) || [];
 
     // Sum sales per product, and separately track how many sales rows each
-    // product has — resolveAvgDailySales needs the row count (not just the
+    // product has — resolveDailySalesEstimate needs the row count (not just the
     // total) to tell "measured zero" apart from "no history at all".
     const salesMap = new Map<string, number>();
     const salesRowCountMap = new Map<string, number>();
@@ -325,20 +328,27 @@ export class ProductionPlanningService {
       // estimate > null (cold start, no signal at all). Sending 0 for a
       // brand-new product with no history would forecast zero and make
       // supplier-auto-draft skip it entirely.
-      const avgDailySales = resolveAvgDailySales(
+      const estimate = resolveDailySalesEstimate(
         totalSold,
         salesRowCount,
         prod,
+        dateStr,
       );
-      const categoryName = resolveCategoryName(prod.category);
 
+      // The shared shape plus the estimate this endpoint alone supplies.
+      // `freshnessWindow` was defaulted to 2 here; the plan endpoint never
+      // reads it (only the surplus scan does, for spoilage severity), so the
+      // helper's honest `null` changes nothing but stops a made-up shelf life
+      // being recorded against the product.
+      //
+      // The window rides along whenever the figure is a measured mean. The AI
+      // multiplies what we send by the target day's calendar multiplier, so it
+      // has to know the figure already carries a window's worth of calendar —
+      // otherwise a lookback sitting inside Ramadan gets Ramadan applied twice.
       return {
-        productId: pIdStr,
-        title: prod.title || 'Product',
-        category: categoryName,
-        price: prod.price || 0,
-        freshnessWindow: prod.freshnessWindow || 2,
-        avgDailySales,
+        ...buildAiProductPayload(prod),
+        avgDailySales: estimate.value,
+        ...(estimate.window ? { avgDailySalesWindow: estimate.window } : {}),
       };
     });
 
@@ -420,7 +430,7 @@ export class ProductionPlanningService {
         } else {
           // prepProd.avgDailySales is null only when there is truly no
           // signal — no measured history AND no owner estimate — in which
-          // case 0 is the honest local answer; resolveAvgDailySales already
+          // case 0 is the honest local answer; resolveDailySalesEstimate already
           // surfaced the owner's expectedDailySales above whenever one was
           // set, so this `?? 0` never discards a real estimate.
           recQty = prepProd.avgDailySales ?? 0;
@@ -562,11 +572,10 @@ export class ProductionPlanningService {
         await this.aiIngestService.ingest({
           restaurantId: restId.toString(),
           records,
-          products: products.map((p: any) => ({
-            productId: p._id.toString(),
-            title: p.title || 'Product',
-            category: resolveCategoryName(p.category),
-          })),
+          products: buildAiProductPayloadsFor(
+            products,
+            records.map((r) => r.productId),
+          ),
         });
       } catch (err: any) {
         this.logger.error(

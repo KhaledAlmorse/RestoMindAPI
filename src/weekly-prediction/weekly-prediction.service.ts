@@ -21,8 +21,11 @@ import {
   getBusinessDayRange,
   isValidDateString,
 } from 'src/Common/Utils/date.util';
-import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
-import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
+import { resolveDailySalesEstimate } from 'src/Common/Utils/sales-estimate.util';
+import {
+  buildAiProductPayloadsFor,
+  resolveCategoryName,
+} from 'src/Common/Utils/ai-product.util';
 import {
   degradationFields,
   reportAiFailure,
@@ -229,10 +232,11 @@ export class WeeklyPredictionService {
     // > null (cold start, no signal at all — let the bridge's category default
     // decide). Sending 0 here for a brand-new product with no history would
     // forecast zero all week and make supplier-auto-draft skip it entirely.
-    const avgDailySales = resolveAvgDailySales(
+    const estimate = resolveDailySalesEstimate(
       totalQtySold,
       (recentSales || []).length,
       product,
+      getBusinessDateString(endDate),
     );
 
     // 2. Check promotionActive from Offer collection (Requirement 7)
@@ -253,7 +257,14 @@ export class WeeklyPredictionService {
         title: product.title,
         category: categoryName,
         targetWeek: targetWeekStr,
-        avgDailySales,
+        avgDailySales: estimate.value,
+        // Only present for a measured mean. It tells the AI the figure already
+        // carries that window's calendar, so it can divide it out before
+        // applying the target week's — without it, a lookback sitting inside
+        // Ramadan gets the Ramadan multiplier a second time.
+        ...(estimate.window
+          ? { avgDailySalesWindow: estimate.window }
+          : {}),
         promotionActive,
       },
       { retries },
@@ -271,7 +282,7 @@ export class WeeklyPredictionService {
     let confidence = ConfidenceLevelEnum.MEDIUM;
     let source = PredictionSourceEnum.AI_MODEL;
     let featuresUsed: Record<string, any> = {
-      baseDailyLevel: avgDailySales,
+      baseDailyLevel: estimate.value,
       promotionActive,
     };
     let factors: any[] = [];
@@ -421,7 +432,7 @@ export class WeeklyPredictionService {
       predictedOrders =
         totalLastWeekQty > 0
           ? totalLastWeekQty
-          : Math.round((avgDailySales ?? 0) * 7);
+          : Math.round((estimate.value ?? 0) * 7);
 
       modelVersionId = 'fallback-naive-v1';
       confidence = ConfidenceLevelEnum.LOW;
@@ -429,7 +440,7 @@ export class WeeklyPredictionService {
       featuresUsed = {
         fallbackReason,
         lastWeekQty: totalLastWeekQty,
-        avgDailySales,
+        avgDailySales: estimate.value,
       };
 
       dailyBreakdown = this.distributeAcrossWeek(predictedOrders, dailyDates);
@@ -1006,13 +1017,10 @@ export class WeeklyPredictionService {
       salesQty: s.quantitySold || 0,
     }));
 
-    const productPayload = products.map((p: any) => ({
-      productId: p._id.toString(),
-      title: p.title || 'Product',
-      category: resolveCategoryName(p.category),
-      price: p.price || 0,
-      freshnessWindow: p.freshnessWindow ?? null,
-    }));
+    const productPayload = buildAiProductPayloadsFor(
+      products,
+      records.map((r) => r.productId),
+    );
 
     const result = await this.aiClient.post<any>(
       '/integration/restomind/ingest',

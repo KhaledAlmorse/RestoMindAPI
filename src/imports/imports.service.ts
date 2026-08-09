@@ -32,7 +32,7 @@ import {
   StockTransactionTypeEnum,
 } from 'src/Common/Types';
 import { getBusinessDateString } from 'src/Common/Utils/date.util';
-import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
+import { buildAiProductPayloadsFor } from 'src/Common/Utils/ai-product.util';
 
 @Injectable()
 export class ImportsService {
@@ -791,11 +791,13 @@ export class ImportsService {
             salesQty: r.quantitySold,
           }));
 
-          const productsPayload = products.map((p: any) => ({
-            productId: p._id.toString(),
-            title: p.title,
-            category: resolveCategoryName(p.category),
-          }));
+          // Only the products this file actually has sales for. Sending the
+          // whole catalogue meant one import re-described every product in the
+          // restaurant, including ones the file never mentioned.
+          const productsPayload = buildAiProductPayloadsFor(
+            products,
+            recordsPayload.map((r) => r.productId),
+          );
 
           const aiResult = await this.aiIngestService.ingest({
             restaurantId: restaurantId.toString(),
@@ -980,11 +982,10 @@ export class ImportsService {
       salesQty: t.quantitySold,
     }));
 
-    const productsPayload = products.map((p: any) => ({
-      productId: p._id.toString(),
-      title: p.title,
-      category: resolveCategoryName(p.category),
-    }));
+    const productsPayload = buildAiProductPayloadsFor(
+      products,
+      recordsPayload.map((r) => r.productId),
+    );
 
     const aiResult = await this.aiIngestService.ingest({
       restaurantId: restaurantId.toString(),
