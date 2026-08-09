@@ -9,7 +9,7 @@ export type AiFailure = Extract<AiCallResult<unknown>, { ok: false }>;
  * the endpoint must surface to its caller.
  *
  * Every AI caller used to branch on `aiResult.ok` alone and log "AI endpoint
- * unreachable", which meant a 401 from a missing `AI_SHARED_SECRET` — a
+ * unreachable", which meant a 401 from a missing `AI_API_KEY` — a
  * configuration fault that is never retried — read exactly like an outage.
  * The endpoint still answered HTTP 200 with a full set of silently-degraded
  * fallback rows, so a misconfigured deployment looked healthy.
@@ -31,7 +31,7 @@ export function reportAiFailure(
       `[AI CONFIG ERROR] AI rejected ${path}${where} with HTTP ${
         failure.status ?? '4xx'
       } and it was NOT retried. This is a request/configuration fault, not an outage — ` +
-        `a 401/403 almost always means AI_SHARED_SECRET is missing or does not match the AI service. ` +
+        `a 401/403 almost always means AI_API_KEY is missing or does not match the AI service's X-API-Key. ` +
         `Response body: ${safeJson(failure.body)}`,
     );
   } else {

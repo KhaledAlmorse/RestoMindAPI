@@ -33,11 +33,24 @@ export class AiClientService implements OnModuleInit {
    * Deliberately a warning, not a throw: an unsecured local dev setup (no
    * secret on either side) is legitimate and must still boot.
    */
+  /**
+   * The raw key sent to the AI service as `X-API-Key`.
+   *
+   * The AI service hardened its auth: the old `X-RestoMind-Key` / `AI_SHARED_SECRET`
+   * scheme is gone and every route (except /health) now validates a shared API key
+   * against a stored hash. `AI_API_KEY` is the preferred var; `AI_SHARED_SECRET` is
+   * kept as a backward-compatible alias so an existing deployment does not break
+   * before it rotates.
+   */
+  private get apiKey(): string | undefined {
+    return process.env.AI_API_KEY || process.env.AI_SHARED_SECRET || undefined;
+  }
+
   onModuleInit(): void {
-    if (!process.env.AI_SHARED_SECRET) {
+    if (!this.apiKey) {
       this.logger.warn(
-        `AI_SHARED_SECRET is not set. Requests to ${this.baseUrl} will be sent WITHOUT the ` +
-          `X-RestoMind-Key header — if that AI service enforces a shared secret, every call ` +
+        `AI_API_KEY is not set. Requests to ${this.baseUrl} will be sent WITHOUT the ` +
+          `X-API-Key header — if that AI service enforces an API key, every call ` +
           `will fail with HTTP 401, will NOT be retried, and every prediction will silently ` +
           `fall back. This is expected only for an unsecured local development AI service.`,
       );
@@ -92,9 +105,7 @@ export class AiClientService implements OnModuleInit {
           method,
           headers: {
             'Content-Type': 'application/json',
-            ...(process.env.AI_SHARED_SECRET
-              ? { 'X-RestoMind-Key': process.env.AI_SHARED_SECRET }
-              : {}),
+            ...(this.apiKey ? { 'X-API-Key': this.apiKey } : {}),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           signal: controller.signal,

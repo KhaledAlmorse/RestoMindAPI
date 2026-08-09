@@ -388,7 +388,7 @@ export class ProductionPlanningService {
       // AI failure -> Fallback handling.
       // Branching on `ok` alone logged a never-retried 401 with the same
       // "unreachable" wording as a genuine outage, so a missing
-      // AI_SHARED_SECRET produced a whole restaurant of FALLBACK_YESTERDAY
+      // AI_API_KEY produced a whole restaurant of FALLBACK_YESTERDAY
       // plans that looked like a transient blip. Classify by KIND.
       if (!aiResult.ok) {
         onAiFailure?.(
