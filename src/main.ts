@@ -10,6 +10,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { validateEnvironment } from './Common/Config/env.validation';
+import { corsOriginHandler } from './Common/Utils';
 
 async function bootstrap() {
   // 1. Startup Environment Validation
@@ -49,29 +50,8 @@ async function bootstrap() {
   );
 
   // 5. Environment-Driven CORS Allow-List
-  const allowedOriginsString = process.env.ALLOWED_ORIGINS || '';
-  const allowedOrigins = allowedOriginsString
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
   app.enableCors({
-    origin: (requestOrigin, callback) => {
-      // Allow requests with no origin (like mobile apps, Postman, server-to-server)
-      if (!requestOrigin) return callback(null, true);
-
-      // In non-production, if ALLOWED_ORIGINS is unset or localhost, permit local origins
-      if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(requestOrigin)) {
-        return callback(null, true);
-      }
-
-      logger.warn(`CORS rejected request from origin: ${requestOrigin}`);
-      return callback(new Error('Not allowed by CORS'));
-    },
+    origin: corsOriginHandler,
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: 'Authorization,Content-Type,Accept,X-Requested-With',

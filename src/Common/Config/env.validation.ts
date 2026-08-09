@@ -34,7 +34,10 @@ export function validateEnvironment(): void {
   }
 
   if (isProduction && (!process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS === '*')) {
-    logger.warn('Security Warning: ALLOWED_ORIGINS is not set or set to wildcard (*) in production mode.');
+    const errorMsg =
+      'ALLOWED_ORIGINS must be set to a specific origin (not unset or "*") in production.';
+    logger.error(errorMsg);
+    throw new Error(errorMsg);
   }
 
   logger.log(`Environment validation complete (NODE_ENV=${process.env.NODE_ENV || 'development'}).`);
