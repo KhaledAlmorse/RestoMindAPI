@@ -13,7 +13,7 @@ export class SalesTransaction {
   @Prop({ type: Date, required: true, default: Date.now })
   date!: Date;
 
-  @Prop({ type: Number, required: true, min: 1 })
+  @Prop({ type: Number, required: true, min: 0 })
   quantitySold!: number;
 
   @Prop({ type: Number, required: true, min: 0 })

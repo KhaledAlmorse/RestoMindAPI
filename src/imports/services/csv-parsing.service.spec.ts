@@ -211,7 +211,11 @@ describe('CsvParsingService', () => {
         Quantity: 'quantitySold',
         Price: 'sellingPrice',
       };
-      const rawRows = [['2026-07-01', 'Croissant', '10', '18']];
+      const rawRows = [
+        ['2026-07-01', 'Croissant', '10', '18'],
+        ['2026-07-02', 'Croissant', '0', '18'], // zero is valid
+        ['2026-07-03', 'Croissant', '-5', '18'], // negative is invalid
+      ];
 
       const result = service.mapAndValidateRows(
         ImportTypeEnum.SALES_HISTORY,
@@ -221,8 +225,11 @@ describe('CsvParsingService', () => {
         mockProducts,
       );
 
-      expect(result.validRows.length).toBe(1);
+      expect(result.validRows.length).toBe(2);
       expect(result.validRows[0].quantitySold).toBe(10);
+      expect(result.validRows[1].quantitySold).toBe(0);
+      expect(result.errors.length).toBe(1);
+      expect(result.errors[0].column).toBe('quantitySold');
     });
   });
 });

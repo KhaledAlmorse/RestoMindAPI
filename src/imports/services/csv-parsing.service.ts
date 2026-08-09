@@ -557,12 +557,12 @@ export class CsvParsingService {
           rawQty === undefined ||
           rawQty === '' ||
           isNaN(qtyNum) ||
-          qtyNum <= 0
+          qtyNum < 0
         ) {
           errors.push({
             row: displayRow,
             column: 'quantitySold',
-            message: `quantitySold must be a positive number (got '${rawQty}')`,
+            message: `quantitySold must be a non-negative number (got '${rawQty}')`,
           });
           hasError = true;
         } else {
