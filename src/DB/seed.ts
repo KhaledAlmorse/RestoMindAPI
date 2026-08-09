@@ -36,7 +36,16 @@ import {
   Refund,
   Payout,
   MerchantAdjustment,
+  SystemSettings,
+  SubscriptionPlan,
+  Notification,
+  WeeklyExecutiveSnapshot,
+  AssistantActionLog,
+  RecommendationAction,
+  AssistantChatHistory,
 } from './Models';
+import { NotificationType } from '../notification/enums/notification-type.enum';
+import { getBusinessDateString, addDaysToDateString } from '../Common/Utils';
 
 import {
   RolesEnum,
@@ -114,6 +123,75 @@ const PaymentModel = getModel<any>(Payment);
 const RefundModel = getModel<any>(Refund);
 const PayoutModel = getModel<any>(Payout);
 const MerchantAdjustmentModel = getModel<any>(MerchantAdjustment);
+const SystemSettingsModel = getModel<any>(SystemSettings);
+const SubscriptionPlanModel = getModel<any>(SubscriptionPlan);
+const NotificationModel = getModel<any>(Notification);
+const WeeklyExecutiveSnapshotModel = getModel<any>(WeeklyExecutiveSnapshot);
+const AssistantActionLogModel = getModel<any>(AssistantActionLog);
+const RecommendationActionModel = getModel<any>(RecommendationAction);
+const AssistantChatHistoryModel = getModel<any>(AssistantChatHistory);
+
+/**
+ * Egyptian mobile numbers are `+20` + a 2-digit carrier prefix (10/11/12/15)
+ * + an 8-digit subscriber number — 10 digits after the country code, never
+ * 11. A previous version of this file built numbers like `+20101XXXXXXXX`
+ * (a 3-digit prefix), which is not a valid Egyptian number length.
+ */
+const EG_MOBILE_PREFIXES = ['10', '11', '12', '15'];
+function egyptPhone(seed: number): string {
+  const prefix = EG_MOBILE_PREFIXES[seed % EG_MOBILE_PREFIXES.length];
+  const subscriber = String(seed).padStart(8, '0');
+  return `+20${prefix}${subscriber}`;
+}
+
+/**
+ * A correctly-lengthed (29-char) Egyptian IBAN: `EG` + 2 check digits + 4
+ * bank code + 21-digit account number. Built entirely from strings — the
+ * previous version added an index to a 24-digit numeric literal, which
+ * silently overflowed to scientific notation (`EG9e+23`) for every extra
+ * restaurant.
+ */
+function egyptIban(seed: number): string {
+  const check = String(seed % 100).padStart(2, '0');
+  const account = String(seed).padStart(21, '0');
+  return `EG${check}0180${account}`;
+}
+
+/**
+ * The three launch plans, kept identical to `scripts/seed-subscription-plans.ts`
+ * so a freshly seeded database and a migrated production one price plans the
+ * same way. `starter` is the trial plan.
+ */
+const SUBSCRIPTION_PLANS = [
+  {
+    slug: 'starter',
+    label: 'Starter',
+    productCap: 50,
+    prices: { monthly: 100_000, halfYearly: 540_000, yearly: 960_000 },
+    sortOrder: 0,
+    archived: false,
+    isTrialPlan: true,
+  },
+  {
+    slug: 'plus',
+    label: 'Plus',
+    productCap: 150,
+    prices: { monthly: 175_000, halfYearly: 960_000, yearly: 1_740_000 },
+    sortOrder: 1,
+    archived: false,
+    isTrialPlan: false,
+  },
+  {
+    slug: 'enterprise',
+    label: 'Enterprise',
+    productCap: null,
+    prices: { monthly: 250_000, halfYearly: 1_350_000, yearly: 2_520_000 },
+    sortOrder: 2,
+    archived: false,
+    isTrialPlan: false,
+  },
+];
+const planBySlug = new Map(SUBSCRIPTION_PLANS.map((p) => [p.slug, p]));
 
 const extraCategoryNames = [
   { name: 'Cakes', desc: 'Layered celebration cakes, cheesecakes, and decadent chocolate gateaux.', img: 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=800&q=80' },
@@ -211,6 +289,13 @@ async function seed() {
     console.log('✅ Connected to MongoDB successfully.');
 
     console.log('🧹 Clearing existing data...');
+    await AssistantChatHistoryModel.deleteMany({});
+    await RecommendationActionModel.deleteMany({});
+    await AssistantActionLogModel.deleteMany({});
+    await WeeklyExecutiveSnapshotModel.deleteMany({});
+    await NotificationModel.deleteMany({});
+    await SubscriptionPlanModel.deleteMany({});
+    await SystemSettingsModel.deleteMany({});
     await MerchantAdjustmentModel.deleteMany({});
     await PayoutModel.deleteMany({});
     await RefundModel.deleteMany({});
@@ -241,6 +326,22 @@ async function seed() {
     await RestaurantModel.deleteMany({});
     await UserModel.deleteMany({});
     console.log('✅ Database cleared.');
+
+    // ─── 0. Seed Platform Settings & Subscription Plans ────────────────────────
+    // Must exist before restaurants: their subscription.tier is a plan slug,
+    // and effectiveProductCap() reads productCapSnapshot, which comes from here.
+    console.log('⚙️ Seeding system settings & subscription plans...');
+    await SystemSettingsModel.create({
+      key: 'platform',
+      freeTrialEnabled: true,
+      trialDurationDays: 14,
+      earlyBirdEnabled: true,
+      earlyBirdCap: 30,
+      earlyBirdDiscountPercent: 33.3333,
+      defaultCommissionRate: 0.05,
+    });
+    await SubscriptionPlanModel.insertMany(SUBSCRIPTION_PLANS);
+    console.log(`✅ Subscription Plans seeded: ${SUBSCRIPTION_PLANS.length}`);
 
     // ─── 1. Seed Core Users ─────────────────────────────────────────────────────
     console.log('👤 Seeding core users...');
@@ -324,14 +425,20 @@ async function seed() {
       address: { street: '1 Nile Corniche', city: 'Cairo', district: 'Zamalek', country: 'Egypt' },
       subscription: {
         tier: 'plus',
+        interval: 'monthly',
         currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        // Without a snapshot effectiveProductCap() reads 0 — see
+        // subscription-state.ts — so the seeded restaurant could never
+        // create a product through the real API.
+        productCapSnapshot: planBySlug.get('plus')!.productCap,
+        planLabelSnapshot: planBySlug.get('plus')!.label,
       },
       commissionRate: 0.10,
       payoutDestination: {
         method: 'bank',
         accountName: 'RestoMind Bakery & Cafe Ltd',
-        accountNumber: 'EG1234567890123456789012345',
+        accountNumber: egyptIban(1),
         bankName: 'CIB Egypt',
       },
       isActive: true,
@@ -360,7 +467,7 @@ async function seed() {
         password: bcrypt.hashSync('User@123', 10),
         role: i % 4 === 0 ? RolesEnum.MANAGER : i % 5 === 0 ? RolesEnum.STAFF : RolesEnum.CUSTOMER,
         gender: i % 2 === 0 ? GenderEnum.MALE : GenderEnum.FEMALE,
-        phone: `+20101${String(10000000 + i).slice(0, 8)}`,
+        phone: egyptPhone(1000 + i),
         isEmailVerified: true,
         DOB: new Date(1985 + (i % 20), i % 12, (i % 28) + 1),
         isActive: true,
@@ -388,31 +495,38 @@ async function seed() {
       'Tagamoa Grill', 'Rehab Deli',
     ];
     const allRestaurantIds = [restaurant._id];
-    const extraRests = restNames.map((n, i) => ({
-      name: n,
-      ownerUserId: allUserIds[(i + 1) % allUserIds.length],
-      description: `Premium ${n.toLowerCase()} serving fresh food daily.`,
-      image: {
-        public_id: `resto_seed/restaurants/${slugify(n, { lower: true, strict: true })}`,
-        secure_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80',
-      },
-      phone: `+20102${String(20000000 + i).slice(0, 8)}`,
-      address: { street: `${i + 1} Main St`, city: 'Cairo', district: 'Central', country: 'Egypt' },
-      subscription: {
-        tier: i % 2 === 0 ? 'scale' : 'plus',
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      },
-      commissionRate: 0.10,
-      payoutDestination: {
-        method: 'bank',
-        accountName: `${n} Account`,
-        accountNumber: `EG${String(900000000000000000000000 + i)}`,
-        bankName: 'National Bank of Egypt',
-      },
-      isActive: true,
-      isDeleted: false,
-    }));
+    const extraRests = restNames.map((n, i) => {
+      const tierSlug = i % 2 === 0 ? 'enterprise' : 'plus';
+      const plan = planBySlug.get(tierSlug)!;
+      return {
+        name: n,
+        ownerUserId: allUserIds[(i + 1) % allUserIds.length],
+        description: `Premium ${n.toLowerCase()} serving fresh food daily.`,
+        image: {
+          public_id: `resto_seed/restaurants/${slugify(n, { lower: true, strict: true })}`,
+          secure_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80',
+        },
+        phone: egyptPhone(2000 + i),
+        address: { street: `${i + 1} Main St`, city: 'Cairo', district: 'Central', country: 'Egypt' },
+        subscription: {
+          tier: tierSlug,
+          interval: 'monthly',
+          currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          productCapSnapshot: plan.productCap,
+          planLabelSnapshot: plan.label,
+        },
+        commissionRate: 0.10,
+        payoutDestination: {
+          method: 'bank',
+          accountName: `${n} Account`,
+          accountNumber: egyptIban(100 + i),
+          bankName: 'National Bank of Egypt',
+        },
+        isActive: true,
+        isDeleted: false,
+      };
+    });
     const insertedRests = await RestaurantModel.insertMany(extraRests);
     insertedRests.forEach((r) => allRestaurantIds.push(r._id));
     console.log(`✅ Restaurants seeded: ${allRestaurantIds.length}`);
@@ -702,9 +816,15 @@ async function seed() {
     );
     console.log(`✅ Ingredients seeded: ${insertedIngredients.length}`);
 
-    // ─── 8. Seed Recipes (Total Recipes >= 25) ────────────────────────────────────
+    // ─── 8. Seed Recipes (one per manager-restaurant product) ─────────────────────
+    // Ingredients only exist for managerRestaurantId (see step 7). A recipe for
+    // any other restaurant's product would reference an ingredientId that
+    // belongs to a different tenant — orders.service.deductInventoryForDeliveredOrder
+    // scopes the ingredient lookup by the ORDER's restaurantId, so that
+    // ingredient would resolve to null on every delivery for that restaurant.
     console.log('📖 Seeding recipes...');
-    const recipesData = allProducts.map((prod, i) => ({
+    const managerProducts = allProducts.filter((p) => p.restaurantId.equals(managerRestaurantId));
+    const recipesData = managerProducts.map((prod, i) => ({
       restaurantId: prod.restaurantId,
       productId: prod._id,
       ingredients: [
@@ -735,12 +855,12 @@ async function seed() {
       'Asyut Greenhouses', 'Sohag Spice Traders', 'Qena Fruit Traders', 'Beni Suef Grain', 'Tanta Packaging'
     ];
     const insertedSuppliers = await SupplierModel.insertMany(
-      supplierNames.map((name) => ({
+      supplierNames.map((name, i) => ({
         restaurantId: managerRestaurantId,
         name,
         email: `contact@${slugify(name, { lower: true })}.eg`,
-        phone: `+20110${String(Math.floor(Math.random() * 10000000)).padStart(8, '0')}`,
-        leadTimeDays: 1 + (Math.floor(Math.random() * 4)),
+        phone: egyptPhone(3000 + i),
+        leadTimeDays: 1 + (i % 4),
         isDeleted: false,
       })),
     );
@@ -1084,26 +1204,30 @@ async function seed() {
     console.log(`✅ Sales Transactions seeded: ${insertedSalesTx.length}`);
 
     // ─── 19. Seed Weekly Predictions (Total Predictions >= 20) ─────────────────────
+    // Dates are derived from the Cairo business date, never `toISOString()` —
+    // see restomind-cairo-timezone-constraint: that split has been the same
+    // recurring bug across a dozen services, and a hardcoded '2026-08-*'
+    // string here would just go stale the moment the seed outlives the month.
     console.log('🔮 Seeding weekly predictions...');
+    const todayStr = getBusinessDateString();
     const predictionsData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const prod = allProducts[i % allProducts.length];
+      const weekStartOffset = ((i % 4) - 2) * 7;
+      const weekStart = addDaysToDateString(todayStr, weekStartOffset);
       predictionsData.push({
         restaurantId: prod.restaurantId,
         productId: prod._id,
         modelVersionId: 'v1.2.0',
-        targetWeek: `2026-08-${String((i % 4) * 7 + 3).padStart(2, '0')}`,
+        targetWeek: weekStart,
         predictedOrders: 100 + i * 12,
         confidence: i % 3 === 0 ? ConfidenceLevelEnum.HIGH : i % 2 === 0 ? ConfidenceLevelEnum.MEDIUM : ConfidenceLevelEnum.LOW,
         source: i % 2 === 0 ? PredictionSourceEnum.AI_MODEL : PredictionSourceEnum.FALLBACK_NAIVE,
         featuresUsed: { seasonality: true, lag_7: 100 + i * 10 },
-        dailyBreakdown: [
-          { date: '2026-08-03', predictedQuantity: 15 + i },
-          { date: '2026-08-04', predictedQuantity: 18 + i },
-          { date: '2026-08-05', predictedQuantity: 20 + i },
-          { date: '2026-08-06', predictedQuantity: 22 + i },
-          { date: '2026-08-07', predictedQuantity: 25 + i },
-        ],
+        dailyBreakdown: [0, 1, 2, 3, 4].map((d) => ({
+          date: addDaysToDateString(weekStart, d),
+          predictedQuantity: 15 + i + d * 2,
+        })),
         actualOrders: 95 + i * 10,
         errorAbs: 5 + (i % 3),
         isDeleted: false,
@@ -1116,7 +1240,7 @@ async function seed() {
     console.log('📅 Seeding daily production plans...');
     const productionPlanData: any[] = [];
     for (let i = 0; i < 20; i++) {
-      const dateStr = new Date(Date.now() - (20 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const dateStr = addDaysToDateString(todayStr, i - 20);
       const rest = allRestaurants[i % allRestaurants.length];
       const restProds = allProducts.filter((p) => p.restaurantId.equals(rest._id));
       const prodsForPlan = restProds.slice(0, 3);
@@ -1177,12 +1301,17 @@ async function seed() {
     console.log(`✅ Import Jobs seeded: ${insertedImportJobs.length}`);
 
     // ─── 22. Seed Waste Reports (Total Waste Reports >= 20) ───────────────────────
+    // Predictions span all 21 restaurants, but ingredients only exist for
+    // managerRestaurantId — pairing an out-of-restaurant prediction with an
+    // ingredient here would make a waste report whose own restaurantId
+    // doesn't own either the prediction or the ingredient it references.
     console.log('📊 Seeding waste reports...');
     const riskLevels = [RiskLevelEnum.LOW, RiskLevelEnum.MEDIUM, RiskLevelEnum.HIGH];
+    const managerPredictions = insertedPredictions.filter((p) => p.restaurantId.equals(managerRestaurantId));
     const wasteReportData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const ing = insertedIngredients[i % insertedIngredients.length];
-      const pred = insertedPredictions[i % insertedPredictions.length];
+      const pred = managerPredictions[i % managerPredictions.length];
       wasteReportData.push({
         restaurantId: pred.restaurantId,
         predictionId: pred._id,
@@ -1211,10 +1340,15 @@ async function seed() {
       RecommendationStatusEnum.EDITED,
       RecommendationStatusEnum.DISMISSED,
     ];
+    // wr always belongs to managerRestaurantId (see step 22), so the
+    // recommended product must too — otherwise approving an APPLY_DISCOUNT
+    // recommendation would create an Offer under the approving manager's
+    // restaurant for a product it doesn't own (recommendations.service.ts
+    // approve() reads productId without checking it belongs to restaurantId).
     const recData: any[] = [];
     for (let i = 0; i < 20; i++) {
       const wr = insertedWasteReports[i % insertedWasteReports.length];
-      const prod = allProducts[i % allProducts.length];
+      const prod = managerProducts[i % managerProducts.length];
       recData.push({
         restaurantId: prod.restaurantId,
         wasteReportId: wr._id,
@@ -1313,7 +1447,7 @@ async function seed() {
         ownerFirstName: app.first,
         ownerLastName: app.last,
         email: `${app.first.toLowerCase()}.${app.last.toLowerCase()}@partnerdomain.com`,
-        phone: `+20109${String(90000000 + i).slice(0, 8)}`,
+        phone: egyptPhone(4000 + i),
         city: 'Cairo',
         district: 'New Cairo',
         street: `${i + 10} Commercial Axis`,
@@ -1326,13 +1460,24 @@ async function seed() {
         status,
         ...(isRejected ? { rejectionReason: 'Incomplete commercial license details.' } : {}),
         ...(isApproved
-          ? {
-              reviewedBy: adminUser._id,
-              approvedBy: adminUser._id,
-              approvedAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000),
-              userId: allUserIds[i % allUserIds.length],
-              restaurantId: allRestaurantIds[i % allRestaurantIds.length],
-            }
+          ? (() => {
+              // The real onboarding flow (partnership-applications.service.ts
+              // approve()) creates userId and restaurantId together, with
+              // userId as restaurantId's ownerUserId — an application whose
+              // userId owns a DIFFERENT restaurant than the one it names
+              // would send a setup-account token to the wrong person.
+              const linkedRestaurantId = allRestaurantIds[i % allRestaurantIds.length];
+              const linkedOwnerId =
+                allRestaurants.find((r) => r._id.equals(linkedRestaurantId))?.ownerUserId ??
+                adminUser._id;
+              return {
+                reviewedBy: adminUser._id,
+                approvedBy: adminUser._id,
+                approvedAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000),
+                userId: linkedOwnerId,
+                restaurantId: linkedRestaurantId,
+              };
+            })()
           : {}),
         isDeleted: false,
       });
@@ -1383,23 +1528,24 @@ async function seed() {
     // Subscription payments — the only revenue on the admin dashboard that is
     // actually RestoMind's, alongside commission. Spread over the last three
     // months so a 7d/30d window comparison has something to compare.
-    const subTiers = ['starter', 'plus', 'scale'];
-    const subPrices = [29900, 49900, 99900];
+    // Tier/price come straight from SUBSCRIPTION_PLANS, the same table just
+    // seeded into `subscriptionplans` — a made-up 'starter' slug or price
+    // here would desync from the plan the restaurant docs actually reference.
     for (let i = 0; i < 12; i++) {
       const restId = allRestaurantIds[i % allRestaurantIds.length];
-      const tierIndex = i % subTiers.length;
+      const plan = SUBSCRIPTION_PLANS[i % SUBSCRIPTION_PLANS.length];
       const paidAt = new Date(Date.now() - i * 7 * 24 * 60 * 60 * 1000);
 
       paymentsData.push({
         purpose: PaymentPurposeEnum.SUBSCRIPTION,
         restaurantId: restId,
-        tier: subTiers[tierIndex],
-        planLabel: subTiers[tierIndex].replace(/^./, (c) => c.toUpperCase()),
+        tier: plan.slug,
+        planLabel: plan.label,
         interval: 'monthly',
         periodStart: paidAt,
         periodEnd: new Date(paidAt.getTime() + 30 * 24 * 60 * 60 * 1000),
         userId: allRestaurants.find((r) => r._id.equals(restId))?.ownerUserId || adminUser._id,
-        amountCents: subPrices[tierIndex],
+        amountCents: plan.prices.monthly,
         currency: 'EGP',
         method: PaymentMethodEnum.CARD,
         integrationId: 200000 + i,
@@ -1544,6 +1690,153 @@ async function seed() {
     }
     const insertedAdjustments = await MerchantAdjustmentModel.insertMany(adjustmentsData);
     console.log(`✅ Merchant Adjustments seeded: ${insertedAdjustments.length}`);
+
+    // ─── 30. Seed Notifications (Total Notifications >= 20) ───────────────────────
+    console.log('🔔 Seeding notifications...');
+    const notificationsData: any[] = [];
+    insertedOrders.slice(0, 15).forEach((order: any, i: number) => {
+      const rest = allRestaurants.find((r) => r._id.equals(order.restaurantId));
+      notificationsData.push({
+        userId: rest?.ownerUserId || managerUser._id,
+        role: 'manager',
+        restaurantId: order.restaurantId,
+        type: NotificationType.NEW_ORDER,
+        title: 'New order received',
+        message: `Order for ${order.finalTotalPrice} EGP was placed by ${order.fullName}.`,
+        relatedEntityId: order._id,
+        relatedEntityType: 'Order',
+        isRead: i % 3 === 0,
+        readAt: i % 3 === 0 ? new Date() : null,
+      });
+    });
+    insertedPartnershipApps.slice(0, 10).forEach((app: any, i: number) => {
+      notificationsData.push({
+        userId: adminUser._id,
+        role: 'admin',
+        type: NotificationType.NEW_PARTNERSHIP_APPLICATION,
+        title: 'New partnership application',
+        message: `${app.businessName} applied to join RestoMind.`,
+        relatedEntityId: app._id,
+        relatedEntityType: 'PartnershipApplication',
+        isRead: i % 4 === 0,
+        readAt: i % 4 === 0 ? new Date() : null,
+      });
+    });
+    const insertedNotifications = await NotificationModel.insertMany(notificationsData);
+    console.log(`✅ Notifications seeded: ${insertedNotifications.length}`);
+
+    // ─── 31. Seed Weekly Executive Snapshots (one per restaurant) ─────────────────
+    console.log('📈 Seeding weekly executive snapshots...');
+    const snapshotData = allRestaurants.map((rest, i) => {
+      const restProducts = allProducts.filter((p) => p.restaurantId.equals(rest._id));
+      const topProduct = restProducts[0] || allProducts[i % allProducts.length];
+      const topIngredient = insertedIngredients[i % insertedIngredients.length];
+      const totalSalesRevenue = 5000 + i * 350;
+      const totalWasteCost = 200 + i * 15;
+      const aiPredictionAccuracy = 78 + (i % 15);
+      return {
+        restaurantId: rest._id,
+        targetWeek: todayStr,
+        totalSalesRevenue,
+        totalWasteCost,
+        topWastedIngredient: topIngredient.name,
+        topSellingProduct: topProduct.title,
+        aiPredictionAccuracy,
+        narrativeSummary: `Weekly Executive Summary for ${rest.name}: Total Sales Revenue: ${totalSalesRevenue.toFixed(2)} EGP. Total Waste Cost: ${totalWasteCost.toFixed(2)} EGP. Primary Waste Driver: Ingredient [${topIngredient.name}]. Top Performing Item: Product [${topProduct.title}]. AI Forecasting Accuracy: ${aiPredictionAccuracy}%.`,
+        isDeleted: false,
+      };
+    });
+    const insertedSnapshots = await WeeklyExecutiveSnapshotModel.insertMany(snapshotData);
+    console.log(`✅ Weekly Executive Snapshots seeded: ${insertedSnapshots.length}`);
+
+    // ─── 32. Seed Assistant Action Logs (Total Logs >= 20) ────────────────────────
+    console.log('🤖 Seeding assistant action logs...');
+    const actionTools = ['createOffer', 'scheduleDiscount', 'createPurchaseOrder', 'updateProductionPlan', 'sendNotification'];
+    const execStatuses = ['SUCCESS', 'SUCCESS', 'SUCCESS', 'FAILED', 'REJECTED_BY_USER', 'PENDING_APPROVAL'];
+    const actionLogData: any[] = [];
+    for (let i = 0; i < 20; i++) {
+      const rest = allRestaurants[i % allRestaurants.length];
+      const status = execStatuses[i % execStatuses.length];
+      actionLogData.push({
+        restaurantId: rest._id,
+        userId: rest.ownerUserId || managerUser._id,
+        sessionId: `session-${rest._id.toString().slice(-6)}-${i}`,
+        toolName: actionTools[i % actionTools.length],
+        arguments: { restaurantId: rest._id.toString() },
+        executionStatus: status,
+        durationMs: 200 + i * 35,
+        modelUsed: 'claude-sonnet-4-5',
+        executionResult: status === 'SUCCESS' ? { applied: true } : null,
+        errorMessage: status === 'FAILED' ? 'Downstream service timeout' : null,
+      });
+    }
+    const insertedActionLogs = await AssistantActionLogModel.insertMany(actionLogData);
+    console.log(`✅ Assistant Action Logs seeded: ${insertedActionLogs.length}`);
+
+    // ─── 33. Seed Recommendation Actions (one per Recommendation) ─────────────────
+    console.log('📌 Seeding recommendation actions...');
+    const relatedToolByRecType: Record<string, string> = {
+      [RecommendationTypeEnum.APPLY_DISCOUNT]: 'scheduleDiscount',
+      [RecommendationTypeEnum.REDUCE_PURCHASE]: 'createPurchaseOrder',
+      [RecommendationTypeEnum.STOP_PRODUCTION]: 'updateProductionPlan',
+      [RecommendationTypeEnum.TRANSFER_STOCK]: 'updateProductionPlan',
+    };
+    const actionStatusByRecStatus: Record<string, string> = {
+      [RecommendationStatusEnum.PENDING]: 'PENDING',
+      [RecommendationStatusEnum.APPROVED]: 'EXECUTED',
+      [RecommendationStatusEnum.EDITED]: 'APPROVED',
+      [RecommendationStatusEnum.DISMISSED]: 'REJECTED',
+    };
+    const recommendationActionData = insertedRecommendations.map((rec: any, i: number) => {
+      const status = actionStatusByRecStatus[rec.status] ?? 'PENDING';
+      const isActedOn = status !== 'PENDING';
+      return {
+        restaurantId: rec.restaurantId,
+        recommendationId: rec._id,
+        status,
+        selectedByUser: isActedOn,
+        actedBy: isActedOn ? managerUser._id : null,
+        executedAt: status === 'EXECUTED' ? new Date(Date.now() - i * 3 * 60 * 60 * 1000) : null,
+        relatedTool: relatedToolByRecType[rec.type] ?? 'updateProductionPlan',
+        executionResult: status === 'EXECUTED' ? { applied: true } : null,
+      };
+    });
+    const insertedRecommendationActions = await RecommendationActionModel.insertMany(recommendationActionData);
+    console.log(`✅ Recommendation Actions seeded: ${insertedRecommendationActions.length}`);
+
+    // ─── 34. Seed Assistant Chat Histories ─────────────────────────────────────────
+    console.log('💬 Seeding assistant chat histories...');
+    const chatHistoryData = allRestaurants.slice(0, 10).map((rest, i) => {
+      const baseTime = new Date(Date.now() - (10 - i) * 60 * 60 * 1000);
+      return {
+        restaurantId: rest._id,
+        userId: rest.ownerUserId || managerUser._id,
+        sessionId: `chat-${rest._id.toString().slice(-8)}`,
+        messages: [
+          {
+            role: 'user',
+            content: 'What should I do about ingredients close to expiry this week?',
+            timestamp: baseTime,
+          },
+          {
+            role: 'assistant',
+            content: 'I found ingredients nearing expiry. I recommend scheduling a discount on the related products to move stock before it spoils.',
+            toolCalls: [{ name: 'scheduleDiscount', status: 'SUCCESS' }],
+            timestamp: new Date(baseTime.getTime() + 5000),
+          },
+        ],
+      };
+    });
+    const insertedChatHistories = await AssistantChatHistoryModel.insertMany(chatHistoryData);
+    console.log(`✅ Assistant Chat Histories seeded: ${insertedChatHistories.length}`);
+
+    // KnowledgeVector is intentionally left empty: a real row needs an actual
+    // 1024-dim embedding from the AI provider (see knowledge-vector.model.ts).
+    // Faking one with random floats would just be noise no vector search
+    // could ever meaningfully match, and generating a real one means calling
+    // the AI provider from a seed script. If $vectorSearch needs sample data,
+    // run the app's normal ingestion path (e.g. the weekly snapshot job)
+    // against the seeded restaurants instead.
 
     console.log('\n======================================================');
     console.log('🎉 DATABASE SEEDING COMPLETED SUCCESSFULLY!');

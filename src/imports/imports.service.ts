@@ -33,6 +33,7 @@ import {
 } from 'src/Common/Types';
 import { getBusinessDateString } from 'src/Common/Utils/date.util';
 import { buildAiProductPayloadsFor } from 'src/Common/Utils/ai-product.util';
+import { DEFAULT_PLACEHOLDER_IMAGE } from 'src/Common/Constants/constants';
 
 @Injectable()
 export class ImportsService {
@@ -264,11 +265,7 @@ export class ImportsService {
             category = await this.categoryRepository.create({
               name: categoryName,
               description: `Category for ${categoryName}`,
-              image: {
-                public_id: 'default_category',
-                secure_url:
-                  'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-              },
+              image: DEFAULT_PLACEHOLDER_IMAGE,
             } as any);
           }
 
@@ -276,11 +273,7 @@ export class ImportsService {
             `${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             { lower: true },
           );
-          const defaultImage = {
-            public_id: 'default_product',
-            secure_url:
-              'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-          };
+          const defaultImage = DEFAULT_PLACEHOLDER_IMAGE;
 
           if (existingProduct) {
             await this.productRepository.update({

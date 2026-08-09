@@ -1,7 +1,9 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -13,8 +15,11 @@ async function bootstrap() {
   // 1. Startup Environment Validation
   validateEnvironment();
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
+
+  // Serve static assets from public/ (Option 1)
+  app.useStaticAssets(join(process.cwd(), 'public'), { prefix: '/public' });
 
   // 2. Trust Proxy (Required when behind reverse proxies / load balancers)
   if (process.env.TRUST_PROXY === 'true') {
@@ -29,6 +34,7 @@ async function bootstrap() {
         contentSecurityPolicy:
           process.env.ENABLE_SWAGGER === 'true' ? false : undefined,
         crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
       }),
     );
   }

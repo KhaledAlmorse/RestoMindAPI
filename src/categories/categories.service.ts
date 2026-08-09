@@ -11,6 +11,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { QueryCategoryDto } from './dto/query-category.dto';
 import { isValidObjectId, Types } from 'mongoose';
 import { UploadCloudFileService } from 'src/Common/Services';
+import { DEFAULT_PLACEHOLDER_IMAGE } from 'src/Common/Constants/constants';
 import { CategoryType } from 'src/DB/Models';
 
 @Injectable()
@@ -40,10 +41,7 @@ export class CategoriesService implements OnModuleInit {
       defaultCategory = await this.categoryRepository.create({
         name: 'Default Category',
         description: 'Default category for products',
-        image: {
-          public_id: 'default-category-placeholder',
-          secure_url: 'https://res.cloudinary.com/placeholder.jpg',
-        },
+        image: DEFAULT_PLACEHOLDER_IMAGE,
         isDeleted: false,
       } as any);
     }
