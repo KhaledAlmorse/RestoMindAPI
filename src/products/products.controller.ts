@@ -48,7 +48,7 @@ export class ProductsController {
   }
 
   @Patch(':id')
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async updateProduct(
     @Param('id') id: string,

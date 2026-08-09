@@ -1,20 +1,26 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
 import { validateEnvironment } from './Common/Config/env.validation';
+import { corsOriginHandler } from './Common/Utils';
 
 async function bootstrap() {
   // 1. Startup Environment Validation
   validateEnvironment();
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
+
+  // Serve static assets from public/ (Option 1)
+  app.useStaticAssets(join(process.cwd(), 'public'), { prefix: '/public' });
 
   // 2. Trust Proxy (Required when behind reverse proxies / load balancers)
   if (process.env.TRUST_PROXY === 'true') {
@@ -29,6 +35,7 @@ async function bootstrap() {
         contentSecurityPolicy:
           process.env.ENABLE_SWAGGER === 'true' ? false : undefined,
         crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
       }),
     );
   }
@@ -43,29 +50,8 @@ async function bootstrap() {
   );
 
   // 5. Environment-Driven CORS Allow-List
-  const allowedOriginsString = process.env.ALLOWED_ORIGINS || '';
-  const allowedOrigins = allowedOriginsString
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
   app.enableCors({
-    origin: (requestOrigin, callback) => {
-      // Allow requests with no origin (like mobile apps, Postman, server-to-server)
-      if (!requestOrigin) return callback(null, true);
-
-      // In non-production, if ALLOWED_ORIGINS is unset or localhost, permit local origins
-      if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(requestOrigin)) {
-        return callback(null, true);
-      }
-
-      logger.warn(`CORS rejected request from origin: ${requestOrigin}`);
-      return callback(new Error('Not allowed by CORS'));
-    },
+    origin: corsOriginHandler,
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: 'Authorization,Content-Type,Accept,X-Requested-With',

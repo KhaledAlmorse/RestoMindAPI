@@ -65,7 +65,7 @@ export class IngredientsController {
   }
 
   @Patch(':id')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async updateIngredient(
     @Param('id') id: string,
     @Body() body: UpdateIngredientDto,

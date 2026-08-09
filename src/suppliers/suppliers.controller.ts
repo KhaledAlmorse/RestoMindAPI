@@ -19,7 +19,7 @@ export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
 
   @Post()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createSupplier(
     @Body() body: CreateSupplierDto,
     @AuthUser() authUser: IAuthUser,

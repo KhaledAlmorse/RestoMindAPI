@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
+import { getBusinessDayRange } from 'src/Common/Utils';
 import { RolesEnum } from 'src/Common/Types';
 import { UserType } from 'src/DB/Models';
 import { SalesTransactionRepository } from 'src/DB/Repositories';
@@ -53,19 +54,20 @@ export class SalesService {
 
     if (query.startDate || query.endDate) {
       filters.date = {};
+      // A bare YYYY-MM-DD is a Cairo calendar date, not a UTC one.
       if (query.startDate) {
-        const start = new Date(query.startDate);
-        if (query.startDate.trim().length === 10) {
-          start.setUTCHours(0, 0, 0, 0);
-        }
-        filters.date.$gte = start;
+        const trimmed = query.startDate.trim();
+        filters.date.$gte =
+          trimmed.length === 10
+            ? getBusinessDayRange(trimmed).start
+            : new Date(query.startDate);
       }
       if (query.endDate) {
-        const end = new Date(query.endDate);
-        if (query.endDate.trim().length === 10) {
-          end.setUTCHours(23, 59, 59, 999);
-        }
-        filters.date.$lte = end;
+        const trimmed = query.endDate.trim();
+        filters.date.$lte =
+          trimmed.length === 10
+            ? new Date(getBusinessDayRange(trimmed).end.getTime() - 1)
+            : new Date(query.endDate);
       }
     }
 

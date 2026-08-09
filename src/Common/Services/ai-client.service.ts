@@ -24,14 +24,13 @@ export class AiClientService implements OnModuleInit {
 
   /**
    * Boot-time guard for the single most damaging misconfiguration on this
-   * integration: the AI service is started WITH a shared secret and NestJS
-   * without one. Every `/integration/restomind/*` call then returns 401, which
-   * the client classifies as `client_error` and never retries, so forecasting
-   * silently degrades to the naive fallback while every endpoint still answers
-   * HTTP 200.
+   * integration: the AI service is deployed with the API key enforced and
+   * NestJS without one. Every call then returns 401, which the client classifies
+   * as `client_error` and never retries, so forecasting silently degrades to
+   * the naive fallback while every endpoint still answers HTTP 200.
    *
-   * Deliberately a warning, not a throw: an unsecured local dev setup (no
-   * secret on either side) is legitimate and must still boot.
+   * Deliberately a warning, not a throw: an unsecured local dev setup (no key
+   * configured on either side) is legitimate and must still boot.
    */
   /**
    * The raw key sent to the AI service as `X-API-Key`.
@@ -122,6 +121,30 @@ export class AiClientService implements OnModuleInit {
         // A 4xx is our mistake. Retrying cannot fix it and falling back would
         // hide it — surface it immediately, with the service's own hint.
         if (response.status >= 400 && response.status < 500) {
+          // A 429 is not a config fault — the AI service throttled us. Never
+          // blind-retry it (docs 02 §2.3a): surface it as its own kind so
+          // logging/alerts don't blame a wrong key, and carry Retry-After.
+          if (response.status === 429) {
+            const retryAfterRaw = response.headers.get('retry-after');
+            const retryAfter = retryAfterRaw
+              ? Number(retryAfterRaw)
+              : undefined;
+            this.logger.warn(
+              `AI ${method} ${path} rate-limited with HTTP 429${
+                retryAfter ? ` (Retry-After: ${retryAfter}s)` : ''
+              } — NOT retried: ${JSON.stringify(parsed)}`,
+            );
+            return {
+              ok: false,
+              kind: 'rate_limited',
+              status: response.status,
+              message:
+                'The AI service is rate-limiting this caller — wait and back off before retrying',
+              body: parsed,
+              ...(retryAfter === undefined ? {} : { retryAfter }),
+            };
+          }
+
           this.logger.warn(
             `AI ${method} ${path} rejected with HTTP ${response.status}: ${JSON.stringify(parsed)}`,
           );

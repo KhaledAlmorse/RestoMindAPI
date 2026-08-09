@@ -38,9 +38,11 @@ import { SalesTransactionRepository } from 'src/DB/Repositories/sales-transactio
 import { OfferRepository } from 'src/DB/Repositories/offer.repository';
 import { UserRepository } from 'src/DB/Repositories/user.repository';
 import { RestaurantRepository } from 'src/DB/Repositories/restaurant.repository';
+import { DailyProductionPlanRepository } from 'src/DB/Repositories/daily-production-plan.repository';
 import { SupplierAutoDraftService } from './services/supplier-auto-draft.service';
 import { QueryPredictionsDto } from './dto/query-predictions.dto';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
@@ -71,7 +73,9 @@ export class WeeklyPredictionService {
     private readonly offerRepository: OfferRepository,
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
+    private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
     private readonly supplierAutoDraftService: SupplierAutoDraftService,
+    private readonly productCostService: ProductCostService,
     @InjectModel(Prediction.name)
     private readonly predictionModel: Model<PredictionType>,
   ) {}
@@ -369,7 +373,9 @@ export class WeeklyPredictionService {
         fallbackReason =
           degradation.kind === 'client_error'
             ? `AI rejected the request (HTTP ${degradation.status ?? '4xx'}) — probable configuration fault`
-            : 'AI service unreachable';
+            : degradation.kind === 'rate_limited'
+              ? 'AI rate-limited the request (HTTP 429) — the caller is throttled; back off before retrying'
+              : 'AI service unreachable';
       } else {
         this.logger.error(
           `[AI CONTRACT] AI answered ${'/integration/restomind/predict'} without a predictedOrders field for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
@@ -560,13 +566,15 @@ export class WeeklyPredictionService {
             2,
             (degradation) => {
               degradedProductIds.push(prod._id.toString());
-              // client_error wins: a configuration fault is the more
-              // actionable diagnosis and must not be masked by a stray
-              // timeout on another product.
+              // A diagnosis beats an outage: `client_error` (a config fault) and
+              // `rate_limited` (we are throttled) both say "something we did
+              // caused this, look at it", while `unavailable` says "the service
+              // was down". Either non-outage kind must win over a stray timeout
+              // on another product, and the first such diagnosis stays put.
               if (
                 !firstDegradation ||
-                (firstDegradation.kind !== 'client_error' &&
-                  degradation.kind === 'client_error')
+                (firstDegradation.kind === 'unavailable' &&
+                  degradation.kind !== 'unavailable')
               ) {
                 firstDegradation = degradation;
               }
@@ -1005,21 +1013,58 @@ export class WeeklyPredictionService {
       };
     }
 
-    const records = sales.map((s: any) => ({
+    // Real production actuals, keyed the same way the sales rows below are keyed
+    // (Cairo business date + productId), so a day with a recorded production plan
+    // can tell the model how much was actually made, not just what sold.
+    const productionPlans =
+      (await this.dailyProductionPlanRepository.findMany({
+        filters: { restaurantId, isDeleted: false, date: { $gte: fromDateStr } },
+      })) || [];
+    const productionByKey = new Map<string, number>();
+    for (const plan of productionPlans) {
+      for (const item of plan.items || []) {
+        if (item.actualProducedQty == null) continue;
+        productionByKey.set(
+          `${plan.date}|${item.productId.toString()}`,
+          item.actualProducedQty,
+        );
+      }
+    }
+
+    const records = sales.map((s: any) => {
       // Must match the nightly sync's key derivation
       // (production-planning.service.ts's handleNightlyAiSync): both feed the
       // same AI registry, which de-duplicates on (date, productId) and groups
       // by date. A UTC-derived key here would disagree with the nightly
       // sync's Cairo-derived key for late-evening Cairo sales, causing dedup
       // misses and misattributed weekday averages.
-      date: getBusinessDateString(new Date(s.date)),
-      productId: s.productId.toString(),
-      salesQty: s.quantitySold || 0,
-    }));
+      const date = getBusinessDateString(new Date(s.date));
+      const productId = s.productId.toString();
+      const productionQty =
+        s.productionQuantity ?? productionByKey.get(`${date}|${productId}`);
+      return {
+        date,
+        productId,
+        salesQty: s.quantitySold || 0,
+        ...(productionQty !== undefined ? { productionQty } : {}),
+        // `stockoutMinutes > 0` is the real, already-recorded signal that the
+        // shelf ran out that day -- reuse it rather than requiring a separate
+        // inventory-tracking feed just to tell the model the same thing.
+        // Absent (not 0) when we do NOT know the shelf sold out: the model
+        // treats an unknown closingStock as "assume not a stockout", which is
+        // the safe default, not a false "still had stock" claim.
+        ...(s.stockoutMinutes > 0 ? { closingStock: 0 } : {}),
+      };
+    });
 
+    const unitCosts = await this.productCostService.getUnitCosts(
+      restaurantId,
+      products.map((p: any) => p._id),
+    );
     const productPayload = buildAiProductPayloadsFor(
       products,
       records.map((r) => r.productId),
+      unitCosts,
     );
 
     const result = await this.aiClient.post<any>(

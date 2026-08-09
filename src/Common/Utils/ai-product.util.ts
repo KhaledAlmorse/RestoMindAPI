@@ -45,6 +45,7 @@ export interface AiProductPayload {
   title: string;
   category: string;
   price: number;
+  unitCost: number | null;
   freshnessWindow: number | null;
 }
 
@@ -60,14 +61,21 @@ export interface AiProductPayload {
  *
  * `freshnessWindow` stays `null` rather than defaulting to a number: the shelf
  * life of an unknown product is unknown, and inventing one silently sets a
- * service level nobody chose.
+ * service level nobody chose. `unitCost` is the same story: there is no cost
+ * field to read off `product` directly (see `ProductCostService`, which derives
+ * it from the recipe/BOM), so it is always passed in explicitly rather than
+ * guessed at here -- omitting it means "unknown", never 0 ("free to produce").
  */
-export function buildAiProductPayload(product: any): AiProductPayload {
+export function buildAiProductPayload(
+  product: any,
+  unitCost: number | null = null,
+): AiProductPayload {
   return {
     productId: product._id.toString(),
     title: product.title || 'Product',
     category: resolveCategoryName(product.category),
     price: product.price || 0,
+    unitCost,
     freshnessWindow: product.freshnessWindow ?? null,
   };
 }
@@ -84,9 +92,12 @@ export function buildAiProductPayload(product: any): AiProductPayload {
 export function buildAiProductPayloadsFor(
   products: any[],
   referencedProductIds: Iterable<string>,
+  unitCosts: Map<string, number> = new Map(),
 ): AiProductPayload[] {
   const wanted = new Set(referencedProductIds);
   return products
     .filter((p) => wanted.has(p._id.toString()))
-    .map(buildAiProductPayload);
+    .map((p) =>
+      buildAiProductPayload(p, unitCosts.get(p._id.toString()) ?? null),
+    );
 }

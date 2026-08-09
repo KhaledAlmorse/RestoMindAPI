@@ -9,10 +9,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { TokenService } from 'src/Common/Services';
 import { RevokeTokenRepository, UserRepository } from 'src/DB/Repositories';
 import { NotificationPayload } from './interfaces/notification-payload.interface';
+import { corsOriginHandler } from 'src/Common/Utils';
 
 @WebSocketGateway({
   namespace: '/notifications',
-  cors: { origin: '*' },
+  cors: { origin: corsOriginHandler, credentials: true },
 })
 @Injectable()
 export class NotificationGateway

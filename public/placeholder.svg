@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <defs>
+    <!-- Soft Neutral Surface Gradient -->
+    <linearGradient id="rm-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F8FAFC"/>
+      <stop offset="50%" stop-color="#F1F5F9"/>
+      <stop offset="100%" stop-color="#E2E8F0"/>
+    </linearGradient>
+
+    <!-- Subtle Brand Glow behind Center -->
+    <radialGradient id="rm-glow" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" stop-color="#EA580C" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#EA580C" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Subtle Dot Grid Pattern Texture -->
+    <pattern id="rm-grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#94A3B8" opacity="0.18"/>
+    </pattern>
+
+    <!-- Soft Drop Shadow -->
+    <filter id="rm-shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F172A" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <!-- Full Frame Background -->
+  <rect width="400" height="400" fill="url(#rm-bg)"/>
+  <rect width="400" height="400" fill="url(#rm-grid)"/>
+  <circle cx="200" cy="180" r="170" fill="url(#rm-glow)"/>
+
+  <!-- Top RestoMind Identity Watermark Tag -->
+  <g transform="translate(200, 48)">
+    <rect x="-68" y="-14" width="136" height="28" rx="14" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" filter="url(#rm-shadow)"/>
+    <!-- Orange Small Dot Accent -->
+    <circle cx="-48" cy="0" r="4" fill="#EA580C"/>
+    <!-- Brand Name -->
+    <text x="6" y="4" font-family="Outfit, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="700" text-anchor="middle" letter-spacing="0.5">
+      <tspan fill="#334155">Resto</tspan><tspan fill="#EA580C">Mind</tspan>
+    </text>
+  </g>
+
+  <!-- Central "No Image" Unmistakable Placeholder Icon -->
+  <g transform="translate(200, 168)" filter="url(#rm-shadow)">
+    <!-- Outer Dashed Placeholder Container Box -->
+    <rect x="-85" y="-70" width="170" height="125" rx="16" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2.5" stroke-dasharray="7 5"/>
+
+    <!-- Image / Mountain / Sun Graphic with Slash Line -->
+    <g fill="none" stroke="#94A3B8" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Sun -->
+      <circle cx="35" cy="-35" r="9" fill="#E2E8F0" stroke="#94A3B8" stroke-width="2"/>
+      
+      <!-- Mountain Peaks -->
+      <path d="M -55 30 L -20 -15 L 10 20 L 30 0 L 55 30" stroke-width="3" stroke="#94A3B8"/>
+
+      <!-- Diagonal "No Photo / Slashed Image" Line across icon -->
+      <line x1="-65" y1="40" x2="65" y2="-50" stroke="#EA580C" stroke-width="4.5" stroke-linecap="round"/>
+      <line x1="-65" y1="40" x2="65" y2="-50" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+    </g>
+
+    <!-- Camera / Photo Off Badge -->
+    <circle cx="50" cy="35" r="16" fill="#EA580C"/>
+    <path d="M 44 29 L 56 41 M 56 29 L 44 41" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Bold Unmistakable "NO IMAGE AVAILABLE" Text Section -->
+  <g transform="translate(200, 292)" text-anchor="middle">
+    <!-- Primary Label -->
+    <text y="0" font-family="Outfit, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="800" fill="#334155" letter-spacing="1.5">
+      NO IMAGE AVAILABLE
+    </text>
+    
+    <!-- Secondary Sub-label -->
+    <text y="24" font-family="Outfit, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#64748B" letter-spacing="0.5">
+      No product photo uploaded yet
+    </text>
+  </g>
+</svg>

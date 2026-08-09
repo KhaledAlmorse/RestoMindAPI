@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { isValidObjectId, Types } from 'mongoose';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 import {
   addDaysToDateString,
   getBusinessDateString,
@@ -69,6 +70,7 @@ export class RecommendationsService {
     private readonly recipeRepository: RecipeRepository,
     private readonly predictionRepository: PredictionRepository,
     private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
+    private readonly productCostService: ProductCostService,
   ) {}
 
   private validateObjectId(id: string) {
@@ -160,6 +162,20 @@ export class RecommendationsService {
 
   async scanSurplus(userId: string) {
     const restaurantId = await this.getManagerRestaurantId(userId);
+    return this.scanSurplusForRestaurant(restaurantId);
+  }
+
+  /**
+   * The actual surplus scan, once `restaurantId` is already known.
+   *
+   * Split out of `scanSurplus` so a caller that already has a restaurantId --
+   * the assistant's `RecommendationService`, notably, which used to run a
+   * fully separate, hardcoded discount engine that never called the AI
+   * service at all -- can get the same real, AI-backed, backend-verified
+   * surplus recommendations without going through a userId round-trip or
+   * duplicating this method's request-building and persistence logic.
+   */
+  async scanSurplusForRestaurant(restaurantId: Types.ObjectId) {
     const targetWeek = this.currentTargetWeek();
 
     // 1. Fetch active products for restaurant
@@ -202,11 +218,20 @@ export class RecommendationsService {
       riskLevel: RiskLevelEnum;
     }> = [];
 
+    // Real unit_cost lets the AI service floor a surplus discount above cost
+    // instead of only capping it by risk. `null` (no recipe/never purchased)
+    // keeps the old cap-only behaviour.
+    const unitCosts = await this.productCostService.getUnitCosts(
+      restaurantId,
+      products.map((p: any) => p._id),
+    );
+
     const stockItems: Array<{
       productId: string;
       title: string;
       category: string | null;
       price: number;
+      unitCost: number | null;
       freshnessWindow: number;
       currentStock: number;
       // `null`, NOT 0. The bridge reads 0 as "this product sells nothing" and
@@ -444,6 +469,7 @@ export class RecommendationsService {
         // to neutral priors and surplus risk was never category-aware.
         category: categoryName,
         price: product.price || 0,
+        unitCost: unitCosts.get(product._id.toString()) ?? null,
         freshnessWindow: product.freshnessWindow || 2,
         currentStock: readyToSellStock,
         avgDailySales,
@@ -520,12 +546,17 @@ export class RecommendationsService {
     // 4. Ask the AI for discount suggestions. A failure here does NOT invalidate
     // the waste reports we just wrote — report them as degraded instead of
     // throwing on top of a committed write.
+    const restaurant = await this.restaurantRepository.findOne({
+      filters: { _id: restaurantId, isDeleted: false },
+    });
     const aiResult = await this.aiClient.post<any>(
       '/integration/restomind/surplus-offers',
       {
         restaurantId: restaurantId.toString(),
         timestamp: new Date().toISOString(),
-        closeHour: 22,
+        // Was a bare `22` with no way to ever become real. Restaurant.closingHour
+        // defaults to 22 too, so this changes nothing until an owner sets theirs.
+        closeHour: restaurant?.closingHour ?? 22,
         stock: stockItems,
       },
       { retries: 2, timeoutMs: 8000 },
@@ -826,6 +857,16 @@ export class RecommendationsService {
       const hint = (result.body as any)?.hint;
       throw new BadRequestException(
         hint ? `${result.message}. ${hint}` : result.message,
+      );
+    }
+
+    // A 429 is not an outage either — say what it actually is, with the
+    // Retry-After if the AI service gave one (docs 02 §2.3a).
+    if (result.kind === 'rate_limited') {
+      throw new ServiceUnavailableException(
+        `AI service rate-limited the plan validation (HTTP 429)${
+          result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
+        }: ${result.message}`,
       );
     }
 

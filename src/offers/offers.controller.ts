@@ -26,7 +26,7 @@ export class OffersController {
   ) {}
 
   @Post()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createOffer(
     @Body() body: CreateOfferDto,
     @AuthUser() authUser: IAuthUser,
@@ -89,7 +89,7 @@ export class OffersController {
   }
 
   @Patch(':id')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async updateOffer(
     @Param('id') id: string,
     @Body() body: UpdateOfferDto,
@@ -105,7 +105,7 @@ export class OffersController {
   }
 
   @Patch(':id/cancel')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async cancelOffer(
     @Param('id') id: string,
     @AuthUser() authUser: IAuthUser,

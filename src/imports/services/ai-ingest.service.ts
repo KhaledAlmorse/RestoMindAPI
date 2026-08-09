@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 export interface IngestRecordPayload {
   date: string;
   productId: string;
   salesQty: number;
+  /** Units actually produced/available that day, when known (e.g. from a
+   * DailyProductionPlan's recorded actuals). Omit rather than guess. */
+  productionQty?: number;
+  /** 0 means the shelf sold out that day -- omit rather than send a false
+   * "still had stock" default when it isn't actually known. */
+  closingStock?: number;
 }
 
 /**
@@ -17,6 +25,9 @@ export interface IngestProductPayload {
   title: string;
   category?: string;
   price?: number;
+  /** Cost to produce one unit (see ProductCostService); omit when unknown
+   * rather than sending 0, which would read as "free to produce". */
+  unitCost?: number | null;
   freshnessWindow?: number | null;
 }
 
@@ -76,6 +87,18 @@ export class AiIngestService {
     // request the contract rejects.
     if (payload.records.length === 0) {
       return { success: true, attempts: 0 };
+    }
+
+    try {
+      const debugFilePath = path.join(process.cwd(), 'ai-ingest-payload.json');
+      fs.writeFileSync(
+        debugFilePath,
+        JSON.stringify(payload, null, 2),
+        'utf-8',
+      );
+      this.logger.log(`Saved AI ingest payload JSON to ${debugFilePath}`);
+    } catch (fsErr) {
+      this.logger.error(`Failed to write debug payload JSON file: ${fsErr}`);
     }
 
     const chunks = this.chunk(payload.records, INGEST_CHUNK_SIZE);

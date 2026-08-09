@@ -16,7 +16,9 @@ export type AiFailure = Extract<AiCallResult<unknown>, { ok: false }>;
  *
  * `client_error` therefore gets its own wording, naming it as a probable
  * configuration fault and carrying the status, the path and the service's own
- * response body.
+ * response body. `rate_limited` gets its own too: it is NOT a config fault
+ * (a wrong key returns 401, a throttle returns 429), so it must not be logged
+ * as one.
  */
 export function reportAiFailure(
   logger: Logger,
@@ -26,7 +28,16 @@ export function reportAiFailure(
 ): AiDegradation {
   const where = context ? ` (${context})` : '';
 
-  if (failure.kind === 'client_error') {
+  if (failure.kind === 'rate_limited') {
+    logger.error(
+      `[AI RATE LIMITED] AI throttled ${path}${where} with HTTP 429 (NOT retried)${
+        failure.retryAfter ? `, Retry-After: ${failure.retryAfter}s` : ''
+      } — not a config fault, not an outage: the caller is sending too much traffic ` +
+        `or the AI service's limit is set below real usage. Log/alert, back off, and ` +
+        `check for a tight retry loop rather than hammering harder. ` +
+        `Response body: ${safeJson(failure.body)}`,
+    );
+  } else if (failure.kind === 'client_error') {
     logger.error(
       `[AI CONFIG ERROR] AI rejected ${path}${where} with HTTP ${
         failure.status ?? '4xx'
@@ -45,6 +56,9 @@ export function reportAiFailure(
     kind: failure.kind,
     reason: failure.message,
     ...(failure.status === undefined ? {} : { status: failure.status }),
+    ...(failure.retryAfter === undefined
+      ? {}
+      : { retryAfter: failure.retryAfter }),
   };
 }
 
@@ -58,6 +72,7 @@ export function degradationFields(degradation?: AiDegradation | null): {
   degradedReason?: string;
   degradedKind?: AiDegradation['kind'];
   degradedStatus?: number;
+  retryAfter?: number;
 } {
   if (!degradation) return { degraded: false };
   return {
@@ -67,6 +82,9 @@ export function degradationFields(degradation?: AiDegradation | null): {
     ...(degradation.status === undefined
       ? {}
       : { degradedStatus: degradation.status }),
+    ...(degradation.retryAfter === undefined
+      ? {}
+      : { retryAfter: degradation.retryAfter }),
   };
 }
 

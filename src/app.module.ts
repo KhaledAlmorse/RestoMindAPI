@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AiClientModule } from './Common/Services/ai-client.module';
+import { ProductCostModule } from './Common/Services/product-cost.module';
 import { AuthModule } from './auth/auth.module';
 import { GlobalAuthModule } from './global.module';
 import { UserModule } from './user/user.module';
@@ -56,6 +57,7 @@ import { SystemSettingsModule } from './system-settings/system-settings.module';
       },
     ]),
     AiClientModule,
+    ProductCostModule,
     AuthModule,
     GlobalAuthModule,
     UserModule,

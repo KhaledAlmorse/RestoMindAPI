@@ -22,7 +22,7 @@ export class PurchaseOrdersController {
   constructor(private readonly purchaseOrdersService: PurchaseOrdersService) {}
 
   @Post()
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async createPurchaseOrder(
     @Body() body: CreatePurchaseOrderDto,
     @AuthUser() authUser: IAuthUser,
@@ -64,7 +64,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/status')
-  @Auth('manager')
+  @Auth('admin', 'manager', 'staff')
   async updatePurchaseOrderStatus(
     @Param('id') id: string,
     @Body() body: UpdatePurchaseOrderStatusDto,

@@ -33,6 +33,22 @@ import {
 } from 'src/Common/Types';
 import { getBusinessDateString } from 'src/Common/Utils/date.util';
 import { buildAiProductPayloadsFor } from 'src/Common/Utils/ai-product.util';
+import { DEFAULT_PLACEHOLDER_IMAGE } from 'src/Common/Constants/constants';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
+
+const REQUIRED_SALES_HISTORY_FIELDS = [
+  'date',
+  'productId',
+  'productionQuantity',
+  'quantitySold',
+] as const;
+
+function missingSalesHistoryFields(mapping: Record<string, string>): string[] {
+  const mappedFields = new Set(Object.values(mapping));
+  return REQUIRED_SALES_HISTORY_FIELDS.filter(
+    (field) => !mappedFields.has(field),
+  );
+}
 
 @Injectable()
 export class ImportsService {
@@ -51,6 +67,7 @@ export class ImportsService {
     private readonly categoryRepository: CategoryRepository,
     private readonly csvParsingService: CsvParsingService,
     private readonly aiIngestService: AiIngestService,
+    private readonly productCostService: ProductCostService,
   ) {}
 
   private validateObjectId(id: string) {
@@ -98,6 +115,8 @@ export class ImportsService {
 
     const restaurantId = await this.getManagerRestaurantId(userId);
     const { headers, rawRows } = this.csvParsingService.parseCsv(file.buffer);
+    console.log('Parsed CSV Headers:', headers);
+    console.log('Parsed CSV Rows:', rawRows);
 
     if (rawRows.length === 0) {
       throw new BadRequestException('CSV file contains no data rows');
@@ -107,6 +126,16 @@ export class ImportsService {
       headers,
       dto.importType,
     );
+
+    if (dto.importType === ImportTypeEnum.SALES_HISTORY) {
+      const missingFields = missingSalesHistoryFields(suggestedMapping);
+
+      if (missingFields.length > 0) {
+        throw new BadRequestException(
+          `Sales history CSV must include headers for: ${missingFields.join(', ')}`,
+        );
+      }
+    }
 
     const job = await this.importJobRepository.create({
       restaurantId,
@@ -219,6 +248,16 @@ export class ImportsService {
 
     try {
       const effectiveMapping = dto.columnMapping || job.columnMapping || {};
+
+      if (job.importType === ImportTypeEnum.SALES_HISTORY) {
+        const missingFields = missingSalesHistoryFields(effectiveMapping);
+        if (missingFields.length > 0) {
+          throw new BadRequestException(
+            `Sales history confirmation requires columns for: ${missingFields.join(', ')}`,
+          );
+        }
+      }
+
       const headers = Object.keys(effectiveMapping);
 
       // Fetch existing master data for validation. `category` is populated
@@ -264,11 +303,7 @@ export class ImportsService {
             category = await this.categoryRepository.create({
               name: categoryName,
               description: `Category for ${categoryName}`,
-              image: {
-                public_id: 'default_category',
-                secure_url:
-                  'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-              },
+              image: DEFAULT_PLACEHOLDER_IMAGE,
             } as any);
           }
 
@@ -276,11 +311,7 @@ export class ImportsService {
             `${row.title}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
             { lower: true },
           );
-          const defaultImage = {
-            public_id: 'default_product',
-            secure_url:
-              'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500',
-          };
+          const defaultImage = DEFAULT_PLACEHOLDER_IMAGE;
 
           if (existingProduct) {
             await this.productRepository.update({
@@ -758,6 +789,7 @@ export class ImportsService {
             productId: row.productId,
             date: row.date,
             quantitySold: row.quantitySold,
+            productionQuantity: row.productionQuantity,
             sellingPrice: row.sellingPrice,
             basePrice: row.basePrice,
             source: SalesSourceEnum.CSV_IMPORT,
@@ -789,14 +821,20 @@ export class ImportsService {
             date: getBusinessDateString(r.date),
             productId: r.productId.toString(),
             salesQty: r.quantitySold,
+            productionQty: r.productionQuantity,
           }));
 
           // Only the products this file actually has sales for. Sending the
           // whole catalogue meant one import re-described every product in the
           // restaurant, including ones the file never mentioned.
+          const unitCosts = await this.productCostService.getUnitCosts(
+            restaurantId,
+            products.map((p: any) => p._id),
+          );
           const productsPayload = buildAiProductPayloadsFor(
             products,
             recordsPayload.map((r) => r.productId),
+            unitCosts,
           );
 
           const aiResult = await this.aiIngestService.ingest({
@@ -980,11 +1018,19 @@ export class ImportsService {
       date: getBusinessDateString(new Date(t.date)),
       productId: t.productId.toString(),
       salesQty: t.quantitySold,
+      ...(t.productionQuantity !== undefined && t.productionQuantity !== null
+        ? { productionQty: t.productionQuantity }
+        : {}),
     }));
 
+    const unitCosts = await this.productCostService.getUnitCosts(
+      restaurantId,
+      products.map((p: any) => p._id),
+    );
     const productsPayload = buildAiProductPayloadsFor(
       products,
       recordsPayload.map((r) => r.productId),
+      unitCosts,
     );
 
     const aiResult = await this.aiIngestService.ingest({

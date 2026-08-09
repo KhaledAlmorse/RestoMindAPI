@@ -31,7 +31,7 @@ import {
   User,
   UserType,
 } from 'src/DB/Models';
-import { splitVat } from 'src/Common/Utils';
+import { getBusinessDayRange, splitVat } from 'src/Common/Utils';
 import { DashboardQueryDto } from './dto/dashboard-query.dto';
 import {
   DashboardStatsResponse,
@@ -116,14 +116,12 @@ export class DashboardService {
     };
   }
 
+  /** A bare YYYY-MM-DD is a Cairo calendar date, not a UTC one. */
   private parseDate(dateStr: string, mode: 'start' | 'end'): Date {
     const trimmed = dateStr.trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-      return new Date(
-        mode === 'start'
-          ? `${trimmed}T00:00:00.000Z`
-          : `${trimmed}T23:59:59.999Z`,
-      );
+      const { start, end } = getBusinessDayRange(trimmed);
+      return mode === 'start' ? start : new Date(end.getTime() - 1);
     }
     return new Date(trimmed);
   }
@@ -616,17 +614,16 @@ export class DashboardService {
         ? Number((currentRevenue / currentDeliveredOrdersCount).toFixed(2))
         : 0;
 
-    // Date range filter for order aggregations
+    // Date range filter for order aggregations. Scoped to Delivered, matching
+    // the revenue KPI above — an undelivered order hasn't actually sold anything.
     const dateMatchFilter = {
       createdAt: { $gte: startDate, $lte: endDate },
+      status: 'Delivered',
     };
 
     const topProducts = await this.getTopProducts(dateMatchFilter);
     const topCategories = await this.getTopCategories(dateMatchFilter);
-    const topRestaurants = await this.getTopRestaurants({
-      createdAt: { $gte: startDate, $lte: endDate },
-      status: 'Delivered',
-    });
+    const topRestaurants = await this.getTopRestaurants(dateMatchFilter);
     const fulfillmentMethods =
       await this.getFulfillmentMethods(dateMatchFilter);
 
@@ -805,10 +802,12 @@ export class DashboardService {
         ? Number((currentRevenue / currentDeliveredOrdersCount).toFixed(2))
         : 0;
 
-    // Date range & restaurant filter for manager order aggregations
+    // Date range & restaurant filter for manager order aggregations. Scoped to
+    // Delivered, matching the revenue KPI above.
     const managerDateMatchFilter = {
       restaurantId: restaurantObjId,
       createdAt: { $gte: startDate, $lte: endDate },
+      status: 'Delivered',
     };
 
     const topProducts = await this.getTopProducts(managerDateMatchFilter);

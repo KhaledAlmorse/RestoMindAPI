@@ -3,6 +3,7 @@ import { WeeklyPredictionController } from './weekly-prediction.controller';
 import { WeeklyPredictionService } from './weekly-prediction.service';
 import { SupplierAutoDraftService } from './services/supplier-auto-draft.service';
 import {
+  DailyProductionPlanRepository,
   IngredientRepository,
   InventoryBatchRepository,
   OfferRepository,
@@ -16,6 +17,7 @@ import {
   UserRepository,
 } from 'src/DB/Repositories';
 import {
+  DailyProductionPlanModel,
   IngredientModel,
   InventoryBatchModel,
   OfferModel,
@@ -42,6 +44,7 @@ import {
     SupplierModel,
     RestaurantModel,
     UserModel,
+    DailyProductionPlanModel,
   ],
   controllers: [WeeklyPredictionController],
   providers: [
@@ -58,6 +61,7 @@ import {
     SupplierRepository,
     RestaurantRepository,
     UserRepository,
+    DailyProductionPlanRepository,
   ],
   exports: [
     WeeklyPredictionService,
