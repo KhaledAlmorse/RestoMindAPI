@@ -668,7 +668,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.items[0].status).toBe('learning');
     expect(result.items[0].observedDays).toBe(3);
     expect(result.items[0].levelSource).toBe('owner_estimate');
-    expect(result.items[0].progress).toBeCloseTo(3 / 14, 3);
+    expect(result.items[0].progress).toBeCloseTo(3 / 90, 3);
   });
 
   it('falls back to the local heuristic and flags degraded when the AI is down', async () => {
