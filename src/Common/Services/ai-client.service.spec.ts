@@ -106,8 +106,8 @@ describe('AiClientService', () => {
     delete process.env.AI_SERVICE_URL;
   });
 
-  it('attaches the shared secret header when configured', async () => {
-    process.env.AI_SHARED_SECRET = 's3cret';
+  it('attaches the API key header when configured', async () => {
+    process.env.AI_API_KEY = 's3cret';
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -117,7 +117,39 @@ describe('AiClientService', () => {
     await service.post('/integration/restomind/predict', {});
 
     const init = (global.fetch as jest.Mock).mock.calls[0][1];
-    expect(init.headers['X-RestoMind-Key']).toBe('s3cret');
-    delete process.env.AI_SHARED_SECRET;
+    expect(init.headers['X-API-Key']).toBe('s3cret');
+    delete process.env.AI_API_KEY;
+  });
+
+  it('classifies a 429 as rate_limited, does NOT retry, and carries Retry-After', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'Retry-After': '42' }),
+      json: async () => ({ error: 'rate_limited' }),
+    }) as any;
+
+    const result = await service.post('/marketing/publish', {}, { retries: 3 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'rate_limited',
+      status: 429,
+      retryAfter: 42,
+    });
+  });
+
+  it('avoids retrying a rate limit even when Retry-After is absent', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      json: async () => ({ error: 'rate_limited' }),
+    }) as any;
+
+    const result = await service.post('/x', {}, { retries: 3 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, kind: 'rate_limited' });
+    expect((result as any).retryAfter).toBeUndefined();
   });
 });

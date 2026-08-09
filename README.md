@@ -244,7 +244,7 @@ CLOUD_FOLDER_NAME=restomind
 
 # AI Forecasting Microservice
 AI_SERVICE_URL=http://127.0.0.1:8200
-AI_SHARED_SECRET=your_ai_microservice_shared_secret
+AI_API_KEY=your_ai_microservice_api_key
 ```
 
 ### Database Seeding
@@ -319,8 +319,18 @@ RestoMind API integrates with an external Python-based AI microservice repositor
 ┌─────────────────┐        HTTP / JSON         ┌──────────────────────────────┐
 │  RestoMind API  │ ────────────────────────>  │   AI Forecasting Service     │
 │   (NestJS)      │ <────────────────────────  │   (Python / FastAPI / ML)    │
-└─────────────────┘  Shared Secret Handshake   └──────────────────────────────┘
+└─────────────────┘    X-API-Key per request   └──────────────────────────────┘
 ```
+
+Every call to the AI service (all routes except `/health`) sends an `X-API-Key`
+header. The key is the **raw** value handed out by the AI service's deployment
+owner (the AI service itself stores only a SHA-256 hash, `API_KEY_HASH`); it is
+read from the `AI_API_KEY` environment variable and must be kept in this
+backend's secrets manager — never committed, never put in a client-reachable
+env var. A 401 means the configured key is missing/unmatched (a config fault to
+alert on, never silently retried); a 429 means the AI service is rate-limiting
+us (log it, respect `Retry-After`, do not tight-loop retry). See
+`docs/02-backend-api-key-integration.md` in the prediction-model repo.
 
 * **Weekly Predictions (`GET /predictions`)**: Pulls ML forecasting data for weekly sales & ingredient usage.
 * **Production Planning (`POST /predictions/production-plan`)**: Uses AI forecast numbers to suggest exact batch quantities to prepare, minimizing daily waste.

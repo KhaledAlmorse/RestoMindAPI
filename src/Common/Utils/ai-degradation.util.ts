@@ -5,18 +5,15 @@ import type { AiCallResult, AiDegradation } from '../Types/ai.types';
 export type AiFailure = Extract<AiCallResult<unknown>, { ok: false }>;
 
 /**
- * Log an AI failure at the level its KIND deserves, and return the descriptor
- * the endpoint must surface to its caller.
- *
- * Every AI caller used to branch on `aiResult.ok` alone and log "AI endpoint
- * unreachable", which meant a 401 from a missing `AI_SHARED_SECRET` — a
- * configuration fault that is never retried — read exactly like an outage.
- * The endpoint still answered HTTP 200 with a full set of silently-degraded
- * fallback rows, so a misconfigured deployment looked healthy.
+ * A failure that actually reached an endpoint's response, carrying the KIND so
+ * the caller can tell "the AI is down" from "we are misconfigured and every
+ * call is being rejected without a retry".
  *
  * `client_error` therefore gets its own wording, naming it as a probable
  * configuration fault and carrying the status, the path and the service's own
- * response body.
+ * response body. `rate_limited` gets its own too: it is NOT a config fault
+ * (a wrong key returns 401, a throttle returns 429), so it must not be logged
+ * as one.
  */
 export function reportAiFailure(
   logger: Logger,
@@ -26,12 +23,21 @@ export function reportAiFailure(
 ): AiDegradation {
   const where = context ? ` (${context})` : '';
 
-  if (failure.kind === 'client_error') {
+  if (failure.kind === 'rate_limited') {
+    logger.error(
+      `[AI RATE LIMITED] AI throttled ${path}${where} with HTTP 429 (NOT retried)${
+        failure.retryAfter ? `, Retry-After: ${failure.retryAfter}s` : ''
+      } — not a config fault, not an outage: the caller is sending too much traffic ` +
+        `or the AI service's limit is set below real usage. Log/alert, back off, and ` +
+        `check for a tight retry loop rather than hammering harder. ` +
+        `Response body: ${safeJson(failure.body)}`,
+    );
+  } else if (failure.kind === 'client_error') {
     logger.error(
       `[AI CONFIG ERROR] AI rejected ${path}${where} with HTTP ${
         failure.status ?? '4xx'
       } and it was NOT retried. This is a request/configuration fault, not an outage — ` +
-        `a 401/403 almost always means AI_SHARED_SECRET is missing or does not match the AI service. ` +
+        `a 401/403 almost always means AI_API_KEY is missing or does not match the AI service. ` +
         `Response body: ${safeJson(failure.body)}`,
     );
   } else {
@@ -45,6 +51,9 @@ export function reportAiFailure(
     kind: failure.kind,
     reason: failure.message,
     ...(failure.status === undefined ? {} : { status: failure.status }),
+    ...(failure.retryAfter === undefined
+      ? {}
+      : { retryAfter: failure.retryAfter }),
   };
 }
 
@@ -58,6 +67,7 @@ export function degradationFields(degradation?: AiDegradation | null): {
   degradedReason?: string;
   degradedKind?: AiDegradation['kind'];
   degradedStatus?: number;
+  retryAfter?: number;
 } {
   if (!degradation) return { degraded: false };
   return {
@@ -67,6 +77,9 @@ export function degradationFields(degradation?: AiDegradation | null): {
     ...(degradation.status === undefined
       ? {}
       : { degradedStatus: degradation.status }),
+    ...(degradation.retryAfter === undefined
+      ? {}
+      : { retryAfter: degradation.retryAfter }),
   };
 }
 
