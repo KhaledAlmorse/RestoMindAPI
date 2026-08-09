@@ -4,27 +4,32 @@
  * The distinction matters: `client_error` means WE sent something wrong (an
  * unknown SKU, a malformed body) and retrying or silently falling back would
  * hide a real bug. `unavailable` means the service could not answer, which is
- * exactly when a fallback is correct.
+ * exactly when a fallback is correct. `rate_limited` means the service
+ * throttled us (HTTP 429) — not our request, not an outage, and never worth a
+ * blind retry.
  */
 export type AiCallResult<T> =
   | { ok: true; data: T }
   | {
       ok: false;
-      kind: 'unavailable' | 'client_error';
+      kind: 'unavailable' | 'client_error' | 'rate_limited';
       status?: number;
       message: string;
       body?: unknown;
+      retryAfter?: number;
     };
 
 /**
  * A failure that actually reached an endpoint's response, carrying the KIND so
  * the caller (and the dashboard) can tell "the AI is down" from "we are
- * misconfigured and every call is being rejected without a retry".
+ * misconfigured and every call is being rejected without a retry" from "we are
+ * being rate-limited".
  */
 export interface AiDegradation {
-  kind: 'unavailable' | 'client_error';
+  kind: 'unavailable' | 'client_error' | 'rate_limited';
   reason: string;
   status?: number;
+  retryAfter?: number;
 }
 
 /**

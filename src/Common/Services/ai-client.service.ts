@@ -24,22 +24,23 @@ export class AiClientService implements OnModuleInit {
 
   /**
    * Boot-time guard for the single most damaging misconfiguration on this
-   * integration: the AI service is started WITH a shared secret and NestJS
-   * without one. Every `/integration/restomind/*` call then returns 401, which
-   * the client classifies as `client_error` and never retries, so forecasting
-   * silently degrades to the naive fallback while every endpoint still answers
-   * HTTP 200.
+   * integration: the AI service is deployed with the API key enforced and
+   * NestJS without one. Every call then returns 401, which the client classifies
+   * as `client_error` and never retries, so forecasting silently degrades to
+   * the naive fallback while every endpoint still answers HTTP 200.
    *
-   * Deliberately a warning, not a throw: an unsecured local dev setup (no
-   * secret on either side) is legitimate and must still boot.
+   * Deliberately a warning, not a throw: an unsecured local dev setup (no key
+   * configured on either side) is legitimate and must still boot.
    */
   onModuleInit(): void {
-    if (!process.env.AI_SHARED_SECRET) {
+    if (!process.env.AI_API_KEY) {
       this.logger.warn(
-        `AI_SHARED_SECRET is not set. Requests to ${this.baseUrl} will be sent WITHOUT the ` +
-          `X-RestoMind-Key header — if that AI service enforces a shared secret, every call ` +
-          `will fail with HTTP 401, will NOT be retried, and every prediction will silently ` +
-          `fall back. This is expected only for an unsecured local development AI service.`,
+        `AI_API_KEY is not set. Requests to ${this.baseUrl} will be sent WITHOUT the ` +
+          `X-API-Key header — if that AI service enforces its API key, every call will fail ` +
+          `with HTTP 401, will NOT be retried, and every prediction will silently fall back. ` +
+          `This is expected only for an unsecured local development AI service. ` +
+          `The raw key is handed out by the AI service's deployment owner (see ` +
+          `docs/02-backend-api-key-integration.md).`,
       );
     }
   }
@@ -92,8 +93,8 @@ export class AiClientService implements OnModuleInit {
           method,
           headers: {
             'Content-Type': 'application/json',
-            ...(process.env.AI_SHARED_SECRET
-              ? { 'X-RestoMind-Key': process.env.AI_SHARED_SECRET }
+            ...(process.env.AI_API_KEY
+              ? { 'X-API-Key': process.env.AI_API_KEY }
               : {}),
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -111,6 +112,30 @@ export class AiClientService implements OnModuleInit {
         // A 4xx is our mistake. Retrying cannot fix it and falling back would
         // hide it — surface it immediately, with the service's own hint.
         if (response.status >= 400 && response.status < 500) {
+          // A 429 is not a config fault — the AI service throttled us. Never
+          // blind-retry it (docs 02 §2.3a): surface it as its own kind so
+          // logging/alerts don't blame a wrong key, and carry Retry-After.
+          if (response.status === 429) {
+            const retryAfterRaw = response.headers.get('retry-after');
+            const retryAfter = retryAfterRaw
+              ? Number(retryAfterRaw)
+              : undefined;
+            this.logger.warn(
+              `AI ${method} ${path} rate-limited with HTTP 429${
+                retryAfter ? ` (Retry-After: ${retryAfter}s)` : ''
+              } — NOT retried: ${JSON.stringify(parsed)}`,
+            );
+            return {
+              ok: false,
+              kind: 'rate_limited',
+              status: response.status,
+              message:
+                'The AI service is rate-limiting this caller — wait and back off before retrying',
+              body: parsed,
+              ...(retryAfter === undefined ? {} : { retryAfter }),
+            };
+          }
+
           this.logger.warn(
             `AI ${method} ${path} rejected with HTTP ${response.status}: ${JSON.stringify(parsed)}`,
           );

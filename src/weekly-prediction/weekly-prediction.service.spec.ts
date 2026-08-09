@@ -668,7 +668,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.items[0].status).toBe('learning');
     expect(result.items[0].observedDays).toBe(3);
     expect(result.items[0].levelSource).toBe('owner_estimate');
-    expect(result.items[0].progress).toBeCloseTo(3 / 14, 3);
+    expect(result.items[0].progress).toBeCloseTo(3 / 90, 3);
   });
 
   it('falls back to the local heuristic and flags degraded when the AI is down', async () => {
@@ -1080,7 +1080,7 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     const fetchMock = jest.fn().mockResolvedValue({
       ok: false,
       status: 401,
-      json: async () => ({ detail: 'Invalid X-RestoMind-Key' }),
+      json: async () => ({ detail: 'Missing or invalid X-API-Key' }),
     });
     global.fetch = fetchMock as any;
 
@@ -1095,8 +1095,8 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
     expect(result.degraded).toBe(true);
     expect(result.degradedKind).toBe('client_error');
     expect(result.degradedStatus).toBe(401);
-    expect(result.degradedReason).toBe('Invalid X-RestoMind-Key');
-    // A 4xx is never retried: retrying cannot fix a bad shared secret.
+    expect(result.degradedReason).toBe('Missing or invalid X-API-Key');
+    // A 4xx is never retried: retrying cannot fix a bad API key.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1270,8 +1270,8 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
               ok: false,
               kind: 'client_error',
               status: 401,
-              message: 'Invalid X-RestoMind-Key',
-              body: { detail: 'Invalid X-RestoMind-Key' },
+              message: 'Missing or invalid X-API-Key',
+              body: { detail: 'Missing or invalid X-API-Key' },
             }
           : {
               ok: false,
