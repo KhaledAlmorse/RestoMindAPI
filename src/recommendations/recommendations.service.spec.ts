@@ -30,6 +30,7 @@ import {
 } from 'src/DB/Repositories';
 import { RecommendationsService } from './recommendations.service';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 import { getBusinessDayRange } from 'src/Common/Utils/date.util';
 
 describe('RecommendationsService', () => {
@@ -48,6 +49,7 @@ describe('RecommendationsService', () => {
   let mockRecipeRepo: any;
   let mockPredictionRepo: any;
   let mockDailyProductionPlanRepo: any;
+  let mockProductCostService: any;
   let planFor: (productId: Types.ObjectId, recommendedQty: number) => void;
 
   const mockUserId = new Types.ObjectId().toString();
@@ -162,6 +164,11 @@ describe('RecommendationsService', () => {
       findOne: jest.fn().mockResolvedValue(null),
     };
 
+    mockProductCostService = {
+      getUnitCost: jest.fn().mockResolvedValue(null),
+      getUnitCosts: jest.fn().mockResolvedValue(new Map()),
+    };
+
     // A product is only scanned when there is a ready-to-sell source for it:
     // today's production plan, else this week's prediction. `planFor` is the
     // shorthand the no-prediction cases use.
@@ -192,6 +199,7 @@ describe('RecommendationsService', () => {
           provide: DailyProductionPlanRepository,
           useValue: mockDailyProductionPlanRepo,
         },
+        { provide: ProductCostService, useValue: mockProductCostService },
       ],
     }).compile();
 

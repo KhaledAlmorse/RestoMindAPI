@@ -131,6 +131,15 @@ export class Restaurant {
     bankName?: string;
   };
 
+  /**
+   * Cairo wall-clock hour (24h) the branch normally closes. Feeds the surplus
+   * scan's `closeHour` — previously a hardcoded `22` at the call site with no
+   * way to ever become real. Defaults to 22 so existing behaviour is
+   * unchanged until an owner sets their actual closing time.
+   */
+  @Prop({ type: Number, default: 22, min: 0, max: 23 })
+  closingHour!: number;
+
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 

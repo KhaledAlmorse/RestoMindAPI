@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ImportsService } from './imports.service';
 import { CsvParsingService } from './services/csv-parsing.service';
 import { AiIngestService } from './services/ai-ingest.service';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 import {
   CategoryRepository,
   ImportJobRepository,
@@ -29,6 +30,7 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
   let mockUserRepo: any;
   let mockRestaurantRepo: any;
   let mockAiIngestService: any;
+  let mockProductCostService: any;
 
   let mockCategoryRepo: any;
 
@@ -87,6 +89,10 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
     mockAiIngestService = {
       ingest: jest.fn(),
     };
+    mockProductCostService = {
+      getUnitCost: jest.fn().mockResolvedValue(null),
+      getUnitCosts: jest.fn().mockResolvedValue(new Map()),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -109,6 +115,7 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
         { provide: RestaurantRepository, useValue: mockRestaurantRepo },
         { provide: CategoryRepository, useValue: mockCategoryRepo },
         { provide: AiIngestService, useValue: mockAiIngestService },
+        { provide: ProductCostService, useValue: mockProductCostService },
       ],
     }).compile();
 
@@ -133,11 +140,12 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
       _id: jobId,
       restaurantId: mockRestaurantId,
       importType: ImportTypeEnum.SALES_HISTORY,
-      rawRows: [['2026-07-01', 'Croissant', '10', '18']],
+      rawRows: [['2026-07-01', 'Croissant', '10', '12', '18']],
       columnMapping: {
         Date: 'date',
         Product: 'productId',
         Quantity: 'quantitySold',
+        Production: 'productionQuantity',
         Price: 'sellingPrice',
       },
       status: ImportJobStatusEnum.PROCESSING,
@@ -411,11 +419,12 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
       _id: job5Id,
       restaurantId: mockRestaurantId,
       importType: ImportTypeEnum.SALES_HISTORY,
-      rawRows: [['2026-07-01', 'Croissant', '10', '18']],
+      rawRows: [['2026-07-01', 'Croissant', '10', '12', '18']],
       columnMapping: {
         Date: 'date',
         Product: 'productId',
         Quantity: 'quantitySold',
+        Production: 'productionQuantity',
         Price: 'sellingPrice',
       },
       status: ImportJobStatusEnum.PROCESSING,
@@ -437,7 +446,16 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
     const res5 = await service.confirmImport(job5Id.toString(), {}, mockUserId);
     expect(res5.data.status).toBe(ImportJobStatusEnum.COMPLETED);
     expect(res5.data.importedCount).toBe(1);
-    expect(mockAiIngestService.ingest).toHaveBeenCalled(); // AI Ingest cleanly triggered!
+    expect(mockAiIngestService.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        records: [
+          expect.objectContaining({
+            salesQty: 10,
+            productionQty: 12,
+          }),
+        ],
+      }),
+    );
   });
 
   describe('Import Failure Reason & Error Handling Verification', () => {
@@ -499,11 +517,12 @@ describe('ImportsService - Dependency & Error Handling Verification', () => {
         _id: jobId,
         restaurantId: mockRestaurantId,
         importType: ImportTypeEnum.SALES_HISTORY,
-        rawRows: [['2026-07-01', 'Burger', '5', '10']],
+        rawRows: [['2026-07-01', 'Burger', '5', '8', '10']],
         columnMapping: {
           Date: 'date',
           Product: 'productId',
           Qty: 'quantitySold',
+          Production: 'productionQuantity',
           Price: 'sellingPrice',
         },
         status: ImportJobStatusEnum.PROCESSING,

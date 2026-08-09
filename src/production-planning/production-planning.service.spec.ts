@@ -13,6 +13,7 @@ import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { ProductionPlanningService } from './production-planning.service';
 import { AiClientService } from '../Common/Services/ai-client.service';
+import { ProductCostService } from '../Common/Services/product-cost.service';
 
 describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', () => {
   let service: ProductionPlanningService;
@@ -23,6 +24,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
   let mockRestaurantRepo: any;
   let mockAiIngestService: any;
   let mockDailyProductionPlanModel: any;
+  let mockProductCostService: any;
 
   const mockUserId = new Types.ObjectId().toString();
   const mockRestaurantId = new Types.ObjectId();
@@ -60,6 +62,10 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         exec: jest.fn().mockResolvedValue(true),
       }),
     };
+    mockProductCostService = {
+      getUnitCost: jest.fn().mockResolvedValue(null),
+      getUnitCosts: jest.fn().mockResolvedValue(new Map()),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -71,6 +77,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
         { provide: UserRepository, useValue: mockUserRepo },
         { provide: RestaurantRepository, useValue: mockRestaurantRepo },
         { provide: AiIngestService, useValue: mockAiIngestService },
+        { provide: ProductCostService, useValue: mockProductCostService },
         {
           provide: getModelToken(DailyProductionPlan.name),
           useValue: mockDailyProductionPlanModel,
@@ -611,15 +618,17 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
           salesQty: 50,
         },
       ],
-      // price and freshnessWindow ride along on every AI product payload: they
-      // are what the service computes the newsvendor service level from. This
-      // path used to omit both.
+      // price, unitCost and freshnessWindow ride along on every AI product
+      // payload: they are what the service computes the newsvendor service
+      // level from. This path used to omit all three. unitCost is null here
+      // because ProductCostService found no priced recipe for this product.
       products: [
         {
           productId: prodId.toString(),
           title: 'Baklava',
           category: 'Dessert',
           price: 0,
+          unitCost: null,
           freshnessWindow: null,
         },
       ],
