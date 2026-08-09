@@ -22,6 +22,7 @@ import {
   isValidDateString,
 } from 'src/Common/Utils/date.util';
 import { resolveAvgDailySales } from 'src/Common/Utils/sales-estimate.util';
+import { resolveCategoryName } from 'src/Common/Utils/ai-product.util';
 import {
   degradationFields,
   reportAiFailure,
@@ -40,8 +41,13 @@ import { AiClientService } from 'src/Common/Services/ai-client.service';
 
 export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
 
-/** Mirrors MIN_DAYS_FOR_LEARNED in prediction-model/app/integration/registry.py. */
-export const MIN_DAYS_FOR_LEARNED = 14;
+/**
+ * Only used when the AI service is unreachable and cannot report its own
+ * threshold. The live value comes from `minDaysForLearned` on the status
+ * response — the model owns that number, and mirroring it here meant a tuning
+ * change on their side silently made our progress bar wrong.
+ */
+export const FALLBACK_MIN_DAYS_FOR_LEARNED = 14;
 
 /**
  * Products recalculated in parallel. Sequential processing meant 50 products
@@ -236,12 +242,7 @@ export class WeeklyPredictionService {
       targetWeekStr,
     );
 
-    const categoryName =
-      product.category &&
-      typeof product.category === 'object' &&
-      (product.category as any).name
-        ? (product.category as any).name
-        : 'General';
+    const categoryName = resolveCategoryName(product.category);
 
     // 3. Call the AI microservice through the shared client.
     const aiResult = await this.aiClient.post<any>(
@@ -665,7 +666,16 @@ export class WeeklyPredictionService {
 
     const byProductId = new Map<string, any>();
     let degradation: AiDegradation | null = null;
+    // The model reports the threshold its own routing uses. Only fall back to
+    // our copy when it did not answer, or is an older build that predates the
+    // field — a stale local constant is exactly what made this endpoint report
+    // the wrong progress before.
+    let minDaysForLearned = FALLBACK_MIN_DAYS_FOR_LEARNED;
     if (aiStatus.ok) {
+      const reported = Number(aiStatus.data?.minDaysForLearned);
+      if (Number.isFinite(reported) && reported > 0) {
+        minDaysForLearned = reported;
+      }
       for (const item of aiStatus.data?.items || []) {
         byProductId.set(String(item.productId), item);
       }
@@ -718,7 +728,7 @@ export class WeeklyPredictionService {
         learnedLevel: modelItem?.learnedLevel ?? null,
         status,
         progress:
-          Math.round(Math.min(1, observedDays / MIN_DAYS_FOR_LEARNED) * 1000) /
+          Math.round(Math.min(1, observedDays / minDaysForLearned) * 1000) /
           1000,
         latestModelVersion: latest ? latest.modelVersionId : 'none',
         latestPredictionSource: latest ? latest.source : 'none',
@@ -730,6 +740,9 @@ export class WeeklyPredictionService {
       restaurantId,
       totalProducts: items.length,
       trainedCount: items.filter((i) => i.status === 'trained').length,
+      // Surfaced so the dashboard can label the progress bar ("12 / 14 days")
+      // without hardcoding a number the model is free to change.
+      minDaysForLearned,
       ...degradationFields(degradation),
       items,
     };
@@ -996,10 +1009,7 @@ export class WeeklyPredictionService {
     const productPayload = products.map((p: any) => ({
       productId: p._id.toString(),
       title: p.title || 'Product',
-      category:
-        p.category && typeof p.category === 'object' && p.category.name
-          ? p.category.name
-          : null,
+      category: resolveCategoryName(p.category),
       price: p.price || 0,
       freshnessWindow: p.freshnessWindow ?? null,
     }));

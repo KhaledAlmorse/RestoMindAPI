@@ -65,6 +65,79 @@ export function addDaysToDateString(dateStr: string, days: number): string {
 }
 
 /**
+ * A calendar date pinned to UTC noon. Noon, not midnight, so no timezone in
+ * normal use — and no DST shift — can push the instant onto an adjacent day:
+ * `getBusinessDateString()` on the result always returns `y-m-d` back.
+ */
+function anchorAtUtcNoon(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
+/**
+ * Parse a user-supplied date (CSV cell, query param) into a stable calendar
+ * date anchored at UTC noon.
+ *
+ * `new Date(raw)` alone is not safe here: it interprets `2026-01-15` as UTC
+ * midnight but `01/15/2026` as *local* midnight. On a Cairo-hosted server the
+ * second form lands on `2026-01-14T22:00Z`, so every downstream
+ * `toISOString()` — and every Cairo day-range query — reads it as the previous
+ * day. Anchoring at noon removes that whole class of off-by-one.
+ *
+ * A bare calendar date is treated as a calendar date. A full timestamp is
+ * treated as an instant and resolved to the Cairo day it actually falls in.
+ *
+ * Returns `null` when the value cannot be parsed, so callers can raise a
+ * row-level validation error instead of storing an Invalid Date.
+ */
+export function parseBusinessDate(raw: unknown): Date | null {
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime())) return null;
+    const p = getBusinessParts(raw);
+    return anchorAtUtcNoon(p.year, p.month, p.day);
+  }
+
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+
+  // Date-only, no time component: a calendar date, not an instant.
+  const dateOnly = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value);
+  if (dateOnly) {
+    const [, y, m, d] = dateOnly.map(Number);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const anchored = anchorAtUtcNoon(y, m, d);
+    // Rejects impossible dates that Date.UTC would silently roll over
+    // (2026-02-30 -> March 2nd).
+    if (
+      anchored.getUTCFullYear() !== y ||
+      anchored.getUTCMonth() !== m - 1 ||
+      anchored.getUTCDate() !== d
+    ) {
+      return null;
+    }
+    return anchored;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  // Anything else with a time component is an instant: resolve it to the
+  // Cairo day it belongs to, then anchor.
+  if (/[T\s]\d{1,2}:/.test(value)) {
+    const p = getBusinessParts(parsed);
+    return anchorAtUtcNoon(p.year, p.month, p.day);
+  }
+
+  // Locale date form (`01/15/2026`, `Jan 15 2026`) — parsed as local midnight.
+  // Read back the components the parser itself assigned, so the calendar date
+  // the user wrote is preserved regardless of the server's timezone.
+  return anchorAtUtcNoon(
+    parsed.getFullYear(),
+    parsed.getMonth() + 1,
+    parsed.getDate(),
+  );
+}
+
+/**
  * Offset (in ms) such that `local time = instant + offset`, for the given
  * timezone at the given instant. Computed by re-formatting the instant in
  * that timezone and diffing against its raw UTC value, rather than assuming

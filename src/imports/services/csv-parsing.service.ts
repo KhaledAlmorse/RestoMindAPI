@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { ImportTypeEnum, IngredientUnitEnum } from 'src/Common/Types';
+import { parseBusinessDate } from 'src/Common/Utils/date.util';
 
 export interface CsvParseResult {
   headers: string[];
@@ -504,8 +505,13 @@ export class CsvParsingService {
           });
           hasError = true;
         } else {
-          const parsedDate = new Date(rawDate);
-          if (isNaN(parsedDate.getTime())) {
+          // Cairo-anchored, not `new Date(rawDate)`: that reads `2026-01-15` as
+          // UTC midnight but `01/15/2026` as local midnight, so on a Cairo
+          // server the second form is stored as the previous day — which then
+          // reaches the AI registry under the wrong date key and lands in the
+          // wrong week at reconciliation time.
+          const parsedDate = parseBusinessDate(rawDate);
+          if (!parsedDate) {
             errors.push({
               row: displayRow,
               column: 'date',
