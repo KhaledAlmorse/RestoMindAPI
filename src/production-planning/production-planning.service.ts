@@ -32,6 +32,7 @@ import { RestaurantRepository } from '../DB/Repositories/restaurant.repository';
 import { AiIngestService } from '../imports/services/ai-ingest.service';
 import { RecordActualsDto } from './dto/record-actuals.dto';
 import { AiClientService } from '../Common/Services/ai-client.service';
+import { ProductCostService } from '../Common/Services/product-cost.service';
 import {
   buildAiProductPayload,
   buildAiProductPayloadsFor,
@@ -62,6 +63,7 @@ export class ProductionPlanningService {
     private readonly userRepository: UserRepository,
     private readonly restaurantRepository: RestaurantRepository,
     private readonly aiIngestService: AiIngestService,
+    private readonly productCostService: ProductCostService,
     @InjectModel(DailyProductionPlan.name)
     private readonly dailyProductionPlanModel: Model<DailyProductionPlanType>,
   ) {}
@@ -320,6 +322,15 @@ export class ProductionPlanningService {
       }
     }
 
+    // Real unit_cost lets the AI service pick a profit-optimal recommendedQty
+    // within its uncertainty band instead of always the raw point estimate —
+    // see the model's `_newsvendor_quantile`. `null` (unknown recipe/cost)
+    // keeps its old behaviour exactly.
+    const unitCosts = await this.productCostService.getUnitCosts(
+      restaurantId,
+      products.map((p: any) => p._id),
+    );
+
     const preparedProducts = products.map((prod: any) => {
       const pIdStr = prod._id.toString();
       const totalSold = salesMap.get(pIdStr) || 0;
@@ -346,7 +357,7 @@ export class ProductionPlanningService {
       // has to know the figure already carries a window's worth of calendar —
       // otherwise a lookback sitting inside Ramadan gets Ramadan applied twice.
       return {
-        ...buildAiProductPayload(prod),
+        ...buildAiProductPayload(prod, unitCosts.get(pIdStr) ?? null),
         avgDailySales: estimate.value,
         ...(estimate.window ? { avgDailySalesWindow: estimate.window } : {}),
       };
@@ -551,14 +562,40 @@ export class ProductionPlanningService {
           continue;
         }
 
-        const records = sales.map((s: any) => ({
+        // Yesterday's own production plan, if one was generated -- gives real
+        // productionQty per product instead of leaving it unsent every night.
+        const yesterdayPlan = await this.dailyProductionPlanRepository.findOne(
+          { filters: { restaurantId: restId, date: yesterdayStr, isDeleted: false } },
+        );
+        const productionByProductId = new Map<string, number>();
+        for (const item of yesterdayPlan?.items || []) {
+          if (item.actualProducedQty == null) continue;
+          productionByProductId.set(
+            item.productId.toString(),
+            item.actualProducedQty,
+          );
+        }
+
+        const records = sales.map((s: any) => {
           // Derive the key from the Cairo day the sale actually happened on —
           // `toISOString().split('T')[0]` would attribute a sale near Cairo
           // midnight to the previous UTC day.
-          date: s.date ? getBusinessDateString(new Date(s.date)) : yesterdayStr,
-          productId: s.productId ? s.productId.toString() : '',
-          salesQty: s.quantitySold || 0,
-        }));
+          const date = s.date
+            ? getBusinessDateString(new Date(s.date))
+            : yesterdayStr;
+          const productId = s.productId ? s.productId.toString() : '';
+          const productionQty =
+            s.productionQuantity ?? productionByProductId.get(productId);
+          return {
+            date,
+            productId,
+            salesQty: s.quantitySold || 0,
+            ...(productionQty !== undefined ? { productionQty } : {}),
+            // Real, already-recorded stockout signal -- see backfillAiHistory
+            // in weekly-prediction.service.ts for the same reasoning.
+            ...(s.stockoutMinutes > 0 ? { closingStock: 0 } : {}),
+          };
+        });
 
         // Sending `products: []` made the registry auto-register each product
         // with title=productId and category=None, so every product resolved to
@@ -568,6 +605,10 @@ export class ProductionPlanningService {
             filters: { restaurantId: restId, isDeleted: false },
             populationArray: [{ path: 'category' }],
           })) || [];
+        const unitCosts = await this.productCostService.getUnitCosts(
+          restId,
+          products.map((p: any) => p._id),
+        );
 
         await this.aiIngestService.ingest({
           restaurantId: restId.toString(),
@@ -575,6 +616,7 @@ export class ProductionPlanningService {
           products: buildAiProductPayloadsFor(
             products,
             records.map((r) => r.productId),
+            unitCosts,
           ),
         });
       } catch (err: any) {

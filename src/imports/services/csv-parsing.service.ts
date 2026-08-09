@@ -191,6 +191,18 @@ export class CsvParsingService {
           mapping[header] = 'quantitySold';
         } else if (
           [
+            'productionqty',
+            'productionquantity',
+            'producedqty',
+            'producedquantity',
+            'production',
+            'produced',
+            'actualproducedqty',
+          ].includes(lower)
+        ) {
+          mapping[header] = 'productionQuantity';
+        } else if (
+          [
             'sellingprice',
             'price',
             'unitprice',
@@ -567,6 +579,25 @@ export class CsvParsingService {
           hasError = true;
         } else {
           mappedRow.quantitySold = qtyNum;
+        }
+
+        // Production Quantity validation (Mandatory)
+        const rawProdQty = mappedRow.productionQuantity;
+        const prodQtyNum = Number(rawProdQty);
+        if (
+          rawProdQty === undefined ||
+          rawProdQty === '' ||
+          isNaN(prodQtyNum) ||
+          prodQtyNum < 0
+        ) {
+          errors.push({
+            row: displayRow,
+            column: 'productionQuantity',
+            message: `productionQuantity is mandatory and must be a non-negative number (got '${rawProdQty}')`,
+          });
+          hasError = true;
+        } else {
+          mappedRow.productionQuantity = prodQtyNum;
         }
 
         // Selling Price validation

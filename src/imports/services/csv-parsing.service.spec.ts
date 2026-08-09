@@ -204,17 +204,25 @@ describe('CsvParsingService', () => {
     });
 
     it('should validate sales_history rows when products exist', () => {
-      const headers = ['Date', 'Product', 'Quantity', 'Price'];
+      const headers = [
+        'Date',
+        'Product',
+        'Quantity',
+        'Production Qty',
+        'Price',
+      ];
       const mapping = {
         Date: 'date',
         Product: 'productId',
         Quantity: 'quantitySold',
+        'Production Qty': 'productionQuantity',
         Price: 'sellingPrice',
       };
       const rawRows = [
-        ['2026-07-01', 'Croissant', '10', '18'],
-        ['2026-07-02', 'Croissant', '0', '18'], // zero is valid
-        ['2026-07-03', 'Croissant', '-5', '18'], // negative is invalid
+        ['2026-07-01', 'Croissant', '10', '12', '18'],
+        ['2026-07-02', 'Croissant', '0', '5', '18'], // zero is valid
+        ['2026-07-03', 'Croissant', '5', '', '18'], // missing productionQuantity is invalid
+        ['2026-07-04', 'Croissant', '-5', '10', '18'], // negative quantity is invalid
       ];
 
       const result = service.mapAndValidateRows(
@@ -227,9 +235,13 @@ describe('CsvParsingService', () => {
 
       expect(result.validRows.length).toBe(2);
       expect(result.validRows[0].quantitySold).toBe(10);
+      expect(result.validRows[0].productionQuantity).toBe(12);
       expect(result.validRows[1].quantitySold).toBe(0);
-      expect(result.errors.length).toBe(1);
-      expect(result.errors[0].column).toBe('quantitySold');
+      expect(result.validRows[1].productionQuantity).toBe(5);
+      expect(result.errors.length).toBe(2);
+      expect(
+        result.errors.some((e) => e.column === 'productionQuantity'),
+      ).toBe(true);
     });
   });
 });

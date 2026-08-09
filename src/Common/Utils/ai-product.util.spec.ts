@@ -63,8 +63,15 @@ describe('buildAiProductPayload', () => {
       title: 'Butter Croissant',
       category: 'Pastries',
       price: 18,
+      unitCost: null,
       freshnessWindow: 2,
     });
+  });
+
+  it('carries a real unitCost when the caller supplies one', () => {
+    // unitCost has no field on Product to read -- it's always passed in
+    // explicitly (see ProductCostService), never guessed at here.
+    expect(buildAiProductPayload(product, 9.5).unitCost).toBe(9.5);
   });
 
   it('reports an unknown shelf life as null rather than inventing one', () => {

@@ -16,6 +16,9 @@ export class SalesTransaction {
   @Prop({ type: Number, required: true, min: 0 })
   quantitySold!: number;
 
+  @Prop({ type: Number, required: true, min: 0, default: 0 })
+  productionQuantity!: number;
+
   @Prop({ type: Number, required: true, min: 0 })
   basePrice!: number;
 

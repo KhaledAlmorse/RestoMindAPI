@@ -33,6 +33,7 @@ import {
 } from 'src/Common/Types';
 import { getBusinessDateString } from 'src/Common/Utils/date.util';
 import { buildAiProductPayloadsFor } from 'src/Common/Utils/ai-product.util';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 
 @Injectable()
 export class ImportsService {
@@ -51,6 +52,7 @@ export class ImportsService {
     private readonly categoryRepository: CategoryRepository,
     private readonly csvParsingService: CsvParsingService,
     private readonly aiIngestService: AiIngestService,
+    private readonly productCostService: ProductCostService,
   ) {}
 
   private validateObjectId(id: string) {
@@ -98,6 +100,8 @@ export class ImportsService {
 
     const restaurantId = await this.getManagerRestaurantId(userId);
     const { headers, rawRows } = this.csvParsingService.parseCsv(file.buffer);
+    console.log('Parsed CSV Headers:', headers);
+    console.log('Parsed CSV Rows:', rawRows);
 
     if (rawRows.length === 0) {
       throw new BadRequestException('CSV file contains no data rows');
@@ -758,6 +762,7 @@ export class ImportsService {
             productId: row.productId,
             date: row.date,
             quantitySold: row.quantitySold,
+            productionQuantity: row.productionQuantity,
             sellingPrice: row.sellingPrice,
             basePrice: row.basePrice,
             source: SalesSourceEnum.CSV_IMPORT,
@@ -789,14 +794,20 @@ export class ImportsService {
             date: getBusinessDateString(r.date),
             productId: r.productId.toString(),
             salesQty: r.quantitySold,
+            productionQty: r.productionQuantity,
           }));
 
           // Only the products this file actually has sales for. Sending the
           // whole catalogue meant one import re-described every product in the
           // restaurant, including ones the file never mentioned.
+          const unitCosts = await this.productCostService.getUnitCosts(
+            restaurantId,
+            products.map((p: any) => p._id),
+          );
           const productsPayload = buildAiProductPayloadsFor(
             products,
             recordsPayload.map((r) => r.productId),
+            unitCosts,
           );
 
           const aiResult = await this.aiIngestService.ingest({
@@ -980,11 +991,19 @@ export class ImportsService {
       date: getBusinessDateString(new Date(t.date)),
       productId: t.productId.toString(),
       salesQty: t.quantitySold,
+      ...(t.productionQuantity !== undefined && t.productionQuantity !== null
+        ? { productionQty: t.productionQuantity }
+        : {}),
     }));
 
+    const unitCosts = await this.productCostService.getUnitCosts(
+      restaurantId,
+      products.map((p: any) => p._id),
+    );
     const productsPayload = buildAiProductPayloadsFor(
       products,
       recordsPayload.map((r) => r.productId),
+      unitCosts,
     );
 
     const aiResult = await this.aiIngestService.ingest({

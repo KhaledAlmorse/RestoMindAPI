@@ -9,9 +9,11 @@ import { SalesTransactionRepository } from 'src/DB/Repositories/sales-transactio
 import { OfferRepository } from 'src/DB/Repositories/offer.repository';
 import { UserRepository } from 'src/DB/Repositories/user.repository';
 import { RestaurantRepository } from 'src/DB/Repositories/restaurant.repository';
+import { DailyProductionPlanRepository } from 'src/DB/Repositories/daily-production-plan.repository';
 import { Prediction } from 'src/DB/Models/prediction.model';
 import { ConfidenceLevelEnum, PredictionSourceEnum } from 'src/Common/Types';
 import { AiClientService } from 'src/Common/Services/ai-client.service';
+import { ProductCostService } from 'src/Common/Services/product-cost.service';
 import {
   addDaysToDateString,
   getBusinessDateString,
@@ -29,6 +31,8 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
   let mockRestaurantRepo: any;
   let mockSupplierAutoDraftService: any;
   let mockPredictionModel: any;
+  let mockDailyProductionPlanRepo: any;
+  let mockProductCostService: any;
 
   const mockRestaurantId = new Types.ObjectId();
   const mockProductId = new Types.ObjectId();
@@ -68,6 +72,14 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
       findOne: jest.fn(),
       create: jest.fn(),
     };
+    mockDailyProductionPlanRepo = {
+      findOne: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    };
+    mockProductCostService = {
+      getUnitCost: jest.fn().mockResolvedValue(null),
+      getUnitCosts: jest.fn().mockResolvedValue(new Map()),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -80,9 +92,14 @@ describe('WeeklyPredictionService - Phase 6 AI Integration & Fallback Tests', ()
         { provide: UserRepository, useValue: mockUserRepo },
         { provide: RestaurantRepository, useValue: mockRestaurantRepo },
         {
+          provide: DailyProductionPlanRepository,
+          useValue: mockDailyProductionPlanRepo,
+        },
+        {
           provide: SupplierAutoDraftService,
           useValue: mockSupplierAutoDraftService,
         },
+        { provide: ProductCostService, useValue: mockProductCostService },
         {
           provide: getModelToken(Prediction.name),
           useValue: mockPredictionModel,

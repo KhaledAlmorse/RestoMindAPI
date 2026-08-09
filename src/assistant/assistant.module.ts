@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { VectorStoreModule } from 'src/vector-store/vector-store.module';
 import { AIProviderModule } from 'src/ai-provider/ai-provider.module';
+import { RecommendationsModule } from 'src/recommendations/recommendations.module';
 import {
   AssistantActionLogModel,
   RecommendationActionModel,
@@ -62,6 +63,7 @@ import { ProductionActionTool } from './tools/action-tools/production-action.too
   imports: [
     VectorStoreModule,
     AIProviderModule,
+    RecommendationsModule,
     AssistantActionLogModel,
     RecommendationActionModel,
     AssistantChatHistoryModel,
