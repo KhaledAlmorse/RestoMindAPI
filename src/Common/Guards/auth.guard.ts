@@ -48,7 +48,15 @@ export class AuthGuard implements CanActivate {
       });
 
       if (isTokenRevoked) {
-        throw new UnauthorizedException('Token has been revoked');
+        const revokedAt = (isTokenRevoked as any).createdAt
+          ? new Date((isTokenRevoked as any).createdAt).getTime()
+          : 0;
+        const isRecentRotation =
+          tokenType === 'refresh' && Date.now() - revokedAt < 60000;
+
+        if (!isRecentRotation) {
+          throw new UnauthorizedException('Token has been revoked');
+        }
       }
 
       const { id } = decoded as { id: string };

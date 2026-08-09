@@ -51,11 +51,14 @@ export class PartnershipApplicationsService {
    * Public partnership application submission.
    */
   async submitApplication(dto: CreatePartnershipApplicationDto) {
-    // Duplicate-pending check
+    // Duplicate-pending check by email or phone
     const existingPending = await this.partnershipApplicationRepository.findOne(
       {
         filters: {
-          email: dto.email.toLowerCase(),
+          $or: [
+            { email: dto.email.toLowerCase() },
+            { phone: dto.phone.trim() },
+          ],
           status: {
             $in: [
               PartnershipApplicationStatusEnum.PENDING,
@@ -69,7 +72,7 @@ export class PartnershipApplicationsService {
 
     if (existingPending) {
       throw new ConflictException(
-        'You already have a pending or under-review partnership application.',
+        'You already have a pending or under-review partnership application with this email or phone number.',
       );
     }
 
@@ -295,14 +298,20 @@ export class PartnershipApplicationsService {
       );
     }
 
-    // Duplicate user email check before transaction
+    // Duplicate user email or phone check before transaction
     const existingUser = await this.userRepository.findOne({
-      filters: { email: application.email.toLowerCase(), isDeleted: false },
+      filters: {
+        $or: [
+          { email: application.email.toLowerCase() },
+          { phone: application.phone },
+        ],
+        isDeleted: false,
+      },
     });
 
     if (existingUser) {
       throw new ConflictException(
-        `A user account with email "${application.email}" already exists. Manual resolution required.`,
+        `A user account with email "${application.email}" or phone "${application.phone}" already exists. Manual resolution required.`,
       );
     }
 
@@ -393,8 +402,10 @@ export class PartnershipApplicationsService {
         <h3>Welcome to RestoMind!</h3>
         <p>Dear ${application.ownerFirstName},</p>
         <p>Your partnership application for <strong>${application.businessName}</strong> has been approved!</p>
-        <p>Please click the link below to set your account password and activate your restaurant manager portal:</p>
-        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p>Please click the button below to set your account password and activate your restaurant manager portal:</p>
+        <p style="margin: 24px 0;">
+          <a href="${setupUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Set Up Account</a>
+        </p>
         <p>This setup link is valid for 72 hours.</p>
         <p>Best regards,<br/>RestoMind Team</p>
       `,
@@ -458,7 +469,9 @@ export class PartnershipApplicationsService {
         <h3>RestoMind Account Setup</h3>
         <p>Dear ${application.ownerFirstName},</p>
         <p>Here is your new setup link to activate your restaurant manager portal for <strong>${application.businessName}</strong>:</p>
-        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p style="margin: 24px 0;">
+          <a href="${setupUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Set Up Account</a>
+        </p>
         <p>This link is valid for 72 hours.</p>
         <p>Best regards,<br/>RestoMind Team</p>
       `,

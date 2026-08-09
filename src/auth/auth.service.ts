@@ -427,19 +427,26 @@ export class AuthService {
     });
 
     if (isTokenRevoked) {
-      throw new UnauthorizedException('Token has been revoked');
+      const revokedAt = (isTokenRevoked as any).createdAt
+        ? new Date((isTokenRevoked as any).createdAt).getTime()
+        : 0;
+      const isRecentRotation = Date.now() - revokedAt < 60000;
+
+      if (!isRecentRotation) {
+        throw new UnauthorizedException('Token has been revoked');
+      }
+    } else {
+      // Revoke OLD Refresh Token (Rotation)
+      const refreshExp = token['exp']
+        ? new Date(token['exp'] * 1000)
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+      await this.revokeTokenRepository.create({
+        tokenId: token['jti'],
+        userId: user._id,
+        expiryTime: refreshExp,
+      });
     }
-
-    // Revoke OLD Refresh Token (Rotation)
-    const refreshExp = token['exp']
-      ? new Date(token['exp'] * 1000)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-    await this.revokeTokenRepository.create({
-      tokenId: token['jti'],
-      userId: user._id,
-      expiryTime: refreshExp,
-    });
 
     const tokenPayload = { id: user._id, email: user.email };
     const accessToken = this.tokenService.generate(tokenPayload, {

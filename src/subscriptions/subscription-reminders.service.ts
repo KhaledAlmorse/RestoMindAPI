@@ -94,7 +94,9 @@ export class SubscriptionRemindersService {
             <p>Your products, offers, history and analytics are all safe — nothing
                is deleted. Choose a plan to keep your dashboard and your live
                offers running.</p>
-            <p><a href="${process.env.FRONTEND_URL}/dashboard/billing">Choose a plan</a></p>
+            <p style="margin: 24px 0;">
+              <a href="${process.env.FRONTEND_URL}/dashboard/billing" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Choose a Plan</a>
+            </p>
           `,
         });
 

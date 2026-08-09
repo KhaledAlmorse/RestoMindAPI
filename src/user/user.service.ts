@@ -125,8 +125,10 @@ export class UserService {
           <h3>Welcome to RestoMind!</h3>
           <p>Dear ${newUser.firstName},</p>
           <p>You have been invited to join RestoMind as a staff member.</p>
-          <p>Please click the link below to set your account password and activate your account:</p>
-          <p><a href="${setupUrl}">${setupUrl}</a></p>
+          <p>Please click the button below to set your account password and activate your account:</p>
+          <p style="margin: 24px 0;">
+            <a href="${setupUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Set Up Account</a>
+          </p>
           <p>This setup link is valid for 72 hours.</p>
           <p>Best regards,<br/>RestoMind Team</p>
         `,
@@ -548,7 +550,9 @@ export class UserService {
         <h3>Welcome to RestoMind!</h3>
         <p>Dear ${user.firstName},</p>
         <p>Here is your new setup link to activate your RestoMind staff account:</p>
-        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p style="margin: 24px 0;">
+          <a href="${setupUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Set Up Account</a>
+        </p>
         <p>This setup link is valid for 72 hours.</p>
         <p>Best regards,<br/>RestoMind Team</p>
       `,
@@ -608,11 +612,12 @@ export class UserService {
       html: `
         <h3>Hello ${user.firstName},</h3>
         <p>Your manager has requested a password reset for your RestoMind staff account.</p>
-        <p>Please click the link below to set your new password:</p>
-        <p><a href="${setupUrl}">${setupUrl}</a></p>
+        <p>Please click the button below to set your new password:</p>
+        <p style="margin: 24px 0;">
+          <a href="${setupUrl}" target="_blank" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Reset Password</a>
+        </p>
         <p>This link is valid for 72 hours.</p>
-        <p>Best regards,<br/>RestoMind Team</p>
-      `,
+        <p>Best regards,<br/>RestoMind Team</p>`,
     });
 
     return { message: 'Password reset link sent to staff email successfully.' };
