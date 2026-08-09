@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { RecommendationRepository, RecommendationActionRepository, ProductRepository } from 'src/DB/Repositories';
 import { RecommendationTypeEnum, RecommendationStatusEnum } from 'src/Common/Types';
 import { Recipe, RecipeType } from 'src/DB/Models';
+import { ActionApprovalToken } from './action-approval-token';
 
 export interface StructuredRecommendation {
   recommendationId?: string;
@@ -13,6 +14,12 @@ export interface StructuredRecommendation {
    * leaves the action row stuck at PENDING forever.
    */
   recommendationActionId?: string;
+  /**
+   * Signed proof of exactly what `actionPayload` was proposed. Approval only
+   * ever executes what this token carries, never client-supplied toolName/
+   * arguments, so approving can't be tricked into running a different action.
+   */
+  approvalToken?: string;
   title: string;
   description: string;
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -175,6 +182,12 @@ export class RecommendationService {
 
     // Persist recommendations & actions to database
     for (const rec of recommendations) {
+      rec.approvalToken = ActionApprovalToken.sign(
+        restaurantId,
+        rec.actionPayload.toolName,
+        rec.actionPayload.arguments,
+      );
+
       try {
         const productId = new Types.ObjectId(
           Types.ObjectId.isValid(rec.actionPayload.arguments.productId)

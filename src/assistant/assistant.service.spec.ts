@@ -343,9 +343,9 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toContain('لا توجد بيانات توقعات متوفرة للفترة القادمة');
-      expect(res).not.toContain('150 طلب');
-      expect(res).not.toContain('89%');
+      expect(res.answer).toContain('لا توجد توقعات متاحة للفترة القادمة');
+      expect(res.answer).not.toContain('150 طلب');
+      expect(res.answer).not.toContain('89%');
     });
 
     it('should return explicit unavailable message when generateExecutiveReport has empty history', async () => {
@@ -365,10 +365,10 @@ describe('Agentic AI & RAG Suite', () => {
         [],
       );
 
-      expect(res).toContain('لا توجد بيانات تقرير تنفيذي متوفرة للفترة الماضية');
-      expect(res).not.toContain('14,250');
-      expect(res).not.toContain('كرواسون بالزبده');
-      expect(res).not.toContain('92%');
+      expect(res.answer).toContain('لا توجد بيانات مسجلة للفترة المطلوبة');
+      expect(res.answer).not.toContain('14,250');
+      expect(res.answer).not.toContain('كرواسون بالزبده');
+      expect(res.answer).not.toContain('92%');
     });
   });
 

@@ -9,6 +9,8 @@ import { RecommendationService, StructuredRecommendation } from './recommendatio
 import { ToolContext } from '../tools/tool-registry.service';
 import { AIProvider } from 'src/ai-provider/ai-provider.interface';
 import { AI_PROVIDER } from 'src/ai-provider/ai-provider.module';
+import { ActionApprovalToken } from './action-approval-token';
+import { redactSecrets } from 'src/Common/Utils/redact-secrets.util';
 
 export interface ChatAssistantResponse {
   sessionId: string;
@@ -154,7 +156,14 @@ export class AssistantService {
 
     const pendingActions = toolResults
       .filter((r) => r.requiresApproval && !r.executed)
-      .map((r) => ({ toolName: r.toolName, arguments: r.arguments, status: 'PENDING_APPROVAL' }));
+      .map((r) => ({
+        toolName: r.toolName,
+        arguments: r.arguments,
+        status: 'PENDING_APPROVAL',
+        // Approval executes only the tool+arguments sealed in this token,
+        // never whatever the client later sends back in the request body.
+        approvalToken: ActionApprovalToken.sign(restaurantId, r.toolName, r.arguments),
+      }));
 
     return {
       sessionId,
@@ -281,8 +290,8 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
     const contextPayload = {
       userQuery: userMessage,
       intent,
-      groundedToolData: `<UNTRUSTED_GROUNDED_DATA>\n${JSON.stringify(toolResults, null, 2)}\n</UNTRUSTED_GROUNDED_DATA>`,
-      recommendationsData: `<UNTRUSTED_RECOMMENDATIONS>\n${JSON.stringify(recommendations, null, 2)}\n</UNTRUSTED_RECOMMENDATIONS>`,
+      groundedToolData: this.wrapUntrusted('UNTRUSTED_GROUNDED_DATA', toolResults),
+      recommendationsData: this.wrapUntrusted('UNTRUSTED_RECOMMENDATIONS', recommendations),
       recentMessages: recentHistory,
     };
 
@@ -450,11 +459,32 @@ STRICT GROUNDING & SECURITY DIRECTIVES:
       }
     }
 
-    return cleanText
+    return redactSecrets(cleanText)
       .replace(/\"sourceIds\"\s*:\s*\[[^\]]*\]/gi, '')
       .replace(/\"grounded\"\s*:\s*(true|false)/gi, '')
-      .replace(/mongodb\+srv:\/\/[^\s]+/gi, '[REDACTED_DB_URL]')
-      .replace(/sbg_[a-zA-Z0-9_-]+/g, '[REDACTED_API_KEY]')
-      .replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED]');
+      // The model's answer is meant to be prose, never markup. Strip any
+      // HTML-tag-like sequence so a prompt-injected or RAG-poisoned source
+      // can't smuggle markup into whatever renders this text downstream.
+      .replace(/<\/?[a-zA-Z!][^<>]*>/g, '');
+  }
+
+  /** Caps how much serialized data reaches the LLM in one call, bounding token
+   * cost/latency regardless of how many tool results or how long any single
+   * field is (a backstop on top of the per-field and per-call caps upstream). */
+  private static readonly MAX_UNTRUSTED_BLOCK_CHARS = 12000;
+
+  /** Wraps tool/recommendation data in an `<UNTRUSTED_...>` boundary the system
+   * prompt tells the model never to treat as instructions. Serialized data can
+   * contain attacker-controlled text (a poisoned product description, a
+   * crafted chat message echoed back by a tool) that forges a fake closing
+   * tag to try to escape the boundary — so any literal occurrence of the tag
+   * markers inside the data is neutralized before wrapping it for real. */
+  private wrapUntrusted(tag: string, data: unknown): string {
+    let json = JSON.stringify(data, null, 2) ?? 'null';
+    if (json.length > AssistantService.MAX_UNTRUSTED_BLOCK_CHARS) {
+      json = `${json.slice(0, AssistantService.MAX_UNTRUSTED_BLOCK_CHARS)}\n...[truncated]`;
+    }
+    const neutralized = json.replace(/<(\/?)UNTRUSTED_[A-Z_]+>/g, '($1UNTRUSTED_TAG)');
+    return `<${tag}>\n${neutralized}\n</${tag}>`;
   }
 }

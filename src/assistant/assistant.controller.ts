@@ -24,7 +24,7 @@ export class AssistantController {
     private readonly assistantService: AssistantService,
     private readonly approvalService: ApprovalService,
     private readonly vectorStoreService: VectorStoreService,
-  ) {}
+  ) { }
 
   @Post('chat')
   @Auth('admin', 'manager', 'staff')
@@ -54,7 +54,6 @@ export class AssistantController {
   @Auth('admin', 'manager')
   @AiThrottle()
   async approveAction(
-
     @Body() body: ActionApprovalDto,
     @AuthUser() authUser: IAuthUser,
     @Res() res: Response,
@@ -66,8 +65,7 @@ export class AssistantController {
     const result = await this.approvalService.processActionApproval(
       {
         recommendationActionId: body.recommendationActionId,
-        toolName: body.toolName,
-        arguments: body.arguments,
+        approvalToken: body.approvalToken,
         approved: body.approved,
       },
       {

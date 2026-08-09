@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z, ZodSchema } from 'zod';
 import { Types } from 'mongoose';
+import { redactSecrets } from 'src/Common/Utils/redact-secrets.util';
 
 export interface ToolContext {
   restaurantId: Types.ObjectId;
@@ -89,10 +90,7 @@ export class ToolRegistryService {
       return result;
     } catch (error: any) {
       const rawMsg = error?.message || String(error);
-      const safeMsg = rawMsg
-        .replace(/mongodb\+srv:\/\/[^\s]+/gi, '[REDACTED_DB_URL]')
-        .replace(/sbg_[a-zA-Z0-9_-]+/g, '[REDACTED_API_KEY]')
-        .replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED]');
+      const safeMsg = redactSecrets(rawMsg);
       this.logger.error(`[AUDIT] Error executing Tool [${name}] for restaurant [${context.restaurantId}]: ${safeMsg}`);
       throw new Error(`Execution of tool [${name}] failed: ${safeMsg}`);
     }

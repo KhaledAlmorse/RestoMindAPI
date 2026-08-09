@@ -41,6 +41,13 @@ export interface KnowledgeSearchResult {
   degradedReason?: string;
 }
 
+// Bounds embedding cost/storage per document and, more importantly, the size
+// of any single match once it's dumped into the synthesis LLM prompt. Source
+// fields (e.g. product descriptions) carry no length limit of their own, so
+// without this cap one oversized field is both a cost-amplification vector
+// and a bigger canvas for a prompt-injection payload to hide in.
+const MAX_TEXT_CONTENT_LENGTH = 4000;
+
 function toKnowledgeMatch(doc: any): KnowledgeMatch {
   return {
     entityType: doc.entityType,
@@ -73,9 +80,14 @@ export class VectorStoreService {
       return false;
     }
 
+    const boundedTextContent =
+      textContent.length > MAX_TEXT_CONTENT_LENGTH
+        ? textContent.slice(0, MAX_TEXT_CONTENT_LENGTH)
+        : textContent;
+
     try {
       const embedding = await this.bedrockEmbeddingService.generateEmbedding(
-        textContent,
+        boundedTextContent,
         'search_document',
       );
 
@@ -91,7 +103,7 @@ export class VectorStoreService {
         await this.knowledgeVectorRepo.update({
           filters: filter as any,
           body: {
-            textContent,
+            textContent: boundedTextContent,
             embedding,
             metadata,
             isDeleted: false,
@@ -102,7 +114,7 @@ export class VectorStoreService {
           restaurantId,
           entityType,
           entityId,
-          textContent,
+          textContent: boundedTextContent,
           embedding,
           metadata,
           isDeleted: false,

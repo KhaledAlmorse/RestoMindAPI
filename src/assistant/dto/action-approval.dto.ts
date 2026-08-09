@@ -5,13 +5,20 @@ export class ActionApprovalDto {
   @IsOptional()
   recommendationActionId?: string;
 
+  // Not trusted for execution: the server executes only the toolName/arguments
+  // sealed inside `approvalToken`. Kept here only so the client can echo back
+  // what it thinks it's approving; ApprovalService ignores these values.
   @IsString()
-  @IsNotEmpty()
-  toolName!: string;
+  @IsOptional()
+  toolName?: string;
 
   @IsObject()
+  @IsOptional()
+  arguments?: Record<string, any>;
+
+  @IsString()
   @IsNotEmpty()
-  arguments!: Record<string, any>;
+  approvalToken!: string;
 
   @IsBoolean()
   @IsNotEmpty()

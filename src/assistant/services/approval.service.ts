@@ -1,13 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { AssistantActionLogRepository, RecommendationActionRepository } from 'src/DB/Repositories';
 import { ToolExecutorService } from './tool-executor.service';
 import { ToolContext } from '../tools/tool-registry.service';
+import { ActionApprovalToken } from './action-approval-token';
 import { Types } from 'mongoose';
 
 export interface ActionApprovalRequest {
   recommendationActionId?: string;
-  toolName: string;
-  arguments: Record<string, any>;
+  approvalToken: string;
   approved: boolean; // true = Approve, false = Reject
 }
 
@@ -22,8 +22,21 @@ export class ApprovalService {
   ) {}
 
   async processActionApproval(request: ActionApprovalRequest, context: ToolContext) {
-    const { recommendationActionId, toolName, arguments: toolArgs, approved } = request;
+    const { recommendationActionId, approved } = request;
     const { restaurantId, userId, sessionId } = context;
+
+    // The approval token is the only source of truth for WHAT gets executed.
+    // It was signed server-side when this action/recommendation was proposed,
+    // so a client can't approve one action while sneaking a different
+    // toolName or arguments (e.g. a bigger discount, a different recipient)
+    // into this request.
+    const verified = ActionApprovalToken.verify(request.approvalToken, restaurantId);
+    if (!verified) {
+      throw new BadRequestException(
+        'Invalid or expired approval token. Please re-request this action from the assistant.',
+      );
+    }
+    const { toolName, arguments: toolArgs } = verified;
 
     this.logger.log(
       `Processing Human Approval for tool [${toolName}] by user [${userId}]: Approved=${approved}`,
