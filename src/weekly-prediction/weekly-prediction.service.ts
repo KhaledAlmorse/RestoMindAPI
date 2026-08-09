@@ -50,7 +50,7 @@ export const AVG_DAILY_SALES_LOOKBACK_DAYS = 14;
  * response — the model owns that number, and mirroring it here meant a tuning
  * change on their side silently made our progress bar wrong.
  */
-export const FALLBACK_MIN_DAYS_FOR_LEARNED = 14;
+export const FALLBACK_MIN_DAYS_FOR_LEARNED = 90;
 
 /**
  * Products recalculated in parallel. Sequential processing meant 50 products
@@ -656,7 +656,7 @@ export class WeeklyPredictionService {
    * Per-product training status, sourced from the MODEL.
    *
    * The previous local heuristic (`salesCount >= 30` transactions) had no
-   * relationship to the model's real criterion — 14 quiet days with a learned
+   * relationship to the model's real criterion — 90 quiet days with a learned
    * level — so the UI reported "trained" for products still forecast from the
    * bridge's DEFAULT_DAILY_LEVEL. When the AI is unreachable we still answer,
    * but say so via `degraded`.
@@ -751,7 +751,7 @@ export class WeeklyPredictionService {
       restaurantId,
       totalProducts: items.length,
       trainedCount: items.filter((i) => i.status === 'trained').length,
-      // Surfaced so the dashboard can label the progress bar ("12 / 14 days")
+      // Surfaced so the dashboard can label the progress bar ("12 / 90 days")
       // without hardcoding a number the model is free to change.
       minDaysForLearned,
       ...degradationFields(degradation),
@@ -967,7 +967,7 @@ export class WeeklyPredictionService {
    * demand levels bootstrap immediately.
    *
    * Without this, the only feed is the nightly one-day sync, and the model needs
-   * ~14 quiet weekdays before a product promotes off the owner's estimate — so a
+   * ~90 quiet weekdays before a product promotes off the owner's estimate — so a
    * restaurant with two years of history would still wait a month. The bridge
    * de-duplicates on (date, productId), so this is safe to re-run.
    */
