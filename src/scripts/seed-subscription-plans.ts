@@ -29,29 +29,28 @@ import mongoose from 'mongoose';
  */
 const PLANS = [
   {
-    slug: 'basic',
-    label: 'Basic',
-    productCap: 1000,
-    prices: { monthly: 30_000, halfYearly: 165_000, yearly: 300_000 },
+    slug: 'starter',
+    label: 'Starter',
+    productCap: 50,
+    prices: { monthly: 100_000, halfYearly: 540_000, yearly: 960_000 },
     sortOrder: 0,
     archived: false,
-    isTrialPlan: false,
+    isTrialPlan: true,
   },
   {
     slug: 'plus',
     label: 'Plus',
-    productCap: 3000,
-    prices: { monthly: 60_000, halfYearly: 330_000, yearly: 600_000 },
+    productCap: 150,
+    prices: { monthly: 175_000, halfYearly: 960_000, yearly: 1_740_000 },
     sortOrder: 1,
     archived: false,
-    // Matches the retired TRIAL_TIER constant: a trial borrows Plus capacity.
-    isTrialPlan: true,
+    isTrialPlan: false,
   },
   {
-    slug: 'scale',
-    label: 'Scale',
+    slug: 'enterprise',
+    label: 'Enterprise',
     productCap: null, // unlimited
-    prices: { monthly: 150_000, halfYearly: 825_000, yearly: 1_500_000 },
+    prices: { monthly: 250_000, halfYearly: 1_350_000, yearly: 2_520_000 },
     sortOrder: 2,
     archived: false,
     isTrialPlan: false,
