@@ -369,7 +369,9 @@ export class WeeklyPredictionService {
         fallbackReason =
           degradation.kind === 'client_error'
             ? `AI rejected the request (HTTP ${degradation.status ?? '4xx'}) — probable configuration fault`
-            : 'AI service unreachable';
+            : degradation.kind === 'rate_limited'
+              ? 'AI rate-limited the request (HTTP 429) — the caller is throttled; back off before retrying'
+              : 'AI service unreachable';
       } else {
         this.logger.error(
           `[AI CONTRACT] AI answered ${'/integration/restomind/predict'} without a predictedOrders field for product ${productId.toString()} on targetWeek ${targetWeekStr}. Using naive fallback.`,
@@ -560,13 +562,15 @@ export class WeeklyPredictionService {
             2,
             (degradation) => {
               degradedProductIds.push(prod._id.toString());
-              // client_error wins: a configuration fault is the more
-              // actionable diagnosis and must not be masked by a stray
-              // timeout on another product.
+              // A diagnosis beats an outage: `client_error` (a config fault) and
+              // `rate_limited` (we are throttled) both say "something we did
+              // caused this, look at it", while `unavailable` says "the service
+              // was down". Either non-outage kind must win over a stray timeout
+              // on another product, and the first such diagnosis stays put.
               if (
                 !firstDegradation ||
-                (firstDegradation.kind !== 'client_error' &&
-                  degradation.kind === 'client_error')
+                (firstDegradation.kind === 'unavailable' &&
+                  degradation.kind !== 'unavailable')
               ) {
                 firstDegradation = degradation;
               }

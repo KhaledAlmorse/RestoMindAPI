@@ -829,6 +829,16 @@ export class RecommendationsService {
       );
     }
 
+    // A 429 is not an outage either — say what it actually is, with the
+    // Retry-After if the AI service gave one (docs 02 §2.3a).
+    if (result.kind === 'rate_limited') {
+      throw new ServiceUnavailableException(
+        `AI service rate-limited the plan validation (HTTP 429)${
+          result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
+        }: ${result.message}`,
+      );
+    }
+
     throw new ServiceUnavailableException(
       `AI service unavailable for plan validation: ${result.message}`,
     );
