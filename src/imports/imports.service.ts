@@ -36,6 +36,20 @@ import { buildAiProductPayloadsFor } from 'src/Common/Utils/ai-product.util';
 import { DEFAULT_PLACEHOLDER_IMAGE } from 'src/Common/Constants/constants';
 import { ProductCostService } from 'src/Common/Services/product-cost.service';
 
+const REQUIRED_SALES_HISTORY_FIELDS = [
+  'date',
+  'productId',
+  'productionQuantity',
+  'quantitySold',
+] as const;
+
+function missingSalesHistoryFields(mapping: Record<string, string>): string[] {
+  const mappedFields = new Set(Object.values(mapping));
+  return REQUIRED_SALES_HISTORY_FIELDS.filter(
+    (field) => !mappedFields.has(field),
+  );
+}
+
 @Injectable()
 export class ImportsService {
   private readonly logger = new Logger(ImportsService.name);
@@ -112,6 +126,16 @@ export class ImportsService {
       headers,
       dto.importType,
     );
+
+    if (dto.importType === ImportTypeEnum.SALES_HISTORY) {
+      const missingFields = missingSalesHistoryFields(suggestedMapping);
+
+      if (missingFields.length > 0) {
+        throw new BadRequestException(
+          `Sales history CSV must include headers for: ${missingFields.join(', ')}`,
+        );
+      }
+    }
 
     const job = await this.importJobRepository.create({
       restaurantId,
@@ -224,6 +248,16 @@ export class ImportsService {
 
     try {
       const effectiveMapping = dto.columnMapping || job.columnMapping || {};
+
+      if (job.importType === ImportTypeEnum.SALES_HISTORY) {
+        const missingFields = missingSalesHistoryFields(effectiveMapping);
+        if (missingFields.length > 0) {
+          throw new BadRequestException(
+            `Sales history confirmation requires columns for: ${missingFields.join(', ')}`,
+          );
+        }
+      }
+
       const headers = Object.keys(effectiveMapping);
 
       // Fetch existing master data for validation. `category` is populated

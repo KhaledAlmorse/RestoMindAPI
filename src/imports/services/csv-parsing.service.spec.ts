@@ -81,6 +81,26 @@ describe('CsvParsingService', () => {
       expect(mapping.Quantity).toBe('quantity');
       expect(mapping['Batch Lot']).toBe('batchNumber');
     });
+
+    it('should map all required snake_case sales-history headers', () => {
+      const headers = [
+        'date',
+        'productId',
+        'production_qty',
+        'sales_qty',
+        'unit_price',
+      ];
+
+      expect(
+        service.autoSuggestMapping(headers, ImportTypeEnum.SALES_HISTORY),
+      ).toEqual({
+        date: 'date',
+        productId: 'productId',
+        production_qty: 'productionQuantity',
+        sales_qty: 'quantitySold',
+        unit_price: 'sellingPrice',
+      });
+    });
   });
 
   describe('mapAndValidateRows', () => {
