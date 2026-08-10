@@ -5,3 +5,4 @@ export * from './date.util';
 export * from './ai-product.util';
 export * from './sales-estimate.util';
 export * from './vat.util';
+export * from './sequence.util';

@@ -7,6 +7,10 @@ import {
 
 @Schema({ timestamps: true })
 export class PartnershipApplication {
+  /** Public-facing reference id, e.g. RESTO-000123. Never expose _id instead — this is what the applicant sees and searches by. */
+  @Prop({ type: String, required: true, unique: true })
+  applicationId!: string;
+
   @Prop({ type: String, required: true })
   businessName!: string;
 

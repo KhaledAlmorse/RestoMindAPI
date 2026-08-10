@@ -32,6 +32,7 @@ describe('PartnershipApplicationsService', () => {
 
   const mockApplication = {
     _id: new Types.ObjectId(),
+    applicationId: 'RESTO-000001',
     businessName: 'Test Bistro',
     businessType: BusinessTypeEnum.RESTAURANT,
     ownerFirstName: 'John',
@@ -77,6 +78,9 @@ describe('PartnershipApplicationsService', () => {
 
     connection = {
       startSession: jest.fn().mockResolvedValue(mockSession),
+      collection: jest.fn().mockReturnValue({
+        findOneAndUpdate: jest.fn().mockResolvedValue({ seq: 1 }),
+      }),
     };
 
     // Platform defaults: trials on, early-bird seats available.
@@ -159,7 +163,7 @@ describe('PartnershipApplicationsService', () => {
       applicationRepo.findOne.mockResolvedValue(mockApplication as any);
 
       const result = await service.checkStatus(
-        mockApplication._id.toString(),
+        mockApplication.applicationId,
         'john.doe@example.com',
       );
 
@@ -172,7 +176,7 @@ describe('PartnershipApplicationsService', () => {
 
       await expect(
         service.checkStatus(
-          mockApplication._id.toString(),
+          mockApplication.applicationId,
           'wrong.email@example.com',
         ),
       ).rejects.toThrow(NotFoundException);

@@ -20,6 +20,7 @@ import { TokenService } from 'src/Common/Services';
 import { sendEmail } from 'src/Common/Utils/send-email.utils';
 import { addDays } from 'src/Common/Utils';
 import { SystemSettingsService } from 'src/system-settings/system-settings.service';
+import { getNextSequence } from 'src/Common/Utils';
 import { CreatePartnershipApplicationDto } from './dto/create-partnership-application.dto';
 import { QueryPartnershipApplicationDto } from './dto/query-partnership-application.dto';
 import { RejectPartnershipApplicationDto } from './dto/reject-partnership-application.dto';
@@ -76,8 +77,12 @@ export class PartnershipApplicationsService {
       );
     }
 
+    const seq = await getNextSequence(this.connection, 'partnershipApplication');
+    const applicationId = `RESTO-${String(seq).padStart(6, '0')}`;
+
     const application = await this.partnershipApplicationRepository.create({
       ...dto,
+      applicationId,
       email: dto.email.toLowerCase(),
       status: PartnershipApplicationStatusEnum.PENDING,
     } as any);
@@ -103,13 +108,16 @@ export class PartnershipApplicationsService {
   }
 
   /**
-   * Public status check. Requires matching email to prevent ID enumeration.
+   * Public status check, keyed by the applicationId (RESTO-xxxxxx) the
+   * applicant was given at submission. Requires matching email to prevent
+   * ID enumeration.
    */
-  async checkStatus(id: string, email: string) {
-    this.validateObjectId(id);
-
+  async checkStatus(applicationId: string, email: string) {
     const application = await this.partnershipApplicationRepository.findOne({
-      filters: { _id: new Types.ObjectId(id), isDeleted: false },
+      filters: {
+        applicationId: applicationId.trim().toUpperCase(),
+        isDeleted: false,
+      },
     });
 
     if (
@@ -120,7 +128,7 @@ export class PartnershipApplicationsService {
     }
 
     return {
-      id: application._id,
+      id: application.applicationId,
       businessName: application.businessName,
       status: application.status,
       createdAt: (application as any).createdAt,

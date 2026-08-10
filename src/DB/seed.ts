@@ -1439,6 +1439,7 @@ async function seed() {
       const isRejected = status === PartnershipApplicationStatusEnum.REJECTED;
 
       partnershipAppsData.push({
+        applicationId: `RESTO-${String(i + 1).padStart(6, '0')}`,
         businessName: app.bName,
         businessType: businessTypes[i % businessTypes.length],
         description: `High-capacity ${businessTypes[i % businessTypes.length]} looking to join RestoMind surplus recovery platform.`,
