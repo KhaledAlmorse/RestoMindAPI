@@ -31,7 +31,7 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Post()
-  @Auth('admin', 'manager')
+  @Auth('admin', 'manager', 'staff')
   @UseInterceptors(FileInterceptor('image', uploadFileOptions({})))
   async createProduct(
     @UploadedFile() file: Express.Multer.File,

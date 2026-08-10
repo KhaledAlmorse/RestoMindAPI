@@ -91,7 +91,10 @@ export class ProductsService {
 
     let targetRestaurantId: Types.ObjectId;
 
-    if (authUser.user.role === RolesEnum.MANAGER) {
+    if (
+      authUser.user.role === RolesEnum.MANAGER ||
+      authUser.user.role === RolesEnum.STAFF
+    ) {
       targetRestaurantId = await this.getManagerRestaurantId(
         authUser.user._id.toString(),
       );

@@ -415,11 +415,11 @@ async function seed() {
     console.log('🏪 Seeding default restaurant...');
     const restaurant = await RestaurantModel.create({
       name: 'RestoMind Bakery & Cafe',
-      ownerUserId: adminUser._id,
+      ownerUserId: managerUser._id,
       description: 'Artisanal bakery and cafe serving fresh breads, pastries, sandwiches, and beverages.',
       image: {
         public_id: 'resto_seed/restaurants/default_bakery',
-        secure_url: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80',
+        secure_url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=800&q=80',
       },
       phone: '+201000000001',
       address: { street: '1 Nile Corniche', city: 'Cairo', district: 'Zamalek', country: 'Egypt' },
@@ -459,26 +459,21 @@ async function seed() {
     const extraUsers: any[] = [];
     for (let i = 0; i < userNames.length; i++) {
       const u = userNames[i];
-      const isStaffOrMgr = i % 4 === 0 || i % 5 === 0;
       extraUsers.push({
         firstName: u.first,
         lastName: u.last,
         email: `${u.first.toLowerCase()}.${u.last.toLowerCase()}@example.com`,
         password: bcrypt.hashSync('User@123', 10),
-        role: i % 4 === 0 ? RolesEnum.MANAGER : i % 5 === 0 ? RolesEnum.STAFF : RolesEnum.CUSTOMER,
+        role: RolesEnum.MANAGER,
         gender: i % 2 === 0 ? GenderEnum.MALE : GenderEnum.FEMALE,
         phone: egyptPhone(1000 + i),
         isEmailVerified: true,
         DOB: new Date(1985 + (i % 20), i % 12, (i % 28) + 1),
         isActive: true,
-        ...(isStaffOrMgr
-          ? {
-              employeeCode: `EMP-EXT-${100 + i}`,
-              department: i % 2 === 0 ? 'Operations' : 'Service',
-              hireDate: new Date(2024, i % 12, 1),
-              employmentStatus: 'active',
-            }
-          : {}),
+        employeeCode: `EMP-EXT-${100 + i}`,
+        department: i % 2 === 0 ? 'Operations' : 'Service',
+        hireDate: new Date(2024, i % 12, 1),
+        employmentStatus: 'active',
         isDeleted: false,
       });
     }
@@ -500,7 +495,7 @@ async function seed() {
       const plan = planBySlug.get(tierSlug)!;
       return {
         name: n,
-        ownerUserId: allUserIds[(i + 1) % allUserIds.length],
+        ownerUserId: insertedUsers[i]._id,
         description: `Premium ${n.toLowerCase()} serving fresh food daily.`,
         image: {
           public_id: `resto_seed/restaurants/${slugify(n, { lower: true, strict: true })}`,
@@ -536,7 +531,7 @@ async function seed() {
       {
         _id: restaurant._id,
         name: restaurant.name,
-        ownerUserId: adminUser._id,
+        ownerUserId: managerUser._id,
         // Carried through so seeded orders can snapshot the same rate the
         // application would have applied at checkout.
         commissionRate: restaurant.commissionRate as number | undefined,
@@ -549,9 +544,12 @@ async function seed() {
       })),
     ];
 
-    // Link managerUser to default restaurant
+    // Link manager users to default and extra restaurants
     const managerRestaurantId = allRestaurantIds[0];
     await UserModel.findByIdAndUpdate(managerUser._id, { restaurantId: managerRestaurantId });
+    for (let i = 0; i < insertedUsers.length; i++) {
+      await UserModel.findByIdAndUpdate(insertedUsers[i]._id, { restaurantId: insertedRests[i]._id });
+    }
 
     // ─── 5. Seed Categories (Total Categories >= 22) ──────────────────────────────
     console.log('📦 Seeding categories...');
@@ -660,7 +658,7 @@ async function seed() {
         isAvailable: true,
         freshnessWindow: 24,
         tags: ['Oriental', 'Pistachio', 'Bestseller'],
-        image: { public_id: 'resto_seed/products/kunafa', secure_url: 'https://images.unsplash.com/photo-1541781774459-bb2af2f05b55?auto=format&fit=crop&w=800&q=80' },
+        image: { public_id: 'resto_seed/products/kunafa', secure_url: 'https://images.unsplash.com/photo-1519676867240-f03562e64548?auto=format&fit=crop&w=800&q=80' },
         category: catMap.get('Desserts'),
         restaurantId: restaurant._id,
         isDeleted: false,
@@ -1089,10 +1087,12 @@ async function seed() {
       const paymentMethod =
         i % 3 === 0 ? 'Cash on Delivery' : i % 3 === 1 ? 'Card' : 'Wallet';
 
-      // Delivered well outside PAYOUT_HOLD_DAYS (7), so the merchant statement
-      // has payable lines the day the database is seeded rather than a week
-      // later.
-      const placedAt = new Date(Date.now() - (40 - i) * 24 * 60 * 60 * 1000);
+      // Spread 1-25 days back so most orders clear PAYOUT_HOLD_DAYS (7) —
+      // giving the merchant statement payable lines the day the database is
+      // seeded — while the newest few still fall inside the dashboard's
+      // default 7-day lookback (dashboard.service.ts parseAndValidateDates),
+      // so a freshly seeded manager account doesn't open to an all-zero view.
+      const placedAt = new Date(Date.now() - (i + 1) * 24 * 60 * 60 * 1000);
       const deliveredAt =
         status === OrderStatusEnum.DELIVERED
           ? new Date(placedAt.getTime() + 2 * 60 * 60 * 1000)
@@ -1461,23 +1461,23 @@ async function seed() {
         ...(isRejected ? { rejectionReason: 'Incomplete commercial license details.' } : {}),
         ...(isApproved
           ? (() => {
-              // The real onboarding flow (partnership-applications.service.ts
-              // approve()) creates userId and restaurantId together, with
-              // userId as restaurantId's ownerUserId — an application whose
-              // userId owns a DIFFERENT restaurant than the one it names
-              // would send a setup-account token to the wrong person.
-              const linkedRestaurantId = allRestaurantIds[i % allRestaurantIds.length];
-              const linkedOwnerId =
-                allRestaurants.find((r) => r._id.equals(linkedRestaurantId))?.ownerUserId ??
-                adminUser._id;
-              return {
-                reviewedBy: adminUser._id,
-                approvedBy: adminUser._id,
-                approvedAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000),
-                userId: linkedOwnerId,
-                restaurantId: linkedRestaurantId,
-              };
-            })()
+            // The real onboarding flow (partnership-applications.service.ts
+            // approve()) creates userId and restaurantId together, with
+            // userId as restaurantId's ownerUserId — an application whose
+            // userId owns a DIFFERENT restaurant than the one it names
+            // would send a setup-account token to the wrong person.
+            const linkedRestaurantId = allRestaurantIds[i % allRestaurantIds.length];
+            const linkedOwnerId =
+              allRestaurants.find((r) => r._id.equals(linkedRestaurantId))?.ownerUserId ??
+              adminUser._id;
+            return {
+              reviewedBy: adminUser._id,
+              approvedBy: adminUser._id,
+              approvedAt: new Date(Date.now() - i * 24 * 60 * 60 * 1000),
+              userId: linkedOwnerId,
+              restaurantId: linkedRestaurantId,
+            };
+          })()
           : {}),
         isDeleted: false,
       });
