@@ -139,7 +139,9 @@ describe('RecommendationsService', () => {
     };
 
     mockSalesRepo = {
-      findMany: jest.fn(),
+      // Default: nothing sold yet today, and no history for the avgDailySales
+      // fallback lookback. Tests that care about either override explicitly.
+      findMany: jest.fn().mockResolvedValue([]),
     };
 
     mockInventoryBatchRepo = {
@@ -169,14 +171,24 @@ describe('RecommendationsService', () => {
       getUnitCosts: jest.fn().mockResolvedValue(new Map()),
     };
 
-    // A product is only scanned when there is a ready-to-sell source for it:
-    // today's production plan, else this week's prediction. `planFor` is the
-    // shorthand the no-prediction cases use.
+    // A product only reaches the AI surplus call when a manager has confirmed
+    // today's actual production (actualProducedQty) -- recommendedQty alone is
+    // a planned target, not real stock on hand, and comparing it back against
+    // the same demand basis it was derived from can never signal real risk.
+    // `planFor` assumes production matched the plan exactly, which is the
+    // simplest fixture for tests that are not specifically exercising the
+    // planned-vs-actual distinction.
     planFor = (productId: Types.ObjectId, recommendedQty: number) =>
       mockDailyProductionPlanRepo.findOne.mockResolvedValue({
         _id: new Types.ObjectId(),
         restaurantId: mockRestaurantId,
-        items: [{ productId, recommendedQty, actualProducedQty: null }],
+        items: [
+          {
+            productId,
+            recommendedQty,
+            actualProducedQty: recommendedQty,
+          },
+        ],
       });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -355,15 +367,18 @@ describe('RecommendationsService', () => {
   });
 
   describe('scanSurplus & validatePlan graceful AI failure', () => {
-    it('should return early message when no products with recipes exist', async () => {
+    it('should return early message when no product has a demand estimate (recipe not required)', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
+      // No recipe -- and, per the fix, that alone no longer excludes the
+      // product. It's excluded here because there is also no prediction, no
+      // production plan, and no sales history to estimate demand from.
       mockRecipeRepo.findOne.mockResolvedValue(null);
 
       const result = await service.scanSurplus(mockUserId);
 
       expect(result.data).toHaveProperty(
         'message',
-        'No products with a recipe and a ready-to-sell source found for surplus scan',
+        'No products with a ready-to-sell source found for surplus scan',
       );
       expect(result.data).toHaveProperty('scannedCount', 0);
       expect(result.degraded).toBe(false);
@@ -435,6 +450,9 @@ describe('RecommendationsService', () => {
 
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
+
+      // Confirmed production, so the product reaches the AI call.
+      planFor(mockProductId, 100);
 
       // Prediction: 100 predicted orders
       mockPredictionRepo.findOne.mockResolvedValue({
@@ -613,6 +631,45 @@ describe('RecommendationsService', () => {
       expect(mockWasteReportRepo.create).toHaveBeenCalledTimes(2);
     });
 
+    it('creates a recommendation for a product with no recipe at all', async () => {
+      mockProductRepo.findMany.mockResolvedValue([mockProduct]);
+      // No recipe -- recommendations no longer require one.
+      mockRecipeRepo.findOne.mockResolvedValue(null);
+      mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
+
+      mockRecommendationRepo.findOne.mockResolvedValue(null);
+      mockRecommendationRepo.create.mockImplementation((doc: any) =>
+        Promise.resolve({ ...doc, _id: new Types.ObjectId() }),
+      );
+
+      const mockFetchResponse = {
+        ok: true,
+        json: jest.fn().mockResolvedValue({
+          itemsAtRisk: [
+            { productId: mockProductId.toString(), suggestedDiscountPct: 20 },
+          ],
+        }),
+      };
+      global.fetch = jest.fn().mockResolvedValue(mockFetchResponse as any);
+
+      const result = await service.scanSurplus(mockUserId);
+
+      // No recipe -> no ingredient-level check at all -> no WasteReport, but
+      // the AI's itemsAtRisk is still trusted (currentStock was real) and a
+      // recommendation is created with no wasteReportId.
+      expect(mockWasteReportRepo.create).not.toHaveBeenCalled();
+      expect(mockRecommendationRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          restaurantId: mockRestaurantId,
+          productId: mockProductId,
+          wasteReportId: null,
+          suggestedValue: 20,
+        }),
+      );
+      expect(result.data.recommendations).toHaveLength(1);
+    });
+
     it('should calculate avgDailySales from prediction dailyBreakdown', async () => {
       mockProductRepo.findMany.mockResolvedValue([mockProduct]);
       mockRecipeRepo.findOne.mockResolvedValue(mockRecipe);
@@ -631,6 +688,10 @@ describe('RecommendationsService', () => {
           { date: '2026-07-26', predictedQuantity: 10 },
         ],
       });
+      // Confirmed production, so the product carries a real currentStock and
+      // reaches the AI call -- the prediction above still drives avgDailySales
+      // (a separate code path), unaffected by this.
+      planFor(mockProductId, 100);
 
       mockInventoryBatchRepo.findMany.mockResolvedValue([]);
       mockWasteReportRepo.findOne.mockResolvedValue(null);
@@ -684,6 +745,7 @@ describe('RecommendationsService', () => {
         ],
       });
       mockPredictionRepo.findOne.mockResolvedValue({ predictedOrders: 100 });
+      planFor(mockProductId, 100);
       mockInventoryBatchRepo.findMany.mockResolvedValue([
         { quantityRemaining: 500 },
       ]);
@@ -728,6 +790,7 @@ describe('RecommendationsService', () => {
         predictedOrders: 70,
         dailyBreakdown: [],
       });
+      planFor(mockProductId, 70);
       mockInventoryBatchRepo.findMany.mockResolvedValue([
         { quantityRemaining: 200 },
       ]);

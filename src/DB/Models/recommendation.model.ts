@@ -26,6 +26,9 @@ export class Recommendation {
   @Prop({ type: Number, default: null })
   suggestedValue?: number;
 
+  @Prop({ type: Number, default: null })
+  suggestedQuantity?: number;
+
   @Prop({ type: Types.ObjectId, ref: 'Restaurant', default: null })
   targetRestaurantId?: Types.ObjectId;
 

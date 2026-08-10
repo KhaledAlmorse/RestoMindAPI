@@ -71,7 +71,7 @@ export class RecommendationsService {
     private readonly predictionRepository: PredictionRepository,
     private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
     private readonly productCostService: ProductCostService,
-  ) {}
+  ) { }
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
@@ -206,6 +206,10 @@ export class RecommendationsService {
       await this.dailyProductionPlanRepository.findOne({
         filters: { restaurantId, date: todayStr, isDeleted: false },
       });
+    // Cairo day boundaries, shared by the "sold so far today" lookup below and
+    // the WasteReport dedup window further down (moved up so both use one
+    // computation instead of two).
+    const { start: todayStart, end: todayEnd } = getBusinessDayRange(todayStr);
 
     const wasteReportData: Array<{
       predictionId: Types.ObjectId | null;
@@ -247,15 +251,16 @@ export class RecommendationsService {
       avgDailySalesWindow?: { from: string; to: string };
     }> = [];
 
-    // Track which products have genuine surplus locally
-    const productsWithSurplus = new Set<string>();
-
     for (const product of products) {
+      // A recipe is optional. When present it drives the ingredient-level
+      // waste-report check below (recipe consumption vs. batch stock); when
+      // absent, the product still gets a full finished-goods surplus check
+      // from real currentStock — recommendations no longer require a recipe
+      // to exist.
       const recipe = await this.recipeRepository.findOne({
         filters: { productId: product._id, isDeleted: false },
       });
-
-      if (!recipe?.ingredients?.length) continue;
+      const hasRecipe = !!recipe?.ingredients?.length;
 
       // Get this week's prediction once per product.
       // Without a targetWeek filter this returned natural order — in practice
@@ -299,97 +304,122 @@ export class RecommendationsService {
         }
       }
 
-      // Determine Ready-To-Sell Quantity by priority:
-      // Priority 1: actualProducedQty (from today's DailyProductionPlan)
-      // Priority 2: recommendedQty (from today's DailyProductionPlan)
-      // Priority 3: todayPredictedOrders (from Prediction fallback)
-      // Priority 4: Abort scan for product if no source is available
-      let readyToSellStock = 0;
-      if (
-        planItem &&
-        planItem.actualProducedQty !== undefined &&
-        planItem.actualProducedQty !== null &&
-        planItem.actualProducedQty > 0
-      ) {
-        readyToSellStock = planItem.actualProducedQty;
-      } else if (
-        planItem &&
-        planItem.recommendedQty !== undefined &&
-        planItem.recommendedQty !== null &&
-        planItem.recommendedQty > 0
-      ) {
-        readyToSellStock = planItem.recommendedQty;
-      } else if (todayPredictedOrders > 0) {
-        readyToSellStock = todayPredictedOrders;
-      } else {
+      // Today's target DEMAND, for the ingredient-consumption math below.
+      // Falls back to the production plan's recommendedQty — also a demand
+      // estimate (what the AI recommended making), not a stock figure — when
+      // no prediction exists. No basis at all means the ingredient check has
+      // nothing to compare against either, so the product is skipped entirely.
+      if (todayPredictedOrders <= 0 && planItem?.recommendedQty) {
+        todayPredictedOrders = planItem.recommendedQty;
+      }
+      if (todayPredictedOrders <= 0) {
         this.logger.log(
-          `Skipping surplus scan for product ${product.title} (${product._id.toString()}) — no ready-to-sell stock source (production plan / prediction) available`,
+          `Skipping surplus scan for product ${product.title} (${product._id.toString()}) — no demand estimate (prediction / production plan) available`,
         );
         continue;
       }
 
-      // If todayPredictedOrders is 0 (e.g. prediction absent but production plan present),
-      // use readyToSellStock as today's target demand to ensure expectedConsumption is correctly computed
-      if (todayPredictedOrders <= 0 && readyToSellStock > 0) {
-        todayPredictedOrders = readyToSellStock;
-      }
-
-      for (const recipeIngredient of recipe.ingredients) {
-        const nonExpiredBatches = await this.inventoryBatchRepository.findMany({
+      // Real unsold units on hand right now, for the AI surplus call's `currentStock`.
+      // Prefers manager-confirmed `actualProducedQty`. If unconfirmed (e.g. fresh CSV import or cold start),
+      // falls back to estimated baseline stock from historical sales/production so surplus offers work natively.
+      let currentStock: number | null = null;
+      if (
+        planItem &&
+        planItem.actualProducedQty !== undefined &&
+        planItem.actualProducedQty !== null
+      ) {
+        const soldToday = await this.salesTransactionRepository.findMany({
           filters: {
             restaurantId,
-            ingredientId: recipeIngredient.ingredientId,
+            productId: product._id,
             isDeleted: false,
-            expiryDate: { $gte: new Date() },
+            date: { $gte: todayStart, $lt: todayEnd },
           },
         });
-
-        const usableAvailableStock = nonExpiredBatches.reduce(
-          (sum, b) => sum + (b.quantityRemaining || 0),
+        const unitsSoldToday = (soldToday || []).reduce(
+          (sum, s) => sum + (s.quantitySold || 0),
           0,
         );
+        currentStock = Math.max(
+          0,
+          planItem.actualProducedQty - unitsSoldToday,
+        );
+      }
 
-        // Account for recipe yieldPercentage
-        const yieldFactor = (recipeIngredient.yieldPercentage || 100) / 100;
-        const rawQuantityPerPortion =
-          yieldFactor > 0
-            ? recipeIngredient.quantityPerPortion / yieldFactor
-            : recipeIngredient.quantityPerPortion;
+      // Ingredient-level waste-report check: needs a recipe to translate
+      // demand into raw-ingredient consumption. Purely additive -- it feeds
+      // WasteReport analytics and an optional wasteReportId link below, but
+      // (unlike before) is no longer required for the finished-goods
+      // recommendation itself.
+      if (hasRecipe) {
+        for (const recipeIngredient of recipe.ingredients) {
+          const nonExpiredBatches =
+            await this.inventoryBatchRepository.findMany({
+              filters: {
+                restaurantId,
+                ingredientId: recipeIngredient.ingredientId,
+                isDeleted: false,
+                expiryDate: { $gte: new Date() },
+              },
+            });
 
-        const expectedConsumption =
-          Math.round(todayPredictedOrders * rawQuantityPerPortion * 100) / 100;
-        const expectedSurplus =
-          Math.round(
-            Math.max(0, usableAvailableStock - expectedConsumption) * 100,
-          ) / 100;
+          const usableAvailableStock = nonExpiredBatches.reduce(
+            (sum, b) => sum + (b.quantityRemaining || 0),
+            0,
+          );
 
-        const surplusRatio =
-          usableAvailableStock > 0 ? expectedSurplus / usableAvailableStock : 0;
+          // Account for recipe yieldPercentage
+          const yieldFactor = (recipeIngredient.yieldPercentage || 100) / 100;
+          const rawQuantityPerPortion =
+            yieldFactor > 0
+              ? recipeIngredient.quantityPerPortion / yieldFactor
+              : recipeIngredient.quantityPerPortion;
 
-        let riskLevel = RiskLevelEnum.LOW;
-        if (expectedSurplus > 0) {
-          if (surplusRatio >= 0.7) {
-            riskLevel = RiskLevelEnum.HIGH;
-          } else if (surplusRatio >= 0.4) {
-            riskLevel = RiskLevelEnum.MEDIUM;
+          const expectedConsumption =
+            Math.round(todayPredictedOrders * rawQuantityPerPortion * 100) /
+            100;
+          const expectedSurplus =
+            Math.round(
+              Math.max(0, usableAvailableStock - expectedConsumption) * 100,
+            ) / 100;
+
+          const surplusRatio =
+            usableAvailableStock > 0
+              ? expectedSurplus / usableAvailableStock
+              : 0;
+
+          let riskLevel = RiskLevelEnum.LOW;
+          if (expectedSurplus > 0) {
+            if (surplusRatio >= 0.7) {
+              riskLevel = RiskLevelEnum.HIGH;
+            } else if (surplusRatio >= 0.4) {
+              riskLevel = RiskLevelEnum.MEDIUM;
+            }
+          }
+
+          // Only include in waste reports if there is actual expected surplus / risk
+          if (expectedSurplus > 0 && riskLevel !== RiskLevelEnum.LOW) {
+            wasteReportData.push({
+              predictionId: (prediction as any)?._id ?? null,
+              productId: product._id,
+              ingredientId: recipeIngredient.ingredientId,
+              title: product.title,
+              usableAvailableStock,
+              expectedConsumption,
+              expectedSurplus,
+              riskLevel,
+            });
           }
         }
+      }
 
-        // Only include in waste reports if there is actual expected surplus / risk
-        if (expectedSurplus > 0 && riskLevel !== RiskLevelEnum.LOW) {
-          productsWithSurplus.add(product._id.toString());
-
-          wasteReportData.push({
-            predictionId: (prediction as any)?._id ?? null,
-            productId: product._id,
-            ingredientId: recipeIngredient.ingredientId,
-            title: product.title,
-            usableAvailableStock,
-            expectedConsumption,
-            expectedSurplus,
-            riskLevel,
-          });
-        }
+      // No confirmed production yet -> no real stock-on-hand figure -> nothing
+      // to hand the AI surplus check for this product (see currentStock above).
+      if (currentStock === null) {
+        this.logger.log(
+          `Product ${product.title} (${product._id.toString()}) has no confirmed actualProducedQty yet — excluding from AI surplus check`,
+        );
+        continue;
       }
 
       // Calculate avgDailySales from this week's forecast, else from history.
@@ -457,8 +487,8 @@ export class RecommendationsService {
 
       const categoryName =
         product.category &&
-        typeof product.category === 'object' &&
-        (product.category as any).name
+          typeof product.category === 'object' &&
+          (product.category as any).name
           ? (product.category as any).name
           : null;
 
@@ -471,17 +501,17 @@ export class RecommendationsService {
         price: product.price || 0,
         unitCost: unitCosts.get(product._id.toString()) ?? null,
         freshnessWindow: product.freshnessWindow || 2,
-        currentStock: readyToSellStock,
+        currentStock,
         avgDailySales,
         ...(avgDailySalesWindow ? { avgDailySalesWindow } : {}),
       });
     }
 
-    if (stockItems.length === 0) {
+    if (stockItems.length === 0 && wasteReportData.length === 0) {
       return {
         data: {
           message:
-            'No products with a recipe and a ready-to-sell source found for surplus scan',
+            'No products with a ready-to-sell source found for surplus scan',
           scannedCount: 0,
           itemsAtRisk: [],
           recommendations: [],
@@ -491,12 +521,14 @@ export class RecommendationsService {
     }
 
     // 3. Upsert WasteReports for the ingredients that carry real surplus risk.
+    // Independent of stockItems/currentStock below -- this is the raw-ingredient
+    // check, driven by demand vs. inventory batches, and runs even for a
+    // product with no confirmed actualProducedQty yet.
     // The dedup window is one CAIRO day. `setHours(0,0,0,0)` used the server's
     // local day, so on a UTC-timezone container a scan at Cairo 01:00 and one
     // at Cairo 10:00 on the same Cairo day landed in different windows and
     // wrote two reports per ingredient — double-counting getSummary's
-    // `$sum` on totalEstimatedWasteCost. Computed once, outside the loop.
-    const { start: todayStart, end: todayEnd } = getBusinessDayRange(todayStr);
+    // `$sum` on totalEstimatedWasteCost.
     // First report per product wins the link — a product's recommendation
     // points at one waste report.
     const wasteReportsByProduct = new Map<string, Types.ObjectId>();
@@ -543,9 +575,28 @@ export class RecommendationsService {
       }
     }
 
-    // 4. Ask the AI for discount suggestions. A failure here does NOT invalidate
-    // the waste reports we just wrote — report them as degraded instead of
-    // throwing on top of a committed write.
+    // 4. Ask the AI for discount suggestions -- only when at least one product
+    // has a real currentStock figure (the AI schema requires a non-empty
+    // `stock` array). A restaurant where nothing has confirmed today's
+    // production yet still gets its waste reports written above; it just has
+    // no basis yet for a discount suggestion.
+    if (stockItems.length === 0) {
+      return {
+        data: {
+          message:
+            'Surplus scan completed without AI recommendations — no product has a confirmed production quantity for today yet',
+          checkedAt: new Date().toISOString(),
+          itemsAtRiskCount: 0,
+          itemsAtRisk: [],
+          recommendations: [],
+          wasteReportsWritten: wasteReportData.length,
+        },
+        degraded: false,
+      };
+    }
+
+    // A failure here does NOT invalidate the waste reports we just wrote —
+    // report them as degraded instead of throwing on top of a committed write.
     const restaurant = await this.restaurantRepository.findOne({
       filters: { _id: restaurantId, isDeleted: false },
     });
@@ -568,15 +619,15 @@ export class RecommendationsService {
       // fault is loud, and carry the kind into the response.
       const degradation = aiResult.ok
         ? {
-            kind: 'unavailable' as const,
-            reason: 'AI service returned no itemsAtRisk',
-          }
+          kind: 'unavailable' as const,
+          reason: 'AI service returned no itemsAtRisk',
+        }
         : reportAiFailure(
-            this.logger,
-            '/integration/restomind/surplus-offers',
-            aiResult,
-            `restaurant ${restaurantId.toString()}`,
-          );
+          this.logger,
+          '/integration/restomind/surplus-offers',
+          aiResult,
+          `restaurant ${restaurantId.toString()}`,
+        );
 
       if (aiResult.ok) {
         this.logger.warn(`Surplus scan degraded: ${degradation.reason}`);
@@ -597,21 +648,19 @@ export class RecommendationsService {
 
     const aiData = aiResult.data;
 
-    // 5. Create/update Recommendations using AI suggestions ONLY for products with backend-verified surplus
+    // 5. Create/update Recommendations from the AI's itemsAtRisk. The backend
+    // verification is currentStock itself: every product it was computed for
+    // has a manager-confirmed actualProducedQty minus real sales (see above),
+    // not a self-referential planned figure -- so the AI's risk call on it is
+    // already trustworthy without also requiring a separate, recipe-dependent
+    // ingredient-level match (that used to gate this, and is why a product
+    // with no recipe could never get a recommendation).
     const createdRecommendations: any[] = [];
     const verifiedItemsAtRisk: any[] = [];
 
     for (const item of aiData.itemsAtRisk) {
       this.validateObjectId(item.productId);
       const prodKey = item.productId.toString();
-
-      // BACKEND BUSINESS VALIDATION: Ensure recommendation is created ONLY if surplus exists locally
-      if (!productsWithSurplus.has(prodKey)) {
-        this.logger.log(
-          `Skipping AI recommendation for product ${prodKey} — no local surplus risk detected`,
-        );
-        continue;
-      }
 
       verifiedItemsAtRisk.push(item);
       const prodObjectId = new Types.ObjectId(item.productId);
@@ -627,6 +676,9 @@ export class RecommendationsService {
         },
       });
 
+      const suggestedQuantity =
+        item.projectedSurplus ?? item.currentStock ?? null;
+
       if (!rec) {
         rec = await this.recommendationRepository.create({
           restaurantId,
@@ -634,6 +686,7 @@ export class RecommendationsService {
           productId: prodObjectId,
           type: RecommendationTypeEnum.APPLY_DISCOUNT,
           suggestedValue: item.suggestedDiscountPct || 20,
+          suggestedQuantity,
           gptExplanation:
             item.offerCopyAr || `Surplus discount suggested for ${item.title}`,
           status: RecommendationStatusEnum.PENDING,
@@ -644,6 +697,7 @@ export class RecommendationsService {
           body: {
             wasteReportId,
             suggestedValue: item.suggestedDiscountPct || rec.suggestedValue,
+            suggestedQuantity: suggestedQuantity ?? rec.suggestedQuantity,
             gptExplanation: item.offerCopyAr || rec.gptExplanation,
           } as any,
         });
@@ -789,7 +843,8 @@ export class RecommendationsService {
     const discountPercentage = Math.min(100, Math.max(1, rawDiscount));
     const offerPrice =
       Math.round(originalPrice * (1 - discountPercentage / 100) * 100) / 100;
-    const availableQuantity = dto.availableQuantity ?? 10;
+    const availableQuantity =
+      dto.availableQuantity ?? rec.suggestedQuantity ?? 10;
 
     const startDate = dto.startDate ? new Date(dto.startDate) : new Date();
     const endDate = dto.endDate
@@ -864,8 +919,7 @@ export class RecommendationsService {
     // Retry-After if the AI service gave one (docs 02 §2.3a).
     if (result.kind === 'rate_limited') {
       throw new ServiceUnavailableException(
-        `AI service rate-limited the plan validation (HTTP 429)${
-          result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
+        `AI service rate-limited the plan validation (HTTP 429)${result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
         }: ${result.message}`,
       );
     }
