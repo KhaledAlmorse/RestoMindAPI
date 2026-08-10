@@ -135,4 +135,36 @@ describe('AiClientService', () => {
     expect(init.headers['X-API-Key']).toBe('legacy-secret');
     delete process.env.AI_SHARED_SECRET;
   });
+
+  it('classifies a 429 as rate_limited, does NOT retry, and carries Retry-After', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'Retry-After': '42' }),
+      json: async () => ({ error: 'rate_limited' }),
+    }) as any;
+
+    const result = await service.post('/marketing/publish', {}, { retries: 3 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'rate_limited',
+      status: 429,
+      retryAfter: 42,
+    });
+  });
+
+  it('avoids retrying a rate limit even when Retry-After is absent', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers(),
+      json: async () => ({ error: 'rate_limited' }),
+    }) as any;
+
+    const result = await service.post('/x', {}, { retries: 3 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, kind: 'rate_limited' });
+    expect((result as any).retryAfter).toBeUndefined();
+  });
 });
