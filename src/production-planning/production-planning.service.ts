@@ -51,6 +51,10 @@ export const PRODUCT_POPULATION_OPTIONS = [
   },
 ];
 
+interface GenerateProductionPlanOptions {
+  forceRefresh?: boolean;
+}
+
 @Injectable()
 export class ProductionPlanningService {
   private readonly logger = new Logger(ProductionPlanningService.name);
@@ -122,8 +126,8 @@ export class ProductionPlanningService {
     const dateStr = requestedDate || todayStr;
     let degradation: AiDegradation | null = null;
 
-    // Browsing to an arbitrary future date would generate AND persist a plan,
-    // hammering the AI once per page view.
+    // Keep manual refresh bounded: today and near-future plans are allowed to
+    // hit the model, but arbitrary dates would hammer the AI once per page view.
     const MAX_HORIZON_DAYS = 14;
     if (dateStr > addDaysToDateString(todayStr, MAX_HORIZON_DAYS)) {
       throw new BadRequestException(
@@ -137,18 +141,21 @@ export class ProductionPlanningService {
       populationArray: PRODUCT_POPULATION_OPTIONS,
     });
 
-    if (!plan) {
-      // If date is in the past and no plan exists -> 404
-      if (dateStr < todayStr) {
-        throw new NotFoundException(
-          `No production plan exists for past date: ${dateStr}`,
-        );
-      }
+    if (!plan && dateStr < todayStr) {
+      throw new NotFoundException(
+        `No production plan exists for past date: ${dateStr}`,
+      );
+    }
 
-      // If date is today or future -> generate on-demand
-      await this.generateProductionPlan(restaurantId, dateStr, (d) => {
-        degradation = d;
-      });
+    if (dateStr >= todayStr) {
+      await this.generateProductionPlan(
+        restaurantId,
+        dateStr,
+        (d) => {
+          degradation = d;
+        },
+        { forceRefresh: true },
+      );
 
       // Re-fetch populated plan
       plan = await this.dailyProductionPlanRepository.findOne({
@@ -262,13 +269,19 @@ export class ProductionPlanningService {
     // a fallback. A callback rather than a changed return type, so the cron
     // and every existing caller stay untouched.
     onAiFailure?: (degradation: AiDegradation) => void,
+    options: GenerateProductionPlanOptions = {},
   ): Promise<DailyProductionPlanType> {
     // 1. Check duplicate plan
     const existing = await this.dailyProductionPlanRepository.findOne({
       filters: { restaurantId, date: dateStr, isDeleted: false },
     });
-    if (existing) {
+    if (existing && !options.forceRefresh) {
       return existing;
+    }
+    const existingActuals = new Map<string, number | null>();
+    for (const item of existing?.items || []) {
+      const pId = (item.productId as any)?._id || item.productId;
+      existingActuals.set(pId.toString(), item.actualProducedQty ?? null);
     }
 
     // 2. Fetch active products
@@ -392,7 +405,7 @@ export class ProductionPlanningService {
           confidence: item.confidence || ConfidenceLevelEnum.MEDIUM,
           source: ProductionPlanSourceEnum.AI_MODEL,
           factors: item.factors || [],
-          actualProducedQty: null,
+          actualProducedQty: existingActuals.get(item.productId) ?? null,
         });
       }
     } else {
@@ -459,12 +472,28 @@ export class ProductionPlanningService {
           confidence: ConfidenceLevelEnum.LOW,
           source: ProductionPlanSourceEnum.FALLBACK_YESTERDAY,
           factors: [factor],
-          actualProducedQty: null,
+          actualProducedQty: existingActuals.get(prepProd.productId) ?? null,
         });
       }
     }
 
     // 5. Persist plan with unique compound index handling
+    if (existing && options.forceRefresh) {
+      const updated = await this.dailyProductionPlanRepository.findOneAndUpdate({
+        filters: { _id: existing._id },
+        updateData: {
+          $set: {
+            totalRecommendedQty,
+            items: planItems,
+            isDeleted: false,
+          },
+        },
+      });
+      if (updated) {
+        return updated;
+      }
+    }
+
     try {
       const created = await this.dailyProductionPlanRepository.create({
         restaurantId,

@@ -522,6 +522,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     // failure occurred this request — but its rows were produced by the local
     // fallback policy, and a caller must be able to tell.
     const todayStr = service.getTodayDateString();
+    const yesterdayStr = service.getYesterdayDateString(todayStr);
 
     mockUserRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(mockUserId),
@@ -529,7 +530,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     });
     mockPlanRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(),
-      date: todayStr,
+      date: yesterdayStr,
       items: [
         {
           productId: new Types.ObjectId(),
@@ -539,7 +540,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
       ],
     });
 
-    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+    const result: any = await service.getProductionPlan(mockUserId, yesterdayStr);
 
     expect(result.success).toBe(true);
     expect(result.degraded).toBe(true);
@@ -550,6 +551,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     // Guards the test above from over-correcting into "every cached plan is
     // degraded", which would make the flag meaningless.
     const todayStr = service.getTodayDateString();
+    const yesterdayStr = service.getYesterdayDateString(todayStr);
 
     mockUserRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(mockUserId),
@@ -557,7 +559,7 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
     });
     mockPlanRepo.findOne.mockResolvedValue({
       _id: new Types.ObjectId(),
-      date: todayStr,
+      date: yesterdayStr,
       items: [
         {
           productId: new Types.ObjectId(),
@@ -567,10 +569,86 @@ describe('ProductionPlanningService - Phase 5 Validation Cases & Actuals Fix', (
       ],
     });
 
-    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+    const result: any = await service.getProductionPlan(mockUserId, yesterdayStr);
 
     expect(result.degraded).toBe(false);
     expect(result.degradedReason).toBeUndefined();
+  });
+
+  it('refreshes today production plan from the AI model even when a plan already exists', async () => {
+    const prodId = new Types.ObjectId();
+    const planId = new Types.ObjectId();
+    const todayStr = service.getTodayDateString();
+    const existingPlan = {
+      _id: planId,
+      restaurantId: mockRestaurantId,
+      date: todayStr,
+      totalRecommendedQty: 10,
+      items: [
+        {
+          productId: prodId,
+          recommendedQty: 10,
+          actualProducedQty: 12,
+          source: ProductionPlanSourceEnum.AI_MODEL,
+        },
+      ],
+    };
+    const refreshedPlan = {
+      ...existingPlan,
+      totalRecommendedQty: 33,
+      items: [
+        {
+          productId: prodId,
+          recommendedQty: 33,
+          actualProducedQty: 12,
+          source: ProductionPlanSourceEnum.AI_MODEL,
+        },
+      ],
+    };
+
+    mockUserRepo.findOne.mockResolvedValue({
+      _id: new Types.ObjectId(mockUserId),
+      restaurantId: mockRestaurantId,
+    });
+    mockPlanRepo.findOne
+      .mockResolvedValueOnce(existingPlan)
+      .mockResolvedValueOnce(existingPlan)
+      .mockResolvedValueOnce(refreshedPlan);
+    mockProductRepo.findMany.mockResolvedValue([
+      { _id: prodId, title: 'Croissant', price: 18 },
+    ]);
+    mockSalesRepo.findMany.mockResolvedValue([]);
+    mockPlanRepo.findOneAndUpdate.mockResolvedValue(refreshedPlan);
+
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        restaurantId: mockRestaurantId.toString(),
+        date: todayStr,
+        items: [
+          {
+            productId: prodId.toString(),
+            recommendedQty: 33,
+            confidence: ConfidenceLevelEnum.MEDIUM,
+          },
+        ],
+      }),
+    } as any);
+
+    const result: any = await service.getProductionPlan(mockUserId, todayStr);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(mockPlanRepo.findOneAndUpdate).toHaveBeenCalledWith({
+      filters: { _id: planId },
+      updateData: {
+        $set: expect.objectContaining({
+          totalRecommendedQty: 33,
+          isDeleted: false,
+        }),
+      },
+    });
+    expect(result.data.items[0].recommendedQty).toBe(33);
+    expect(result.data.items[0].actualProducedQty).toBe(12);
   });
 
   // ==========================================
