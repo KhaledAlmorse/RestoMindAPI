@@ -106,7 +106,7 @@ describe('AiClientService', () => {
     delete process.env.AI_SERVICE_URL;
   });
 
-  it('attaches the API key header when configured', async () => {
+  it('attaches the API key header when AI_API_KEY is configured', async () => {
     process.env.AI_API_KEY = 's3cret';
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -119,6 +119,21 @@ describe('AiClientService', () => {
     const init = (global.fetch as jest.Mock).mock.calls[0][1];
     expect(init.headers['X-API-Key']).toBe('s3cret');
     delete process.env.AI_API_KEY;
+  });
+
+  it('falls back to AI_SHARED_SECRET for the X-API-Key header', async () => {
+    process.env.AI_SHARED_SECRET = 'legacy-secret';
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    }) as any;
+
+    await service.post('/integration/restomind/predict', {});
+
+    const init = (global.fetch as jest.Mock).mock.calls[0][1];
+    expect(init.headers['X-API-Key']).toBe('legacy-secret');
+    delete process.env.AI_SHARED_SECRET;
   });
 
   it('classifies a 429 as rate_limited, does NOT retry, and carries Retry-After', async () => {

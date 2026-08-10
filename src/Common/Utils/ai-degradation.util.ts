@@ -5,9 +5,14 @@ import type { AiCallResult, AiDegradation } from '../Types/ai.types';
 export type AiFailure = Extract<AiCallResult<unknown>, { ok: false }>;
 
 /**
- * A failure that actually reached an endpoint's response, carrying the KIND so
- * the caller can tell "the AI is down" from "we are misconfigured and every
- * call is being rejected without a retry".
+ * Log an AI failure at the level its KIND deserves, and return the descriptor
+ * the endpoint must surface to its caller.
+ *
+ * Every AI caller used to branch on `aiResult.ok` alone and log "AI endpoint
+ * unreachable", which meant a 401 from a missing `AI_API_KEY` — a
+ * configuration fault that is never retried — read exactly like an outage.
+ * The endpoint still answered HTTP 200 with a full set of silently-degraded
+ * fallback rows, so a misconfigured deployment looked healthy.
  *
  * `client_error` therefore gets its own wording, naming it as a probable
  * configuration fault and carrying the status, the path and the service's own
@@ -37,7 +42,7 @@ export function reportAiFailure(
       `[AI CONFIG ERROR] AI rejected ${path}${where} with HTTP ${
         failure.status ?? '4xx'
       } and it was NOT retried. This is a request/configuration fault, not an outage — ` +
-        `a 401/403 almost always means AI_API_KEY is missing or does not match the AI service. ` +
+        `a 401/403 almost always means AI_API_KEY is missing or does not match the AI service's X-API-Key. ` +
         `Response body: ${safeJson(failure.body)}`,
     );
   } else {
