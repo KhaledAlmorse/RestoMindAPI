@@ -569,6 +569,65 @@ describe('RecommendationsService', () => {
       expect(mockRecommendationRepo.update).toHaveBeenCalled();
     });
 
+    it('refreshes an edited recommendation instead of creating a duplicate pending one', async () => {
+      const editedRecommendation = {
+        ...mockRecommendation,
+        status: RecommendationStatusEnum.EDITED,
+        suggestedValue: 35,
+      };
+
+      mockProductRepo.findMany.mockResolvedValue([mockProduct]);
+      mockRecipeRepo.findOne.mockResolvedValue(null);
+      mockPredictionRepo.findOne.mockResolvedValue(null);
+      planFor(mockProductId, 40);
+      mockRecommendationRepo.findOne.mockResolvedValue(editedRecommendation);
+      mockRecommendationRepo.update.mockImplementation(({ body }: any) =>
+        Promise.resolve({ ...editedRecommendation, ...body }),
+      );
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            checkedAt: 'now',
+            itemsAtRisk: [
+              {
+                productId: mockProductId.toString(),
+                projectedSurplus: 12,
+                suggestedDiscountPct: 25,
+              },
+            ],
+          }),
+      }) as any;
+
+      const result = await service.scanSurplus(mockUserId);
+
+      expect(mockRecommendationRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            status: {
+              $in: [
+                RecommendationStatusEnum.PENDING,
+                RecommendationStatusEnum.EDITED,
+              ],
+            },
+          }),
+        }),
+      );
+      expect(mockRecommendationRepo.create).not.toHaveBeenCalled();
+      expect(mockRecommendationRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: { _id: editedRecommendation._id },
+          body: expect.objectContaining({
+            suggestedValue: 25,
+            suggestedQuantity: 12,
+          }),
+        }),
+      );
+      expect(result.data.recommendations[0].suggestedValue).toBe(25);
+    });
+
     it('should handle multi-ingredient recipes by creating separate WasteReport per ingredient', async () => {
       const ingredientId2 = new Types.ObjectId();
 
@@ -729,6 +788,69 @@ describe('RecommendationsService', () => {
           planned_quantity: 50,
         }),
       ).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('validates a real restaurant product plan by productId using stored predictions', async () => {
+      mockProductRepo.findOne.mockResolvedValue(mockProduct);
+      mockProductCostService.getUnitCost.mockResolvedValue(7);
+      mockPredictionRepo.findOne.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        productId: mockProductId,
+        predictedOrders: 140,
+        factors: [{ factor: 'weekend', impact_pct: 10, direction: 'increase' }],
+        dailyBreakdown: [
+          { date: '2026-08-09', predictedQuantity: 20 },
+          { date: '2026-08-10', predictedQuantity: 20 },
+          { date: '2026-08-11', predictedQuantity: 20 },
+          { date: '2026-08-12', predictedQuantity: 20 },
+          { date: '2026-08-13', predictedQuantity: 20 },
+          { date: '2026-08-14', predictedQuantity: 20 },
+          { date: '2026-08-15', predictedQuantity: 20 },
+        ],
+      });
+
+      const result = await service.validatePlan(mockUserId, {
+        productId: mockProductId.toString(),
+        date: '2026-08-10',
+        planned_quantity: 30,
+      });
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockPredictionRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filters: expect.objectContaining({
+            restaurantId: mockRestaurantId,
+            productId: mockProductId,
+            targetWeek: '2026-08-09',
+          }),
+        }),
+      );
+      expect(result).toMatchObject({
+        degraded: false,
+        data: {
+          productId: mockProductId.toString(),
+          planned_qty: 30,
+          forecast_qty: 20,
+          forecast_upper: 22,
+          excess_qty: 8,
+          severity: 'medium',
+          projected_waste_cost_egp: 56,
+        },
+      });
+    });
+
+    it('rejects productId validation when no prediction or plan baseline exists', async () => {
+      mockProductRepo.findOne.mockResolvedValue(mockProduct);
+      mockPredictionRepo.findOne.mockResolvedValue(null);
+      mockDailyProductionPlanRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.validatePlan(mockUserId, {
+          productId: mockProductId.toString(),
+          date: '2026-08-10',
+          planned_quantity: 30,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('returns a degraded response instead of throwing when the AI is down', async () => {

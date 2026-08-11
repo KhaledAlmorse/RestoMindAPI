@@ -84,10 +84,25 @@ export class SalesTransactionRepository extends BaseService<SalesTransactionType
           totalTransactions: { $sum: 1 },
           totalQuantitySold: { $sum: '$quantitySold' },
           totalGrossRevenue: {
-            $sum: { $multiply: ['$quantitySold', '$basePrice'] },
+            $sum: {
+              $multiply: [
+                '$quantitySold',
+                { $max: ['$basePrice', '$sellingPrice'] },
+              ],
+            },
           },
           totalNetRevenue: {
             $sum: { $multiply: ['$quantitySold', '$sellingPrice'] },
+          },
+          totalDiscountsGiven: {
+            $sum: {
+              $multiply: [
+                '$quantitySold',
+                {
+                  $max: [{ $subtract: ['$basePrice', '$sellingPrice'] }, 0],
+                },
+              ],
+            },
           },
           promotionalSalesCount: {
             $sum: {
@@ -130,7 +145,7 @@ export class SalesTransactionRepository extends BaseService<SalesTransactionType
       totalQuantitySold,
       totalGrossRevenue,
       totalNetRevenue,
-      totalDiscountsGiven: totalGrossRevenue - totalNetRevenue,
+      totalDiscountsGiven: res.totalDiscountsGiven || 0,
       promotionalSalesCount: res.promotionalSalesCount || 0,
       featuredSalesCount: res.featuredSalesCount || 0,
       averageSellingPrice,

@@ -54,6 +54,10 @@ import { ValidatePlanDto } from './dto/validate-plan.dto';
 @Injectable()
 export class RecommendationsService {
   private readonly logger = new Logger(RecommendationsService.name);
+  private readonly reusableRecommendationStatuses = [
+    RecommendationStatusEnum.PENDING,
+    RecommendationStatusEnum.EDITED,
+  ];
 
   constructor(
     private readonly aiClient: AiClientService,
@@ -71,7 +75,7 @@ export class RecommendationsService {
     private readonly predictionRepository: PredictionRepository,
     private readonly dailyProductionPlanRepository: DailyProductionPlanRepository,
     private readonly productCostService: ProductCostService,
-  ) { }
+  ) {}
 
   private validateObjectId(id: string) {
     if (!isValidObjectId(id)) {
@@ -340,10 +344,7 @@ export class RecommendationsService {
           (sum, s) => sum + (s.quantitySold || 0),
           0,
         );
-        currentStock = Math.max(
-          0,
-          planItem.actualProducedQty - unitsSoldToday,
-        );
+        currentStock = Math.max(0, planItem.actualProducedQty - unitsSoldToday);
       }
 
       // Ingredient-level waste-report check: needs a recipe to translate
@@ -487,8 +488,8 @@ export class RecommendationsService {
 
       const categoryName =
         product.category &&
-          typeof product.category === 'object' &&
-          (product.category as any).name
+        typeof product.category === 'object' &&
+        (product.category as any).name
           ? (product.category as any).name
           : null;
 
@@ -619,15 +620,15 @@ export class RecommendationsService {
       // fault is loud, and carry the kind into the response.
       const degradation = aiResult.ok
         ? {
-          kind: 'unavailable' as const,
-          reason: 'AI service returned no itemsAtRisk',
-        }
+            kind: 'unavailable' as const,
+            reason: 'AI service returned no itemsAtRisk',
+          }
         : reportAiFailure(
-          this.logger,
-          '/integration/restomind/surplus-offers',
-          aiResult,
-          `restaurant ${restaurantId.toString()}`,
-        );
+            this.logger,
+            '/integration/restomind/surplus-offers',
+            aiResult,
+            `restaurant ${restaurantId.toString()}`,
+          );
 
       if (aiResult.ok) {
         this.logger.warn(`Surplus scan degraded: ${degradation.reason}`);
@@ -671,7 +672,7 @@ export class RecommendationsService {
         filters: {
           restaurantId,
           productId: prodObjectId,
-          status: RecommendationStatusEnum.PENDING,
+          status: { $in: this.reusableRecommendationStatuses },
           isDeleted: false,
         },
       });
@@ -692,7 +693,7 @@ export class RecommendationsService {
           status: RecommendationStatusEnum.PENDING,
         } as any);
       } else {
-        await this.recommendationRepository.update({
+        rec = await this.recommendationRepository.update({
           filters: { _id: rec._id },
           body: {
             wasteReportId,
@@ -713,6 +714,106 @@ export class RecommendationsService {
         itemsAtRisk: verifiedItemsAtRisk,
         recommendations: createdRecommendations,
         wasteReportsWritten: wasteReportData.length,
+      },
+      degraded: false,
+    };
+  }
+
+  private targetWeekForDate(dateStr: string): string {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
+    return addDaysToDateString(dateStr, -weekday);
+  }
+
+  private async validateProductPlan(
+    restaurantId: Types.ObjectId,
+    dto: ValidatePlanDto,
+  ) {
+    if (!dto.productId) {
+      throw new BadRequestException('productId is required');
+    }
+
+    this.validateObjectId(dto.productId);
+    const productId = new Types.ObjectId(dto.productId);
+    const date = dto.date || getBusinessDateString();
+    const targetWeek = this.targetWeekForDate(date);
+
+    const product = await this.productRepository.findOne({
+      filters: { _id: productId, restaurantId, isDeleted: false },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found for this restaurant');
+    }
+
+    const prediction = await this.predictionRepository.findOne({
+      filters: {
+        restaurantId,
+        productId,
+        targetWeek,
+        isDeleted: false,
+      },
+    });
+
+    let forecastQty = 0;
+    const breakdown = prediction?.dailyBreakdown || [];
+    const day = breakdown.find((d) => d.date?.substring(0, 10) === date);
+    if (day && day.predictedQuantity > 0) {
+      forecastQty = day.predictedQuantity;
+    } else if (breakdown.length > 0) {
+      const total = breakdown.reduce((sum, d) => sum + d.predictedQuantity, 0);
+      forecastQty = Math.round(total / breakdown.length);
+    } else if (prediction?.predictedOrders && prediction.predictedOrders > 0) {
+      forecastQty = Math.round(prediction.predictedOrders / 7);
+    }
+
+    if (forecastQty <= 0) {
+      const plan = await this.dailyProductionPlanRepository.findOne({
+        filters: { restaurantId, date, isDeleted: false },
+      });
+      const planItem = plan?.items?.find(
+        (item) => item.productId.toString() === productId.toString(),
+      );
+      forecastQty = planItem?.recommendedQty || 0;
+    }
+
+    if (forecastQty <= 0) {
+      throw new BadRequestException(
+        'No prediction or production-plan baseline exists for this product/date',
+      );
+    }
+
+    const forecastUpper = Math.max(forecastQty, Math.round(forecastQty * 1.1));
+    const excess = Math.max(0, dto.planned_quantity - forecastUpper);
+    const ratio = excess / Math.max(forecastUpper, 1);
+    const severity =
+      excess <= 0
+        ? 'none'
+        : ratio > 0.5
+          ? 'high'
+          : ratio > 0.2
+            ? 'medium'
+            : 'low';
+    const unitCost =
+      (await this.productCostService.getUnitCost(restaurantId, productId)) ?? 0;
+
+    return {
+      data: {
+        sku: dto.productId,
+        productId: dto.productId,
+        productTitle: product.title,
+        date,
+        planned_qty: dto.planned_quantity,
+        forecast_qty: forecastQty,
+        forecast_upper: forecastUpper,
+        excess_qty: excess,
+        severity,
+        message:
+          excess > 0
+            ? `Planned ${dto.planned_quantity} exceeds the forecast upper bound of ${forecastUpper} by ${excess} units.`
+            : 'Planned quantity is within the forecast range.',
+        projected_waste_cost_egp: Math.round(excess * unitCost * 100) / 100,
+        factors: prediction?.factors || [],
       },
       degraded: false,
     };
@@ -890,7 +991,15 @@ export class RecommendationsService {
   }
 
   async validatePlan(userId: string, dto: ValidatePlanDto) {
-    await this.getManagerRestaurantId(userId);
+    const restaurantId = await this.getManagerRestaurantId(userId);
+
+    if (dto.productId) {
+      return this.validateProductPlan(restaurantId, dto);
+    }
+
+    if (!dto.sku) {
+      throw new BadRequestException('Either productId or sku is required');
+    }
 
     const result = await this.aiClient.post<any>(
       '/alerts/waste-prevention',
@@ -919,7 +1028,8 @@ export class RecommendationsService {
     // Retry-After if the AI service gave one (docs 02 §2.3a).
     if (result.kind === 'rate_limited') {
       throw new ServiceUnavailableException(
-        `AI service rate-limited the plan validation (HTTP 429)${result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
+        `AI service rate-limited the plan validation (HTTP 429)${
+          result.retryAfter ? ` — retry after ${result.retryAfter}s` : ''
         }: ${result.message}`,
       );
     }

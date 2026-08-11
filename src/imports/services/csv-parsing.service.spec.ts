@@ -256,12 +256,35 @@ describe('CsvParsingService', () => {
       expect(result.validRows.length).toBe(2);
       expect(result.validRows[0].quantitySold).toBe(10);
       expect(result.validRows[0].productionQuantity).toBe(12);
+      expect(result.validRows[0].sellingPrice).toBe(18);
+      expect(result.validRows[0].basePrice).toBe(18);
       expect(result.validRows[1].quantitySold).toBe(0);
       expect(result.validRows[1].productionQuantity).toBe(5);
       expect(result.errors.length).toBe(2);
-      expect(
-        result.errors.some((e) => e.column === 'productionQuantity'),
-      ).toBe(true);
+      expect(result.errors.some((e) => e.column === 'productionQuantity')).toBe(
+        true,
+      );
+    });
+
+    it('uses explicit sales-history base price when provided', () => {
+      const result = service.mapAndValidateRows(
+        ImportTypeEnum.SALES_HISTORY,
+        [['2026-07-01', 'Croissant', '10', '12', '15', '18']],
+        ['Date', 'Product', 'Quantity', 'Production Qty', 'Selling', 'Base'],
+        {
+          Date: 'date',
+          Product: 'productId',
+          Quantity: 'quantitySold',
+          'Production Qty': 'productionQuantity',
+          Selling: 'sellingPrice',
+          Base: 'basePrice',
+        },
+        mockProducts,
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.validRows[0].sellingPrice).toBe(15);
+      expect(result.validRows[0].basePrice).toBe(18);
     });
   });
 });

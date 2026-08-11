@@ -622,10 +622,15 @@ export class CsvParsingService {
 
         // Base Price fallback
         const basePriceNum = Number(mappedRow.basePrice);
+        // If the file does not explicitly provide a base/original price, the
+        // safest historical value is the imported selling price. Product.price
+        // is the menu's current price, not necessarily the price on this old
+        // sale; using it here can create fake discounts or even negative
+        // discounts when prices changed.
         mappedRow.basePrice =
           !isNaN(basePriceNum) && basePriceNum >= 0
             ? basePriceNum
-            : (mappedRow.productRef?.price ?? mappedRow.sellingPrice);
+            : mappedRow.sellingPrice;
 
         if (!hasError) {
           validRows.push(mappedRow);
